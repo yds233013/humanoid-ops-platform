@@ -27,8 +27,8 @@ from planning.models import Person, Visit
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, RetryTransaction, run_command
 from platform_core.locks import lock_guards
 from platform_core.testhooks import checkpoint
-from readiness.authorization import db_now, describe_differences, snapshot_differences
-from readiness.evaluator import ReadinessResult, evaluate_readiness, take_guard_snapshot
+from readiness.authorization import describe_differences, snapshot_differences
+from readiness.evaluator import ReadinessResult, db_now, evaluate_readiness, take_guard_snapshot
 from readiness.models import (
     AuthorizationRevocation,
     DepartureAuthorization,

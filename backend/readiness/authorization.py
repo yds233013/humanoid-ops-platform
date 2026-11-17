@@ -6,12 +6,9 @@ under locks, and the database re-checks the structural rules. SYNTHETIC data onl
 real-world clearance.
 """
 
-from datetime import datetime
 from typing import Any
 
-from django.db import connection
-
-from readiness.evaluator import take_guard_snapshot
+from readiness.evaluator import db_now, take_guard_snapshot
 from readiness.evidence import current_policy, policy_status
 from readiness.models import AuthorizationRevocation, DepartureAuthorization, DepartureEvent
 
@@ -33,13 +30,6 @@ GUARDS: dict[str, str] = {
     "policy_id": "policy approval/withdrawal",
     "policy_lock_version": "policy approval/withdrawal",
 }
-
-
-def db_now() -> datetime:
-    with connection.cursor() as cur:
-        cur.execute("SELECT clock_timestamp()")
-        value: datetime = cur.fetchone()[0]
-        return value
 
 
 def snapshot_differences(stored: dict[str, Any], current: dict[str, Any]) -> list[str]:
