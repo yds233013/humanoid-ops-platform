@@ -29,7 +29,7 @@
 </style>
 </head>
 <body>
-<header><span><a href="/fleet/">Fleet</a> &nbsp; <a href="/planning/">Planner</a></span>
+<header><span><a href="/fleet/">Fleet</a> &nbsp; <a href="/planning/">Planner</a> &nbsp; <a href="/readiness/">Readiness</a></span>
 {% if user.is_authenticated %}<span>{{ user.username }} <span class="muted" style="color:#B9C0CC">({{ roles|join:", " }})</span>
 <form method="post" action="/logout/">{% csrf_token %}<button>Log out</button></form></span>{% endif %}
 </header>
