@@ -26,7 +26,7 @@ services:
       DB_HOST: db
       DB_PORT: "5432"
       DJANGO_DB_IDENTITY: owner
-    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_dev && python manage.py seed_fleet && python manage.py seed_planning"]
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_dev && python manage.py seed_fleet && python manage.py seed_planning && python manage.py seed_readiness"]
     depends_on:
       db: {condition: service_healthy}
 
