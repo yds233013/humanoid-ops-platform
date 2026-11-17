@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "platform_core",
     "accounts",
     "fleet",
+    "planning",
 ]
 
 MIDDLEWARE = [

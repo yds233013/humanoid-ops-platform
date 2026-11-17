@@ -96,6 +96,7 @@ class Command(BaseCommand):
             max_runtime_min=120,
             min_departure_soc_pct=80,
             charge_turnaround_min=180,
+            load_unload_min=20,
         )
         prof = CapabilityProfile.objects.get(pattern__code="P-A", version_no=1)
         s.approve_capability_profile(lead, profile_id=prof.pk, slot="engineering")

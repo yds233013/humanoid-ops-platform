@@ -5,6 +5,7 @@ from django.views.generic import RedirectView
 from accounts import api as accounts_api
 from fleet import api as fleet_api
 from fleet import views as fleet_views
+from planning import views as planning_views
 from platform_core import api as core_api
 
 urlpatterns = [
@@ -30,4 +31,11 @@ urlpatterns = [
     path("fleet/<str:code>/approve/", fleet_views.approve_view),
     path("fleet/<str:code>/release/", fleet_views.release_view),
     path("fleet/<str:code>/check/", fleet_views.check_view),
+    # Slice 2: planner
+    path("planning/", planning_views.week, name="planning-week"),
+    path("planning/sites/", planning_views.sites),
+    path("planning/visits/<str:code>/", planning_views.visit_detail, name="planning-visit"),
+    path("planning/visits/<str:code>/plan/", planning_views.plan_view),
+    path("planning/visits/<str:code>/confirm/", planning_views.confirm_view),
+    path("planning/visits/<str:code>/cancel/", planning_views.cancel_view),
 ]

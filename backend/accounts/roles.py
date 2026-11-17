@@ -33,6 +33,16 @@ PERMISSIONS: dict[str, set[str]] = {
     "fleet.release_hold": {OPS_LEAD, ENGINEERING_LEAD},
     "fleet.submit_inspection": {OPS_LEAD, FIELD_OPERATOR},
     "fleet.check_eligibility": {OPS_LEAD, FIELD_OPERATOR, ENGINEERING_LEAD},
+    # Slice 2: planning
+    "planning.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
+    "planning.manage_sites": {OPS_LEAD},
+    "planning.assess": {OPS_LEAD, FIELD_OPERATOR},
+    "planning.approve_assessment": {OPS_LEAD, ENGINEERING_LEAD},
+    "planning.consent": {OPS_LEAD, FIELD_OPERATOR},
+    "planning.manage_people": {OPS_LEAD},
+    "planning.manage_vehicles": {OPS_LEAD},
+    "planning.plan": {OPS_LEAD},
+    "planning.confirm": {OPS_LEAD},
 }
 
 # Roles that may sign an inspection as performer or verifier.

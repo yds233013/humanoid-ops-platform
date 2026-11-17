@@ -359,6 +359,7 @@ def publish_capability_profile(
         "max_runtime_min",
         "min_departure_soc_pct",
         "charge_turnaround_min",
+        "load_unload_min",
     }
     if set(fields) - allowed:
         raise Invalid(f"Unknown capability fields: {sorted(set(fields) - allowed)}")

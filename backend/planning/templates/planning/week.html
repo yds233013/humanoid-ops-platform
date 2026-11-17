@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Planner{% endblock %}
+{% block content %}
+<div class="row" style="justify-content:space-between">
+  <h1>Planner · week of {{ monday|date:"D j M Y" }}</h1>
+  <div class="row"><a href="?week={{ prev|date:'Y-m-d' }}">&larr; Previous</a> · <a href="?">This week</a> · <a href="?week={{ next|date:'Y-m-d' }}">Next &rarr;</a> · <a href="/planning/sites/">Sites</a> · <a href="/fleet/">Fleet</a></div>
+</div>
+<p class="muted">Times shown in each home's local time ({{ tz }}). "Planning feasible" means the plan has no known blockers. It is <b>never</b> permission to depart.</p>
+<div class="week">
+{% for d in days %}
+  <div class="day"><div class="dayhead">{{ d.date|date:"D j" }}</div>
+  {% for c in d.cards %}
+    <a class="vcard {{ c.state }}" href="/planning/visits/{{ c.visit.code }}/">
+      <b>{{ c.visit.code }}</b> · {{ c.visit.site.code }}<br>
+      {{ c.start|date:"H:i" }}–{{ c.end|date:"H:i" }}<br>
+      <span class="badge {{ c.state }}">{{ c.label }}</span>
+      <div class="muted">{{ c.visit.get_status_display }}{% if c.rev.robot %} · {{ c.rev.robot.code }}{% endif %}{% if c.rev.vehicle %} · {{ c.rev.vehicle.code }}{% endif %}</div>
+    </a>
+  {% empty %}<div class="muted" style="padding:6px">-</div>{% endfor %}
+  </div>
+{% endfor %}
+</div>
+{% if unplanned %}<div class="card"><h2>Requested, not yet plannable</h2>
+<table><thead><tr><th>Visit</th><th>Site</th><th>When (site time)</th><th>Why</th></tr></thead><tbody>
+{% for c in unplanned %}<tr><td><a href="/planning/visits/{{ c.visit.code }}/">{{ c.visit.code }}</a></td><td>{{ c.visit.site.code }}</td>
+<td>{{ c.start|date:"D j M H:i" }}</td><td><ul class="reasons">{% for b in c.live.blockers %}<li>{{ b.message }}</li>{% endfor %}</ul></td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+<style>
+ .week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+ .day{background:#fff;border:1px solid var(--line);border-radius:8px;min-height:120px}
+ .dayhead{font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);background:#F1EFEA;border-radius:8px 8px 0 0}
+ .vcard{display:block;margin:6px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);color:var(--ink);text-decoration:none;font-size:13px}
+ .vcard.blocked{border-color:#E7A1A1;background:var(--redbg)} .vcard.review{border-color:#E9C46A;background:var(--amberbg)}
+ .badge.feasible{background:var(--bluebg);color:var(--blue);border-color:#9CC0E4} .badge.blocked{background:var(--redbg);color:var(--red);border-color:#E7A1A1}
+ .badge.review{background:var(--amberbg);color:var(--amber);border-color:#E9C46A}
+ @media (max-width:800px){.week{grid-template-columns:1fr}}
+</style>
+{% endblock %}

@@ -35,6 +35,7 @@ def build_world(robots: int = 2, prefix: str = "") -> SimpleNamespace:
             lift_crew=2,
             max_runtime_min=120,
             charge_turnaround_min=180,
+            load_unload_min=20,
         )
         prof = CapabilityProfile.objects.get(pattern__code=code, version_no=1)
         s.approve_capability_profile(w.lead, profile_id=prof.pk, slot="engineering")

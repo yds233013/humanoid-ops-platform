@@ -72,6 +72,8 @@ class CapabilityProfile(models.Model):
     max_runtime_min = models.PositiveIntegerField(null=True, blank=True)
     min_departure_soc_pct = models.PositiveSmallIntegerField(null=True, blank=True)
     charge_turnaround_min = models.PositiveIntegerField(null=True, blank=True)
+    # Planning-only physical fact (Slice 2): minutes to load OR unload the robot. Unknown blocks planning.
+    load_unload_min = models.PositiveIntegerField(null=True, blank=True)
     source = models.CharField(max_length=30, default="synthetic_demo")  # engineering_doc | synthetic_demo
     published_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     published_at = models.DateTimeField(auto_now_add=True)
