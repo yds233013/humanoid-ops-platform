@@ -30,8 +30,10 @@ invalidation test:
     pattern_id, pattern_version                           pattern decisions + holds, capability profiles
     person_versions {str(person_id): version}             qualification grant/revoke (lead, second, recovery)
     vehicle_id                                            identity only (vehicles carry no guard version)
-    policy_id, policy_lock_version                        approval/withdrawal of the current policy; a newer
-                                                          approved policy shows up as a different policy_id
+    policy_id, policy_lock_version                        approval/withdrawal of the ACTIVE policy
+                                                          (readiness.evidence.current_policy, no fallback);
+                                                          a newer approved policy shows up as a different
+                                                          policy_id, a withdrawn active policy as None
 NOT versioned, so they must be re-evaluated (not just snapshot-compared) at departure: deployment settings
 (demo_mode, consent_form_version, pre_visit_inspection_min), user role grants (on-call engineer role),
 and time itself (evidence age, qualification windows, expiry).
@@ -50,7 +52,7 @@ from fleet import services as fleet_services
 from fleet.models import ConfigurationManifest, ManifestPattern, Robot
 from planning.models import Person, Reservation, Resource, Visit, VisitRevision
 from planning.services import Plan, live_feasibility
-from readiness.evidence import current_policy, policy_status
+from readiness.evidence import current_policy, latest_ever_approved_policy, policy_status
 from readiness.models import ReadinessEvidence, ReadinessPolicy, RecoveryPlan
 
 LABEL_READY = "Ready to request authorization"
@@ -288,12 +290,22 @@ def _resource_for(key: str, rev: VisitRevision) -> Resource | None:
 def _gate_policy(w: _World, b: _Blockers) -> None:
     if w.policy is None:
         latest = ReadinessPolicy.objects.order_by("-version").first()
-        why = (
-            "No readiness policy exists"
-            if latest is None
-            else f"No approved readiness policy (latest is v{latest.version}, {policy_status(latest)})"
+        last_active = latest_ever_approved_policy()
+        if latest is None:
+            why = "No readiness policy exists"
+        elif last_active is not None:
+            # No fallback: once the newest approved policy is withdrawn, nothing older is used again.
+            why = (
+                f"No active readiness policy: v{last_active.version} was withdrawn and no older policy is "
+                f"used (latest is v{latest.version}, {policy_status(latest)})"
+            )
+        else:
+            why = f"No approved readiness policy (latest is v{latest.version}, {policy_status(latest)})"
+        b.add(
+            POLICY_MISSING,
+            why,
+            "Engineering lead and safety reviewer approve a NEWER readiness policy version",
         )
-        b.add(POLICY_MISSING, why, "Engineering lead and safety reviewer approve a readiness policy")
         return
     if not fleet_services.demo_mode() and w.policy.source != "approved_procedure":
         b.add(

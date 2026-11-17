@@ -17,6 +17,7 @@ from fleet import services as fleet_services
 from fleet.models import Inspection, Robot
 from planning.models import Person, Visit
 from readiness import evidence as rx
+from readiness.evaluator import take_guard_snapshot
 from readiness.models import (
     DepartureAuthorization,
     DepartureEvent,
@@ -112,15 +113,19 @@ def _ins_row(cur, table, row) -> int:
 
 
 def _snapshot(c, **over) -> dict[str, Any]:
-    s = {
-        "visit_id": c["visit"].pk,
-        "revision_id": c["rev"].pk,
-        "robot_id": c["robot"].pk,
-        "manifest_id": c["manifest_id"],
-        "policy_id": c["policy"].pk,
-        "visit_status": "confirmed",
-    }
+    """The LIVE section 5 snapshot (migration 0003 checks every key), with c's ids and any overrides."""
+    s = take_guard_snapshot(c["visit"])
+    s.update(
+        visit_id=c["visit"].pk,
+        revision_id=c["rev"].pk,
+        robot_id=c["robot"].pk,
+        manifest_id=c["manifest_id"],
+        policy_id=c["policy"].pk,
+    )
     s.update(over)
+    pol = ReadinessPolicy.objects.filter(pk=s["policy_id"]).first()
+    if "policy_lock_version" not in over and pol is not None:
+        s["policy_lock_version"] = pol.lock_version
     return s
 
 

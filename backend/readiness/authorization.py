@@ -66,9 +66,11 @@ def authorization_status(auth: DepartureAuthorization) -> dict[str, Any]:
     policy = auth.policy
     if policy_status(policy) == "withdrawn":
         invalid.append(f"Readiness policy v{policy.version} was withdrawn")
-    current = current_policy()
-    if current is not None and current.pk != policy.pk and current.version > policy.version:
+    current = current_policy()  # the single active policy; never an older fallback
+    if current is not None and current.pk != policy.pk:
         invalid.append(f"Readiness policy v{policy.version} is superseded by v{current.version}")
+    elif current is None and policy_status(policy) != "withdrawn":
+        invalid.append(f"Readiness policy v{policy.version} is no longer the active policy (none is active)")
     invalid += describe_differences(
         snapshot_differences(auth.guard_snapshot, take_guard_snapshot(auth.visit))
     )

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from django.db import connection
+from django.db.models import Count, Q
 
 from fleet.models import ConfigurationManifest, Inspection, Robot
 from planning.models import Person, Visit
@@ -43,12 +44,37 @@ def policy_status(policy: ReadinessPolicy) -> str:
     return "approved" if slots >= {"engineering", "safety"} else "draft"
 
 
+def latest_ever_approved_policy() -> ReadinessPolicy | None:
+    """The highest-version policy that has ever become approved (both slots), withdrawn or not."""
+    return (
+        ReadinessPolicy.objects.annotate(
+            n_slots=Count("approvals__slot", distinct=True, filter=Q(approvals__slot__in=list(SLOT_ROLES)))
+        )
+        .filter(n_slots=len(SLOT_ROLES))
+        .order_by("-version")
+        .first()
+    )
+
+
 def current_policy() -> ReadinessPolicy | None:
-    """The highest-version approved, non-withdrawn policy (a newer approved policy supersedes older ones)."""
-    for policy in ReadinessPolicy.objects.order_by("-version"):
-        if policy_status(policy) == "approved":
-            return policy
-    return None
+    """The ACTIVE policy (EM decision, no fallback). Same rule as SQL readiness_active_policy_id():
+
+    the highest-version policy that has ever become approved (both slots); if that policy is withdrawn there
+    is NO active policy until a newer version becomes fully approved (its second slot approval activates
+    it). An older approved policy is never used again. At most one policy is active.
+    """
+    policy = latest_ever_approved_policy()
+    if policy is None or ReadinessPolicyWithdrawal.objects.filter(policy=policy).exists():
+        return None
+    return policy
+
+
+def active_policy_id_in_db() -> int | None:
+    """readiness_active_policy_id() as PostgreSQL computes it (the rule the triggers enforce)."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT readiness_active_policy_id()")
+        value = cur.fetchone()[0]
+        return int(value) if value is not None else None
 
 
 # ------------------------------------------------------------------ small helpers

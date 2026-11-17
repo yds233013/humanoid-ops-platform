@@ -237,12 +237,14 @@ def test_draft_policy_does_not_count(w):
     assert f"v{v2}, draft" in res.blockers[0]["message"]
 
 
-def test_withdrawn_policy_falls_back_to_older_approved_policy(w):
+def test_withdrawn_policy_does_not_fall_back_to_older_approved_policy(w):
     v2 = w.make_policy()
     assert _eval(w.visit).policy_version == v2
     rx.withdraw_readiness_policy(w.safety, version=v2, reason="bad numbers")
-    res = _eval(w.visit)
-    assert res.ready and res.policy_version == w.policy_version
+    res = _eval(w.visit)  # v1 is still approved, but it is never used again (EM decision: no fallback)
+    assert not res.ready and _codes(res) == {"POLICY_MISSING"}
+    assert res.policy_id is None and res.policy_version is None
+    assert f"v{v2} was withdrawn" in res.blockers[0]["message"]
 
 
 def test_superseded_policy_is_not_used(w):
@@ -573,7 +575,7 @@ def test_snapshot_policy_changes_on_approval_and_withdrawal(w):
     p2.refresh_from_db()
     assert p2.lock_version == 4  # withdrawal bumped the guard version of the policy C would hold
     s2 = ev.take_guard_snapshot(_visit(w.visit))
-    assert s2 != s1 and s2["policy_id"] == p1.pk
+    assert s2 != s1 and (s2["policy_id"], s2["policy_lock_version"]) == (None, None)  # no fallback to p1
     rx.withdraw_readiness_policy(w.safety, version=w.policy_version, reason="retired")
     s3 = ev.take_guard_snapshot(_visit(w.visit))
     assert (s3["policy_id"], s3["policy_lock_version"]) == (None, None)

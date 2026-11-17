@@ -197,7 +197,7 @@ def test_withdrawal(w):
     assert r["status"] == "withdrawn" and r["lock_version"] == 4  # 1 + 2 approvals + withdrawal
     p = ReadinessPolicy.objects.get(version=newer)
     assert rx.policy_status(p) == "withdrawn"
-    assert rx.current_policy().version == first  # falls back to the older approved policy
+    assert rx.current_policy() is None  # no fallback to the older approved policy (EM decision)
     with pytest.raises(Conflict, match="already withdrawn"):
         rx.withdraw_readiness_policy(w.lead, version=newer, reason="again")
     draft = w.make_policy(approve=False)
