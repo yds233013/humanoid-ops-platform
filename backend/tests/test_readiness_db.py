@@ -833,8 +833,8 @@ TABLES = [
 def _fill_every_table(w, cur) -> None:
     c = _ctx(w)
     aid = _ins_auth(cur, _auth_row(w, c))
+    second = _ins_auth(cur, _auth_row(w, c))  # issued before departure: after it, no new authorization
     _departure(cur, w, aid)
-    second = _ins_auth(cur, _auth_row(w, c))
     cur.execute(
         "INSERT INTO readiness_authorizationrevocation (authorization_id, revoked_by_id, reason, revoked_at) "
         "VALUES (%s, %s, 'r', now())",

@@ -546,3 +546,46 @@ def test_departed_visit_cannot_be_replanned_by_direct_sql(w, app_role_conn):
                 cur.execute(sql, args)
     v2 = _visit(w)
     assert (v2.status, v2.current_revision_id) == ("confirmed", v.current_revision_id)
+
+
+# ------------------------------------------------------------------ one visit, one departure (integration finding)
+def test_after_departure_the_visit_cannot_be_authorized_again(w):
+    a = authorize(w)
+    rc.record_departure(w.ops, authorization_code=a.code)
+    r = evaluate_readiness(_visit(w))
+    assert not r.ready and "VISIT_ALREADY_DEPARTED" in {x["code"] for x in r.blockers}
+    with pytest.raises(Conflict, match="already"):
+        rc.authorize_departure(w.ops, visit_code=w.visit)
+    assert DepartureAuthorization.objects.count() == 1
+
+
+def test_second_authorization_cannot_record_a_second_departure_even_by_direct_sql(w, app_role_conn):
+    first, second = authorize(w), authorize(w)  # two authorizations issued before anyone departs
+    rc.record_departure(w.ops, authorization_code=first.code)
+    with pytest.raises(Conflict):
+        rc.record_departure(w.ops, authorization_code=second.code)
+    with app_role_conn.cursor() as cur, pytest.raises(psycopg.errors.UniqueViolation):
+        raw_depart(cur, second, w.ops)
+    assert DepartureEvent.objects.filter(visit__code=w.visit).count() == 1
+
+
+def test_concurrent_departures_on_two_authorizations_record_exactly_one(w):
+    first, second = authorize(w), authorize(w)
+    barrier, out = threading.Barrier(2), []
+
+    def go(code: str) -> None:
+        try:
+            barrier.wait()
+            out.append(rc.record_departure(w.ops, authorization_code=code))
+        except Conflict as e:
+            out.append(e)
+        finally:
+            connection.close()
+
+    ts = [threading.Thread(target=go, args=(c,)) for c in (first.code, second.code)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(60)
+    assert sum(isinstance(x, dict) for x in out) == 1, out
+    assert DepartureEvent.objects.filter(visit__code=w.visit).count() == 1

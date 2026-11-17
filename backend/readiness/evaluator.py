@@ -53,7 +53,7 @@ from fleet.models import ConfigurationManifest, ManifestPattern, Robot
 from planning.models import Person, Reservation, Resource, Visit, VisitRevision
 from planning.services import Plan, live_feasibility
 from readiness.evidence import current_policy, latest_ever_approved_policy, policy_status
-from readiness.models import ReadinessEvidence, ReadinessPolicy, RecoveryPlan
+from readiness.models import DepartureEvent, ReadinessEvidence, ReadinessPolicy, RecoveryPlan
 
 LABEL_READY = "Ready to request authorization"
 LABEL_INCOMPLETE = "Readiness incomplete"
@@ -68,6 +68,7 @@ EVIDENCE_KIND_LABELS = {
 
 # Stable blocker codes (planning blockers are copied with the prefix PLANNING_).
 VISIT_NOT_CONFIRMED = "VISIT_NOT_CONFIRMED"
+VISIT_ALREADY_DEPARTED = "VISIT_ALREADY_DEPARTED"
 PLANNING_PREFIX = "PLANNING_"
 PLANNING_NOT_FEASIBLE = "PLANNING_NOT_FEASIBLE"  # fallback if planning is not feasible without a blocker
 RESERVATIONS_MISSING = "RESERVATIONS_MISSING"
@@ -86,6 +87,7 @@ EXPIRY_NOT_POSITIVE = "EXPIRY_NOT_POSITIVE"
 
 BLOCKER_CODES = (
     VISIT_NOT_CONFIRMED,
+    VISIT_ALREADY_DEPARTED,
     PLANNING_NOT_FEASIBLE,
     RESERVATIONS_MISSING,
     POLICY_MISSING,
@@ -227,6 +229,12 @@ def _gate_visit(w: _World, b: _Blockers) -> None:
             VISIT_NOT_CONFIRMED,
             f"Visit {w.visit.code} is {w.visit.status}, not confirmed",
             "Confirm the visit (a reschedule returns it to planned)",
+        )
+    if DepartureEvent.objects.filter(visit_id=w.visit.pk).exists():
+        b.add(
+            VISIT_ALREADY_DEPARTED,
+            f"A departure is already recorded for {w.visit.code}; one visit has exactly one departure",
+            "Plan a new visit for any further trip",
         )
 
 
