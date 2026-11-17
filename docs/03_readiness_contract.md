@@ -94,8 +94,11 @@ DB helper functions available: `has_active_role(uid, role)`, `fleet_setting(key)
 `kind` is one of `pre_departure_inspection`, `equipment_check`, `battery_check`. All integers > 0.
 
 **Status** (derived, never stored): `withdrawn` if a withdrawal row exists; else `approved` if both slots
-`engineering` and `safety` are approved; else `draft`. **Current policy** = the highest-version `approved`
-policy. A newer approved policy supersedes older ones.
+`engineering` and `safety` are approved; else `draft`. **Active policy** (EM decision, migration 0003) = the
+highest-version policy that has EVER been fully approved; if that policy is withdrawn there is NO active
+policy until a newer version is fully approved (approving its second slot is the explicit activation). There
+is never a fallback to an older approved policy. Implemented once in Python (`evidence.current_policy()`) and
+once in SQL (`readiness_active_policy_id()`), and tested to agree.
 
 ### ReadinessPolicyApproval
 `policy`, `slot` (`engineering` needs role engineering_lead, `safety` needs safety_reviewer), `approver`,
@@ -158,6 +161,14 @@ DB trigger on insert rejects: authorization revoked; `clock_timestamp() >= expir
 visit's current revision; visit not confirmed; manifest no longer current; policy withdrawn. The trigger checks
 **structural** validity only. Live readiness (holds, consent, qualifications...) is re-evaluated by Engineer C's
 command under locks. Do not describe the trigger as enforcing live eligibility.
+
+**Updated by migration 0003 (EM direct-SQL requirement):** the departure trigger now also recomputes the live
+guard state from the tables (locking it FOR SHARE in the global order) and requires it to equal the
+authorization's snapshot field by field; refuses a demo authorization or synthetic policy when `demo_mode` is
+off; and requires the recorder to hold ops_lead or field_operator. What only the command checks (and the DB
+does not): evidence freshness beyond `expires_at`, time-lapsed qualification/assessment windows, role grants
+of the on-call person, settings other than `demo_mode`, and the "visit crew only" departure rule. After a
+departure, a visit can no longer be re-planned or rescheduled (it can still be cancelled).
 
 ## 4. Commands
 
