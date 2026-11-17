@@ -8,6 +8,7 @@ not returned), in BOTH orders, for both commands. The mutation tests switch the 
 off and show the bad interleaving then happens, so these tests really detect the race. SYNTHETIC data only.
 """
 
+import dataclasses
 import re
 import threading
 import time
@@ -132,7 +133,7 @@ def test_switch_first_then_depart_waits_and_is_refused(w):
     assert waited and not returned, "the departure must wait for the uncommitted settings change"
     assert first == "switched" and is_production()
     assert isinstance(second, Conflict), second
-    assert "demo authorization can never be used for departure in production" in str(second)
+    assert "POLICY_NOT_APPROVED_PROCEDURE" in str(second), second  # read production after the wait
     assert not DepartureEvent.objects.exists()
 
 
@@ -205,7 +206,7 @@ def test_authorize_first_then_switch_waits_authorization_is_demo_and_unusable(w,
     assert second == "switched" and is_production()
     with pytest.raises(Conflict, match="POLICY_NOT_APPROVED_PROCEDURE"):
         authorize(w)
-    with pytest.raises(Conflict, match="demo authorization can never be used for departure in production"):
+    with pytest.raises(Conflict, match="POLICY_NOT_APPROVED_PROCEDURE"):
         depart(w, first["code"])
     assert DepartureAuthorization.objects.count() == 1 and not DepartureEvent.objects.exists()
 
@@ -230,12 +231,18 @@ def test_mutation_without_shared_lock_authorize_ignores_pending_switch(w, monkey
 
 
 # ------------------------------------------------------------------ demo authorization in production, no race
-def test_demo_authorization_refused_in_production_by_the_explicit_mode_check(w):
-    """No race: a demo-mode authorization presented after production is in effect is refused by
-    record_departure's own mode check, before (and independent of) the evaluator's policy gate."""
+def test_demo_authorization_refused_in_production_even_if_every_gate_passes(w, monkeypatch):
+    """No race: after the switch, even if the evaluator reported every production gate as passing (simulated
+    here), record_departure's own mode check refuses an authorization that was issued in demo mode."""
     code = authorize(w)["code"]
     set_setting("demo_mode", "false")
-    with pytest.raises(Conflict, match="issued in demo mode"):
+    real = rc.evaluate_readiness
+
+    def all_gates_pass(*a, **kw):
+        return dataclasses.replace(real(*a, **kw), ready=True, blockers=[])
+
+    monkeypatch.setattr(rc, "evaluate_readiness", all_gates_pass)
+    with pytest.raises(Conflict, match="issued in demo mode; a demo authorization can never be used"):
         depart(w, code)
     assert not DepartureEvent.objects.exists()
 

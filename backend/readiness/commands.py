@@ -237,12 +237,6 @@ def record_departure(
         now = db_now()
         if now >= auth.expires_at:
             raise Conflict(f"Authorization {auth.code} expired at {auth.expires_at.isoformat()}")
-        if auth.mode == "demo" and not fleet_services.demo_mode():
-            # A synthetic demo authorization is never departure clearance in production, whatever its policy.
-            raise Conflict(
-                f"Authorization {auth.code} was issued in demo mode; "
-                "a demo authorization can never be used for departure in production"
-            )
         diff = snapshot_differences(stored, now_snap)
         if diff:
             raise Conflict(
@@ -252,6 +246,13 @@ def record_departure(
         result = evaluate_readiness(v, at=now)
         if not result.ready:
             raise _blocked(f"Departure refused on {auth.code}", result)
+        if auth.mode == "demo" and not fleet_services.demo_mode():
+            # Backstop after the evaluator: a demo authorization is never departure clearance in production,
+            # even if the current policy and every gate would pass there.
+            raise Conflict(
+                f"Authorization {auth.code} was issued in demo mode; "
+                "a demo authorization can never be used for departure in production"
+            )
         if snapshot_differences(stored, result.guard_snapshot):
             raise RetryTransaction()  # e.g. a newer policy approved mid-check; re-judge under fresh locks
         ev = DepartureEvent.objects.create(
