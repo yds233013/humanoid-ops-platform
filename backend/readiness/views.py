@@ -147,7 +147,7 @@ def _gates(result: ReadinessResult) -> list[dict[str, Any]]:
 def _summary(v: Visit) -> dict[str, Any]:
     """Planning label, readiness label and the latest authorization / departure label for one visit."""
     tz = v.site.timezone
-    p_state, p_label, _ = _planning(v)
+    p_state, p_label, p_blockers = _planning(v)
     result = evaluate_readiness(v)
     latest = v.authorizations.order_by("-issued_at", "-pk").first()
     auth = _auth_row(latest, tz) if latest is not None else None
@@ -159,6 +159,7 @@ def _summary(v: Visit) -> dict[str, Any]:
         "tz": tz,
         "planning_state": p_state,
         "planning_label": p_label,
+        "planning_blockers": p_blockers,
         "result": result,
         "readiness_state": "ready" if result.ready else "incomplete",
         "auth": auth,
@@ -208,7 +209,6 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     v = get_object_or_404(Visit.objects.select_related("site", "current_revision"), code=code)
     tz = v.site.timezone
     summary = _summary(v)
-    p_state, p_label, p_blockers = _planning(v)
     evidence = (
         ReadinessEvidence.objects.filter(visit=v)
         .select_related("revision", "inspection", "recorded_by", "void", "void__voided_by")
@@ -265,7 +265,6 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
         "readiness/visit.html",
         {
             **summary,
-            "planning_blockers": p_blockers,
             "gates": _gates(summary["result"]),
             "evidence": [
                 {
