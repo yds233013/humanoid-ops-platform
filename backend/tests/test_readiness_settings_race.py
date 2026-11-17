@@ -211,23 +211,32 @@ def test_authorize_first_then_switch_waits_authorization_is_demo_and_unusable(w,
     assert DepartureAuthorization.objects.count() == 1 and not DepartureEvent.objects.exists()
 
 
-def test_mutation_without_shared_lock_demo_authorization_commits_after_production(w, monkeypatch):
+def test_mutation_without_shared_lock_authorize_is_still_serialized_by_the_db_boundary(w, monkeypatch):
+    """Python's shared lock off: readiness_issue_authorization (readiness/0005) takes the settings advisory lock
+    SHARED itself, so the switch still waits for the in-flight demo authorization to commit. (Before 0005 this
+    mutation showed the switch committing while authorize was in flight.)"""
     no_shared_settings_lock(monkeypatch)
     waited, returned, first, second = AdvisoryInterleaving("before_commit:readiness.authorize_departure").run(
         lambda: authorize(w), switch_to_production
     )
-    assert not waited and returned, "without the shared lock the switch commits while authorize is in flight"
+    assert waited and not returned, "the database boundary must hold the settings lock until commit"
     assert second == "switched" and isinstance(first, dict) and first["mode"] == "demo"
-    assert is_production() and DepartureAuthorization.objects.filter(mode="demo").exists()
+    assert is_production()
+    with pytest.raises(Conflict, match="POLICY_NOT_APPROVED_PROCEDURE"):
+        depart(w, first["code"])
 
 
-def test_mutation_without_shared_lock_authorize_ignores_pending_switch(w, monkeypatch):
+def test_mutation_without_shared_lock_pending_switch_still_refuses_authorize_in_the_db(w, monkeypatch):
+    """Python's shared lock off, switch first: the evaluator reads the old (demo) setting, but the issue function
+    waits on the settings lock and then refuses the demo-mode authorization under production. (Before 0005 this
+    mutation issued a demo authorization on the old setting.)"""
     no_shared_settings_lock(monkeypatch)
     waited, returned, first, second = AdvisoryInterleaving(SWITCHED).run(
         switch_to_production, lambda: authorize(w)
     )
-    assert not waited and returned and first == "switched"
-    assert isinstance(second, dict) and second["mode"] == "demo", second
+    assert waited and not returned and first == "switched"
+    assert isinstance(second, Conflict) and "mode must be production" in str(second), second
+    assert not DepartureAuthorization.objects.exists()
 
 
 # ------------------------------------------------------------------ demo authorization in production, no race
