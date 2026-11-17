@@ -141,7 +141,7 @@ def _validate_details(kind: str, details: dict[str, Any]) -> None:
         if any(not str(k).strip() or v not in EQUIPMENT_STATES for k, v in items.items()):
             raise Invalid("Each equipment item must be named and marked present or missing")
     elif kind == "battery_check":
-        soc = details.get("soc_pct")
+        soc: Any = details.get("soc_pct")
         if set(details) != {"soc_pct"} or not _positive_int(soc) or soc > 100:
             raise Invalid('Battery check details must be {"soc_pct": 1..100}')
 
@@ -236,24 +236,23 @@ def withdraw_readiness_policy(actor: Any, *, version: int, reason: str) -> dict[
 # ------------------------------------------------------------------ evidence
 def _lock_visit_and_robot(
     visit_code: str, label: str, share_persons: list[int] | None = None
-) -> tuple[Visit, Robot]:
+) -> tuple[Visit, Robot, int]:
     """Read the visit, lock robot S (+ persons S) then visit U, re-read; retry if the visit was re-planned."""
     v = _visit(visit_code)
     r = v.current_revision
     if r is None or r.robot_id is None:
         raise Conflict(f"Visit {visit_code} has no robot assigned")
-    lock_guards(
-        share_robots=[r.robot_id], share_persons=share_persons or [], update_visits=[v.pk], label=label
-    )
+    robot_id: int = r.robot_id
+    lock_guards(share_robots=[robot_id], share_persons=share_persons or [], update_visits=[v.pk], label=label)
     v.refresh_from_db()
     if v.current_revision_id != r.pk:
         raise RetryTransaction()  # re-planned between our read and our locks: we may hold the old robot
     if v.status == "cancelled":
         raise Conflict(f"Visit {visit_code} is cancelled")
-    robot = Robot.objects.get(pk=r.robot_id)
+    robot = Robot.objects.get(pk=robot_id)
     if robot.current_manifest_id is None:
         raise Conflict(f"Robot {robot.code} has no configuration manifest")
-    return v, robot
+    return v, robot, robot.current_manifest_id
 
 
 def record_evidence(
@@ -292,10 +291,10 @@ def record_evidence(
         if observed_at is not None and observed_at.tzinfo is None:
             raise Invalid("observed_at must be timezone-aware")
 
-        v, robot = _lock_visit_and_robot(visit_code, "readiness.record_evidence")
+        v, robot, manifest_id = _lock_visit_and_robot(visit_code, "readiness.record_evidence")
         rev = v.current_revision
         assert rev is not None
-        manifest = ConfigurationManifest.objects.get(pk=robot.current_manifest_id)
+        manifest = ConfigurationManifest.objects.get(pk=manifest_id)
         inspection = None
         when = observed_at
         if inspection_code:
@@ -415,7 +414,7 @@ def record_recovery_plan(
         on_call, escalation = _person(on_call_code), _person(escalation_code)
         if on_call.pk == escalation.pk:
             raise Invalid("The escalation contact must differ from the on-call engineer")
-        v, robot = _lock_visit_and_robot(
+        v, robot, manifest_id = _lock_visit_and_robot(
             visit_code, "readiness.record_recovery_plan", share_persons=[on_call.pk, escalation.pk]
         )
         rev = v.current_revision
@@ -423,7 +422,7 @@ def record_recovery_plan(
         plan = RecoveryPlan.objects.create(
             visit=v,
             revision=rev,
-            manifest_id=robot.current_manifest_id,
+            manifest_id=manifest_id,
             on_call_engineer=on_call,
             escalation_contact=escalation,
             escalation_path=escalation_path,
@@ -433,7 +432,7 @@ def record_recovery_plan(
         return Outcome(
             "recovery_plan",
             str(plan.pk),
-            {"visit": v.code, "revision": rev.revision_no, "manifest_id": robot.current_manifest_id},
+            {"visit": v.code, "revision": rev.revision_no, "manifest_id": manifest_id},
         )
 
     return run_command(
