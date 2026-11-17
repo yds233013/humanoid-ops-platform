@@ -93,11 +93,13 @@ def local_to_utc(naive: datetime, tzname: str) -> datetime:
     tz = ZoneInfo(tzname)
     first = naive.replace(tzinfo=tz, fold=0)
     second = naive.replace(tzinfo=tz, fold=1)
-    if first.utcoffset() != second.utcoffset():
-        raise Invalid(f"{naive:%Y-%m-%d %H:%M} is ambiguous in {tzname} (clocks fall back); give a UTC time")
+    # A wall time inside the spring-forward gap does not survive a round trip through UTC.
     roundtrip = first.astimezone(ZoneInfo("UTC")).astimezone(tz).replace(tzinfo=None)
     if roundtrip != naive:
         raise Invalid(f"{naive:%Y-%m-%d %H:%M} does not exist in {tzname} (clocks spring forward)")
+    # A wall time in the fall-back hour exists twice, with two different offsets.
+    if first.utcoffset() != second.utcoffset():
+        raise Invalid(f"{naive:%Y-%m-%d %H:%M} is ambiguous in {tzname} (clocks fall back); give a UTC time")
     return first.astimezone(ZoneInfo("UTC"))
 
 

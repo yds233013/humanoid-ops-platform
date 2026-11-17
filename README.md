@@ -2,7 +2,7 @@
 
 An internal operations platform for a small fleet of home humanoid robots. It coordinates and records operations. It does **not** control robots, implement emergency stops, or certify physical safety.
 
-**Status:** Slice 0 (foundation) + Slice 1 (fleet core) built and tested. Slice 2 waits for review. Data is synthetic only.
+**Status:** Slice 0 (foundation), Slice 1 (fleet core) and Slice 2 (visit planning and scheduling) built and tested. Slice 3 waits for review. Data is synthetic only.
 
 ## Quick start
 
@@ -78,9 +78,30 @@ Open http://localhost:8000 after `docker compose up --build`. Log in as `dev_ops
 
 Demo data: R-01 and R-04 eligible; R-02 held by a failed inspection; R-03 held by an incident and waiting on the founder; R-05 on an engineering-only build. The hold policy is deliberately a **draft**: no safety approval is faked.
 
+## Slice 2: visit planning and scheduling
+
+Open http://localhost:8000/planning/ for the week planner, visit pages and sites.
+
+- **Sites:** opaque codes with a coarse zone, IANA timezone and CRM reference. No names or addresses.
+  - Assessments are versioned and need a second person to approve.
+  - Consent is verified per pseudonymous participant: form version, scope (presence / recording / remote view), evidence reference. Withdrawal takes effect immediately.
+  - An unknown adult count means **Requires review**.
+- **Crew and vans:** qualifications must cover the **whole** activity. A vehicle with unknown capacity or restraint kit can't carry a robot.
+- **Feasibility:** "Planning feasible", "Blocked" or "Requires review", each with explained blockers.
+  - Unknown durations block planning: travel, loading, inspection, charging.
+  - **Never** permission to depart.
+- **Reservations:** a robot is booked separately for inspection, loading, travel, on site, unloading and charging. Crew and van are booked from inspection to unloading.
+  - Overlaps are rejected **by PostgreSQL** (a btree_gist exclusion constraint on `[start, end)`), even with app locks bypassed.
+  - Back-to-back bookings are fine.
+- **Revisions:** plan, reschedule and cancel are atomic. Every change is a new revision. A refused reschedule leaves the confirmed plan untouched. Confirm re-checks everything live.
+- **Time:** stored in UTC. Site-local times that don't exist (spring forward) or are ambiguous (fall back) are refused, not guessed.
+- **Locks:** see `docs/02_lock_graph.md`.
+
+Demo: V-0001 confirmed; V-0002 blocked (crew and van conflict); V-0003 requires review (restricted home); V-0004 blocked (consent withdrawn).
+
 ## Not built yet (by design)
 
-- Visits, departure authorization, scheduling, sites and consent, maintenance, teleoperation, analytics.
+- Departure authorization, field execution, maintenance, teleoperation, analytics.
 - Task, site and vehicle hold scopes. They arrive with their domains.
 - SSO: local accounts for now. The identity provider is unknown (blocker B-09).
 - Deployment: no target environment yet.
