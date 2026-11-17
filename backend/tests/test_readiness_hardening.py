@@ -527,9 +527,10 @@ def _raw_new_revision(cur, rev: VisitRevision) -> None:
 
 def test_departed_visit_cannot_be_replanned_by_direct_sql(w, app_role_conn):
     _reschedule_and_confirm(w)  # two revisions, so there is an older one to point back to
+    w.record_all_evidence(w.visit)  # evidence + recovery plan for the new revision
     first = VisitRevision.objects.get(visit=_visit(w), revision_no=1)
     with app_role_conn.cursor() as cur:  # control: before departure the raw revision insert is accepted
-        other = Visit.objects.get(code=w.new_confirmed_visit())
+        other = Visit.objects.get(code=w.new_confirmed_visit(robot="R-02", h0=15, h1=16))
         _raw_new_revision(cur, other.current_revision)
     _depart_now(w)
     v = _visit(w)

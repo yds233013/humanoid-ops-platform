@@ -14,7 +14,8 @@ stay and now run these bodies.
    - ``policy_id = readiness_active_policy_id()``;
    - ``guard_snapshot`` with exactly the section 5 keys, every value equal to the LIVE guard rows
      (``readiness_guard_problem``), so a direct-SQL authorization cannot carry a made-up snapshot.
-   Locks: site S -> pattern S -> robot S -> persons S (ascending) -> vehicle S -> visit S -> policy S.
+   Locks: site S -> pattern S -> robot S -> persons S (ascending) -> vehicle S -> visit S -> policies S
+   (this one and every newer one, ascending id).
 
 3. DEPARTURE INSERT (direct-SQL bypass resistance). In addition to 0002's structural checks (single use, not
    revoked, ``clock_timestamp() < expires_at``, current revision, visit confirmed, current manifest, policy
@@ -27,12 +28,29 @@ stay and now run these bodies.
        vehicle_id of the revision, policy_id = readiness_active_policy_id() and its lock_version.
    Plus: when ``fleet_setting('demo_mode') <> 'true'`` an authorization issued in mode 'demo' or on a
    synthetic_demo policy is refused; ``recorded_by`` must hold an active ops_lead or field_operator role.
-   Locks: site S -> pattern S -> robot S -> persons S (ascending) -> vehicle S -> visit S -> policy S ->
-   authorization S (the global order; record_departure already holds all of them).
+   Locks: site S -> pattern S -> robot S -> persons S (ascending) -> vehicle S -> visit S -> policies S ->
+   authorization S (the global order; record_departure already holds all of them except newer policies).
 
-   Because every hold, consent/assessment/headcount change, qualification grant/revoke, manifest change,
-   reschedule, evidence/void/recovery plan, and policy approval/withdrawal bumps one of these guard versions,
-   a departure inserted with a copied snapshot after any of them is refused by PostgreSQL alone.
+   Locks: the policy step locks the authorization's policy AND every newer policy row FOR SHARE, so a
+   concurrent activation (the approval trigger UPDATEs the newer policy row) serializes with the departure.
+   With locks held the live reads cannot move under the trigger: a writer that got there first makes the
+   departure wait and then fail on the new version; a departure that got there first makes the writer wait.
+
+   Writers of what the snapshot depends on, and the guard each bumps (by trigger, so raw SQL bumps too):
+     robot.version     any fleet_robot UPDATE: manifest change, lifecycle, robot-scope hold place/release,
+                       base authorization grant/revoke, and fleet_bump_pattern (robots on the pattern)
+     pattern.version   pattern-scope hold place/release, pattern decision, capability profile insert,
+                       capability approval
+     site.version      any planning_site UPDATE (expected adults), consent insert/withdrawal, assessment
+                       insert, assessment approval
+     person.version    qualification insert/revoke
+     visit.version     any planning_visit UPDATE (plan/reschedule, confirm, cancel), evidence insert, void,
+                       recovery plan insert, and (NEW here) reservation or vehicle-trip release and any
+                       planning_vehicle UPDATE for visits whose current revision uses that vehicle
+     policy            approval/withdrawal bump lock_version; activating a newer version changes
+                       readiness_active_policy_id()
+   Not versioned (re-evaluated by the command only): role grants, deployment settings other than demo_mode,
+   time windows, hold release policies.
 
    WHAT THE DATABASE STILL DOES NOT ENFORCE (only the command's evaluate_readiness under locks does):
    - the readiness gates themselves at AUTHORIZATION time: the triggers check the snapshot equals the live
