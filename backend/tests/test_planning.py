@@ -280,3 +280,25 @@ def test_planner_pages_render_and_plan_form_works(w):
     assert "Plan saved" in page and "Planning feasible" in page
     week = c.get(f"/planning/?week={DAY.isoformat()}").content.decode()
     assert v in week
+
+
+# ---------- Slice 2 closure fixes
+def test_invalid_counts_and_durations_are_refused(w):
+    with pytest.raises(Invalid):
+        p.create_site(w.ops, code="S-0", zone="z", tz=TZ, crm_ref="c", expected_adults=0)
+    with pytest.raises(Invalid):
+        p.register_vehicle(w.ops, code="VAN-0", robot_capacity=0)
+    with pytest.raises(Invalid):
+        p.request_visit(
+            w.ops,
+            site_code="S-1",
+            on_site_start=at(DAY, 10),
+            on_site_end=at(DAY, 11),
+            travel_out_min=0,
+            travel_back_min=30,
+        )
+    v = new_visit(w)
+    with pytest.raises(Invalid):
+        plan(w, v, travel_out_min=-5)
+    set_setting("pre_visit_inspection_min", "0")
+    assert any("inspection duration" in m for m in plan(w, v)["blockers"])

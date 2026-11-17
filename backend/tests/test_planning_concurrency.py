@@ -146,3 +146,42 @@ def test_consent_withdrawal_first_then_confirm_is_refused(w):
     assert blocked and isinstance(first, dict) and isinstance(second, Conflict)
     assert "consent" in str(second)
     assert Visit.objects.get(code=v).status == "planned"
+
+
+def test_reschedule_between_confirm_read_and_lock_is_detected_and_retried(w):
+    """confirm_visit reads revision rN, then a reschedule commits rN+1 with a DIFFERENT robot before confirm
+    takes its locks. Confirm must notice, retry with the current revision's locks, and judge rN+1."""
+    from tests.planning_world import DAY, at
+
+    v = new_visit(w)
+    plan(w, v)
+    fs.place_hold(w.ops, scope="robot", target="R-02", source_type="manual", reason="R-02 is held")
+    paused, go, out = threading.Event(), threading.Event(), {}
+    calls = {"n": 0}
+
+    def hook():
+        calls["n"] += 1
+        if calls["n"] == 1:  # only the first attempt pauses
+            paused.set()
+            assert go.wait(20)
+
+    testhooks.register("read:planning.confirm_visit", hook)
+
+    def confirm():
+        try:
+            out["confirm"] = p.confirm_visit(w.ops, visit_code=v)
+        except Exception as e:  # noqa: BLE001
+            out["confirm"] = e
+        finally:
+            connection.close()
+
+    t = threading.Thread(target=confirm)
+    t.start()
+    assert paused.wait(20)
+    # reschedule to the HELD robot R-02 is blocked... so instead switch to R-03 (eligible) at a new time
+    out["resched"] = plan(w, v, robot="R-03", on_site_start=at(DAY, 13), on_site_end=at(DAY, 14))
+    go.set()
+    t.join(30)
+    assert calls["n"] == 2, "confirm must have retried after detecting the newer revision"
+    assert out["confirm"]["revision"] == out["resched"]["revision"]
+    assert Visit.objects.get(code=v).status == "confirmed"

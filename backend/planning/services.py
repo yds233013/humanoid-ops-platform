@@ -31,8 +31,9 @@ from planning.models import (
     Visit,
     VisitRevision,
 )
-from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, run_command
+from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, RetryTransaction, run_command
 from platform_core.locks import lock_guards
+from platform_core.testhooks import checkpoint
 
 User = get_user_model()
 
@@ -83,8 +84,18 @@ def _robot(code: str | None) -> Robot | None:
 
 
 def _int_setting(key: str) -> int | None:
+    """A positive whole number of minutes, or None (unknown/invalid -> the caller blocks)."""
     v = fleet_services.setting(key)
-    return int(v) if v else None
+    try:
+        n = int(v) if v else None
+    except ValueError:
+        return None
+    return n if n and n > 0 else None
+
+
+def _positive(name: str, value: int | None) -> None:
+    if value is not None and value <= 0:
+        raise Invalid(f"{name} must be a positive number of minutes")
 
 
 def local_to_utc(naive: datetime, tzname: str) -> datetime:
@@ -267,7 +278,12 @@ def evaluate(
             snap["pattern_version"] = pattern.version
             prof: CapabilityProfile | None = fleet_services.approved_profile(pattern)
             if prof is not None:
-                load, charge = prof.load_unload_min, prof.charge_turnaround_min
+                load = prof.load_unload_min if prof.load_unload_min and prof.load_unload_min > 0 else None
+                charge = (
+                    prof.charge_turnaround_min
+                    if prof.charge_turnaround_min and prof.charge_turnaround_min > 0
+                    else None
+                )
                 snap["capability_profile_id"] = prof.pk
         if load is None:
             _add(
@@ -414,6 +430,8 @@ def create_site(
     actor: Any, *, code: str, zone: str, tz: str, crm_ref: str, expected_adults: int | None = None
 ) -> dict[str, Any]:
     def handler() -> Outcome:
+        if expected_adults is not None and expected_adults < 1:
+            raise Invalid("Expected adults must be at least 1, or unknown")
         try:
             ZoneInfo(tz)
         except (ZoneInfoNotFoundError, ValueError):
@@ -447,6 +465,8 @@ def create_site(
 
 def set_expected_adults(actor: Any, *, site_code: str, expected_adults: int | None) -> dict[str, Any]:
     def handler() -> Outcome:
+        if expected_adults is not None and expected_adults < 1:
+            raise Invalid("Expected adults must be at least 1, or unknown")
         s = _site(site_code)
         lock_guards(update_sites=[s.pk], label="planning.set_expected_adults")
         s.refresh_from_db()
@@ -664,6 +684,8 @@ def register_vehicle(
     actor: Any, *, code: str, robot_capacity: int | None = None, restraint_kit: str = ""
 ) -> dict[str, Any]:
     def handler() -> Outcome:
+        if robot_capacity is not None and robot_capacity < 1:
+            raise Invalid("Robot capacity must be at least 1, or unknown")
         if Vehicle.objects.filter(code=code).exists():
             raise Conflict(f"Vehicle {code} exists")
         v = Vehicle.objects.create(code=code, robot_capacity=robot_capacity, restraint_kit=restraint_kit)
@@ -712,6 +734,8 @@ def request_visit(
             raise Invalid("Times must be timezone-aware (convert site-local times with local_to_utc)")
         if on_site_end <= on_site_start:
             raise Invalid("The visit must end after it starts")
+        _positive("Travel out", travel_out_min)
+        _positive("Travel back", travel_back_min)
         s = _site(site_code)
         lock_guards(share_sites=[s.pk], label="planning.request_visit")
         v = Visit.objects.create(code=_next_visit_code(), site=s, created_by=actor)
@@ -795,6 +819,10 @@ def plan_visit(
     }
 
     def handler() -> Outcome:
+        _positive("Travel out", travel_out_min)
+        _positive("Travel back", travel_back_min)
+        if on_site_start and on_site_end and on_site_end <= on_site_start:
+            raise Invalid("The visit must end after it starts")
         v = _visit(visit_code)
         robot, lead, second, vehicle = (
             _robot(robot_code),
@@ -940,6 +968,7 @@ def confirm_visit(actor: Any, *, visit_code: str) -> dict[str, Any]:
         v = _visit(visit_code)
         r = v.current_revision
         assert r is not None
+        checkpoint("read:planning.confirm_visit")
         pid = fleet_services._current_pattern_id(r.robot) if r.robot else None
         lock_guards(
             share_sites=[v.site_id],
@@ -951,6 +980,9 @@ def confirm_visit(actor: Any, *, visit_code: str) -> dict[str, Any]:
             label="planning.confirm_visit",
         )
         v.refresh_from_db()
+        if v.current_revision_id != r.pk:
+            # Rescheduled between our read and our locks: we may hold the OLD resources' locks.
+            raise RetryTransaction()
         if v.status != "planned":
             raise Conflict(f"Only a planned visit can be confirmed (status {v.status})")
         plan = live_feasibility(v)
@@ -962,7 +994,14 @@ def confirm_visit(actor: Any, *, visit_code: str) -> dict[str, Any]:
         v.status = "confirmed"
         v.save(update_fields=["status"])
         return Outcome(
-            "visit", v.code, {"status": "confirmed", "note": NOT_DEPARTURE, "snapshot": plan.snapshot}
+            "visit",
+            v.code,
+            {
+                "status": "confirmed",
+                "revision": r.revision_no,
+                "note": NOT_DEPARTURE,
+                "snapshot": plan.snapshot,
+            },
         )
 
     return run_command(

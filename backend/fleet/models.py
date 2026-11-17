@@ -79,7 +79,16 @@ class CapabilityProfile(models.Model):
     published_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["pattern", "version_no"], name="uniq_profile_version")]
+        constraints = [
+            models.UniqueConstraint(fields=["pattern", "version_no"], name="uniq_profile_version"),
+            *[
+                models.CheckConstraint(
+                    condition=Q(**{f"{f}__isnull": True}) | Q(**{f"{f}__gte": 1}),
+                    name=f"profile_{f}_positive",
+                )
+                for f in ("lift_crew", "max_runtime_min", "charge_turnaround_min", "load_unload_min")
+            ],
+        ]
 
     def __str__(self) -> str:
         return f"{self.pattern_id} v{self.version_no}"

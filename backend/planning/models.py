@@ -22,6 +22,14 @@ class Site(models.Model):
     created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(expected_adults__isnull=True) | Q(expected_adults__gte=1),
+                name="site_expected_adults_positive",
+            )
+        ]
+
     def __str__(self) -> str:
         return self.code
 
@@ -121,6 +129,14 @@ class Vehicle(models.Model):
     restraint_kit = models.CharField(max_length=60, blank=True)  # empty = unknown -> blocks cargo
     notes = models.TextField(blank=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(robot_capacity__isnull=True) | Q(robot_capacity__gte=1),
+                name="vehicle_capacity_positive",
+            )
+        ]
+
     def __str__(self) -> str:
         return self.code
 
@@ -217,6 +233,11 @@ class VehicleTrip(models.Model):
     depart_at = models.DateTimeField()
     return_at = models.DateTimeField()
     released_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(return_at__gt=models.F("depart_at")), name="trip_window")
+        ]
 
     def __str__(self) -> str:
         return f"trip {self.pk}"

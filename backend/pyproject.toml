@@ -33,6 +33,7 @@ select = ["E", "F", "I", "B", "UP", "DJ"]
 
 [tool.ruff.lint.per-file-ignores]
 "*/migrations/*" = ["E501"]
+"tests/*" = ["E501"]  # long raw-SQL strings in database tests
 "fleet/models.py" = ["DJ001"]  # NULL deliberately means UNKNOWN on capability fields
 
 [tool.mypy]

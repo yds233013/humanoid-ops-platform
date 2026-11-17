@@ -165,3 +165,64 @@ def test_two_raw_transactions_cannot_double_book(w):
     a.close(), b.close()
     assert sorted(outcomes) == ["ok", "rejected"]
     assert Reservation.objects.filter(resource=res, starts_at=s0, released_at__isnull=True).count() == 1
+
+
+# ---------- Slice 2 closure fixes
+def test_duplicate_active_consent_for_one_participant_is_rejected(w, app_role_conn):
+    from planning.models import ConsentRecord, Site
+
+    site = Site.objects.get(code="S-1")
+    c = ConsentRecord.objects.filter(site=site).first()
+    with app_role_conn.cursor() as cur, pytest.raises(psycopg.errors.UniqueViolation):
+        cur.execute(
+            "INSERT INTO planning_consentrecord (site_id, participant_ref, form_version, scope, evidence_ref, "
+            "verified_by_id, verified_at) VALUES (%s, %s, 'CF-v1', '[\"presence\"]', 'dup', %s, now())",
+            [site.pk, c.participant_ref, c.verified_by_id],
+        )
+
+
+def test_assessor_cannot_approve_own_assessment_in_sql(w, app_role_conn):
+    from planning.models import SiteAssessment
+
+    a = SiteAssessment.objects.filter(site__code="S-1").first()
+    with app_role_conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO planning_siteassessment (site_id, decision, restrictions, excluded_tasks, valid_until, "
+            "assessed_by_id, assessed_at) VALUES (%s, 'eligible', '', '[]', '2027-01-01', %s, now()) RETURNING id",
+            [a.site_id, w.ops.pk],
+        )
+        own = cur.fetchone()[0]
+        with pytest.raises(psycopg.Error, match="cannot approve their own"):
+            cur.execute(
+                "INSERT INTO planning_assessmentapproval (assessment_id, approver_id, approved_at) "
+                "VALUES (%s, %s, now())",
+                [own, w.ops.pk],
+            )
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "UPDATE planning_site SET expected_adults = 0 WHERE code = 'S-1'",
+        "INSERT INTO planning_vehicle (code, robot_capacity, restraint_kit, notes) VALUES ('BAD', 0, 'k', '')",
+        "UPDATE fleet_capabilityprofile SET load_unload_min = 0",
+    ],
+)
+def test_non_positive_physical_values_are_rejected(w, app_role_conn, sql):
+    with app_role_conn.cursor() as cur, pytest.raises(psycopg.Error):
+        cur.execute(sql)
+
+
+def test_reversed_or_empty_intervals_are_rejected(w, app_role_conn):
+    _, rev, res, on_site = _fixture_rows(w)
+    with app_role_conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute(INSERT, [res.pk, rev.pk, on_site.ends_at, on_site.ends_at])  # zero length
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute(INSERT, [res.pk, rev.pk, on_site.ends_at, on_site.starts_at])  # reversed
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute(
+                "INSERT INTO planning_vehicletrip (revision_id, vehicle_id, depart_at, return_at) "
+                "SELECT %s, id, now(), now() - interval '1 hour' FROM planning_vehicle WHERE code = 'VAN-1'",
+                [rev.pk],
+            )

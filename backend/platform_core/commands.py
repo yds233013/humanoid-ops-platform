@@ -33,6 +33,12 @@ MAX_ATTEMPTS = 3
 REFUSED_SQLSTATES = {"23514", "23505", "42501"}  # check violation, unique violation, insufficient privilege
 
 
+class RetryTransaction(Exception):  # noqa: N818 - control-flow signal, not an error
+    """Raised by a handler that found its preconditions changed after taking locks (e.g. a visit was
+    rescheduled between reading it and locking its resources). run_command restarts the whole transaction
+    so the handler re-reads and locks the CURRENT rows."""
+
+
 class CommandError(Exception):
     status = 400
     code = "command_error"
@@ -105,6 +111,10 @@ def run_command(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             return _attempt(actor, name, permission, payload, handler, idempotency_key)
+        except RetryTransaction:
+            if attempt < MAX_ATTEMPTS:
+                continue
+            raise Conflict("The record kept changing while this command ran; try again") from None
         except PermissionDenied as denied:
             AuditEvent.objects.create(
                 actor=actor,
