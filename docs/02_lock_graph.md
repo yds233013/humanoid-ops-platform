@@ -38,6 +38,11 @@ Within a table, ids are locked in ascending order (`platform_core.locks.lock_gua
 | consent insert/withdraw, assessment insert, assessment approval | `planning_site` version | Yes: site U |
 | qualification insert/revoke | `planning_person` version | Yes: person U |
 | any visit update | its own `version` (BEFORE UPDATE) | Yes: visit U |
+| readiness policy approval / withdrawal | policy `lock_version` | Yes: policy U |
+| evidence insert / void, recovery plan insert | robot S (and persons S), then visit version | Yes: robot S, persons S, visit U |
+| departure authorization insert | locks robot S, visit S, policy S | Yes: command holds them |
+| authorization revocation insert | authorization U | Yes: visit U, authorization U |
+| departure event insert | robot S, visit S, policy S, authorization S | Yes: command holds them |
 | trip cargo insert | locks `planning_vehicletrip` U | The trip was created in the same transaction; last in the order |
 
 ## Tests that prove it

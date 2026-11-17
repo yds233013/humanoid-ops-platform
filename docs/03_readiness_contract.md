@@ -284,3 +284,43 @@ policy is detected by `policy_id` != current policy id.
 - Direct-SQL tests connect as `ops_app` (`app_role_conn`).
 - Gate before handing back: `ruff check`, `ruff format --check`, `mypy .`, `makemigrations --check`, full
   `pytest`.
+
+## 7. As built by Engineer A (commit 473fe38) - B, C, D code against this
+
+Models in `readiness.models` (reverse names in brackets):
+- `ReadinessPolicy`: version, requirements, source, notes, created_by, created_at, lock_version
+  [approvals, withdrawal, authorizations]
+- `ReadinessPolicyApproval`: policy, slot, approver, approved_at
+- `ReadinessPolicyWithdrawal`: policy (1:1 `withdrawal`), withdrawn_by, reason, withdrawn_at
+- `ReadinessEvidence`: code (EV-0001), visit [`readiness_evidence`], revision, robot, manifest, kind, result,
+  inspection, details, observed_at (DB default), recorded_by, recorded_at
+- `ReadinessEvidenceVoid`: evidence (1:1 `void`), voided_by, reason, voided_at
+- `RecoveryPlan`: visit [`recovery_plans`], revision, manifest, on_call_engineer, escalation_contact,
+  escalation_path, required_equipment, recorded_by, recorded_at
+- `DepartureAuthorization`: code (`nextval('readiness_authorization_code_seq')`, format DA-0001), visit
+  [`authorizations`], revision, robot, manifest, policy, mode, guard_snapshot, evidence_ids, recovery_plan,
+  issued_by, issued_at (forced to clock_timestamp() by trigger), expires_at
+- `AuthorizationRevocation`: authorization (1:1 `revocation`), revoked_by, reason, revoked_at
+- `DepartureEvent`: authorization (1:1 `departure`), visit [`departures`], robot, departed_at (forced to
+  clock_timestamp()), recorded_by, guard_snapshot
+- Constants `EVIDENCE_KINDS`, `POLICY_SLOTS`. `readiness.evidence` exports the six commands,
+  `current_policy()`, `policy_status()`, `validate_requirements()`.
+
+Trigger facts that matter to C:
+- The authorization trigger also requires: the recovery plan (when the policy needs one) for the same visit,
+  revision and manifest; every `evidence_ids` entry non-voided and for the same visit/revision/manifest;
+  `guard_snapshot` keys `visit_id, revision_id, robot_id, manifest_id, policy_id` matching the row; `mode`
+  matching the `demo_mode` setting.
+- **Take time from PostgreSQL** (`SELECT clock_timestamp()`), not the app clock, when computing `expires_at`;
+  the trigger compares against DB time and the TTL check is exact.
+- Departure trigger requires `guard_snapshot` equal to the authorization's, and locks robot S -> visit S ->
+  policy S -> authorization S (all already held by the command).
+
+Test world `tests/readiness_world.py`: `build_readiness(prefix)` -> `w.visit` (confirmed, all evidence and a
+recovery plan), `w.policy_version`, `w.evidence` (kind -> code), `w.inspection`, `w.recovery_plan_id`,
+`w.lead2`; helpers `make_policy`, `new_confirmed_visit`, `record_inspection`, `record_all_evidence`,
+`requirements(**overrides)`; constants `REQUIREMENTS`, `EQUIPMENT_ALL_PRESENT`, `RECOVERY_EQUIPMENT`,
+`MIN_DEPARTURE_SOC = 60`, `BATTERY_SOC = 85`.
+
+Left to B's gates (not enforced in the DB): an equipment check marked `pass` with an item `missing`; whether
+the on-call person is actually an engineer (report as `review`, not `blocked`, since roles live on users).
