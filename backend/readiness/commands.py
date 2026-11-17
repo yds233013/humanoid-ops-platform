@@ -7,8 +7,10 @@ real-world clearance, and production refuses unless a genuinely approved procedu
 
 Every command: run_command (auth, idempotency, in-transaction permission) -> read -> checkpoint("read:...")
 -> lock_guards in the global order -> re-read -> RetryTransaction if what we locked is no longer what the
-decision depends on -> checks -> insert. PostgreSQL re-checks the structural rules (migration readiness/0002)
-and the single-use rule (unique authorization on DepartureEvent).
+decision depends on -> checks -> insert. Authorizations are inserted ONLY through the SECURITY DEFINER
+function readiness_issue_authorization (migration readiness/0005; the runtime role has no INSERT on the
+table), which re-proves the database-checkable readiness gates. PostgreSQL also re-checks the structural
+rules (migration readiness/0002) and the single-use rule (unique authorization on DepartureEvent).
 
 Locks (U = FOR UPDATE, S = FOR SHARE), after run_command's role-grant S:
   authorize_departure   settings S (advisory), site S, pattern S, robot S, persons S (lead, second,
@@ -25,6 +27,7 @@ evaluator and the explicit mode checks below (settings are read only after the l
 not depend on settings and does not take it.
 """
 
+import json
 from typing import Any
 
 from django.db import connection
@@ -71,10 +74,34 @@ def _has_role_now(user: Any, role: str) -> bool:
         return bool(cur.fetchone()[0])
 
 
-def _next_code() -> str:
+def _issue(
+    *,
+    visit_id: int,
+    issued_by: int,
+    expires_at: Any,
+    evidence_ids: list[int],
+    recovery_plan_id: int | None,
+    guard_snapshot: dict[str, Any],
+    mode: str,
+) -> int:
+    """Issue via readiness_issue_authorization (SECURITY DEFINER, migration readiness/0005); returns the id.
+
+    The function re-locks only rows this command already holds (settings S, site S, pattern S, robot S,
+    persons S, vehicle S, visit S under our U, policy S), so the lock order is unchanged."""
     with connection.cursor() as cur:
-        cur.execute("SELECT nextval('readiness_authorization_code_seq')")
-        return f"DA-{cur.fetchone()[0]:04d}"
+        cur.execute(
+            "SELECT id FROM readiness_issue_authorization(%s, %s, %s, %s::jsonb, %s, %s::jsonb, %s)",
+            [
+                visit_id,
+                issued_by,
+                expires_at,
+                json.dumps(evidence_ids),
+                recovery_plan_id,
+                json.dumps(guard_snapshot),
+                mode,
+            ],
+        )
+        return int(cur.fetchone()[0])
 
 
 def _ids(snap: dict[str, Any], key: str) -> set[int]:
@@ -159,21 +186,19 @@ def authorize_departure(actor: Any, *, visit_code: str, idempotency_key: str | N
             )
         rev = v.current_revision
         assert rev is not None and rev.robot_id is not None
-        auth = DepartureAuthorization.objects.create(
-            code=_next_code(),
-            visit=v,
-            revision=rev,
-            robot_id=rev.robot_id,
-            manifest_id=result.manifest_id,
-            policy=policy,
-            mode=mode,
-            guard_snapshot=result.guard_snapshot,
-            evidence_ids=list(result.evidence_ids),
-            recovery_plan_id=result.recovery_plan_id,
-            issued_by=actor,
-            expires_at=result.expires_at,
+        # The runtime role has no INSERT on the table: issuance goes through the database write boundary
+        # (readiness/0005), which re-proves the database-checkable gates under the same locks.
+        auth = DepartureAuthorization.objects.get(
+            pk=_issue(
+                visit_id=v.pk,
+                issued_by=actor.pk,
+                expires_at=result.expires_at,
+                evidence_ids=list(result.evidence_ids),
+                recovery_plan_id=result.recovery_plan_id,
+                guard_snapshot=result.guard_snapshot,
+                mode=mode,
+            )
         )
-        auth.refresh_from_db(fields=["issued_at", "expires_at"])  # issued_at is forced to DB time by trigger
         return Outcome(
             "departure_authorization",
             auth.code,
