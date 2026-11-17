@@ -149,7 +149,8 @@ class Resource(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.kind}:{self.robot_id or self.person_id or self.vehicle_id}"
+        target = self.robot or self.person or self.vehicle
+        return f"{self.get_kind_display()} {target.code if target else '?'}"
 
 
 class Visit(models.Model):
