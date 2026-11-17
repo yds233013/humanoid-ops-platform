@@ -1,0 +1,14 @@
+{% if demo_banner %}<div class="banner rx-demo" role="status"><b>{{ demo_banner }}</b>. Readiness and authorizations on this page are a synthetic workflow exercise only.</div>{% endif %}
+<p class="row rx-nav"><a href="/readiness/">Readiness</a> · <a href="/readiness/policies/">Readiness policies</a> · <a href="/planning/">Planner</a> · <a href="/fleet/">Fleet</a></p>
+<style>
+ .rx-demo{background:var(--amberbg);border:2px solid #E9C46A;color:var(--amber);position:sticky;top:0;z-index:5}
+ .badge.feasible,.badge.ready,.badge.usable,.badge.approved{background:var(--bluebg);color:var(--blue);border-color:#9CC0E4}
+ .badge.blocked,.badge.incomplete,.badge.revoked,.badge.invalidated,.badge.withdrawn{background:var(--redbg);color:var(--red);border-color:#E7A1A1}
+ .badge.review,.badge.expired,.badge.draft,.badge.synthetic{background:var(--amberbg);color:var(--amber);border-color:#E9C46A}
+ .badge.used,.badge.clear,.badge.none{background:#F1EFEA;color:var(--ink);border-color:var(--line)}
+ tr.voided td{color:var(--soft);text-decoration:line-through} tr.voided td.keep{text-decoration:none}
+ form.inline{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+ pre{margin:0;font-size:12px;white-space:pre-wrap}
+ .tablewrap{overflow-x:auto}
+ fieldset{border:1px solid var(--line);border-radius:6px;margin:8px 0;padding:8px}
+</style>

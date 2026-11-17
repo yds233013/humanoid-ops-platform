@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}{{ visit.code }} readiness{% endblock %}
+{% block content %}
+{% include "readiness/_chrome.html" %}
+<p><a href="/readiness/">&larr; Readiness</a> · <a href="/planning/visits/{{ visit.code }}/">Planner view of {{ visit.code }}</a></p>
+<h1>{{ visit.code }} <span class="muted">{{ visit.site.code }} · {{ visit.get_status_display }}{% if rev %} · revision {{ rev.revision_no }}{% if rev.robot %} · {{ rev.robot.code }}{% endif %}{% endif %}</span></h1>
+{% if start %}<p class="muted">On site {{ start|date:"D j M H:i" }} ({{ tz }})</p>{% endif %}
+
+<div class="card">
+  <h2>Status (checked now)</h2>
+  <div class="row">
+    <span>Planning: <span class="badge {{ planning_state }}">{{ planning_label }}</span></span>
+    <span>Readiness: <span class="badge {{ readiness_state }}">{{ result.label }}</span></span>
+    <span>Authorization: {% if auth %}<span class="badge {{ auth.state }}">{{ auth.label }}</span>{% else %}<span class="muted">None issued</span>{% endif %}</span>
+  </div>
+  {% if result.policy_version %}<p class="muted">Evaluated against readiness policy v{{ result.policy_version }}.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Readiness checklist</h2>
+  <div class="tablewrap"><table><thead><tr><th>Gate</th><th>State</th><th>Blockers and what to do</th></tr></thead><tbody>
+  {% for g in gates %}<tr><td>{{ g.name }}</td>
+    <td><span class="badge {{ g.state }}">{% if g.state == "clear" %}No blockers{% elif g.state == "review" %}Needs review{% else %}Blocked{% endif %}</span></td>
+    <td>{% for b in g.blockers %}<div class="blocker"><b>{{ b.message }}</b> <span class="muted">[{{ b.level }} · {{ b.code }}]</span><div>What to do: {{ b.action }}</div></div>{% empty %}<span class="muted">-</span>{% endfor %}</td></tr>
+  {% endfor %}</tbody></table></div>
+  {% if can.authorize_departure %}
+  <form method="post" action="/readiness/visits/{{ visit.code }}/authorize/" style="margin-top:10px" class="row">{% csrf_token %}
+    <input type="hidden" name="idempotency_key" value="{{ authorize_key }}">
+    <button class="primary">Request departure authorization</button>
+    <span class="muted">Refused unless every gate is clear. Issues a time-limited authorization; it does not record a departure.</span>
+  </form>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Authorizations</h2>
+  <div class="tablewrap"><table><thead><tr><th>Code</th><th>Status now</th><th>Issued</th><th>Expires ({{ tz }})</th><th>Policy / mode</th><th>Actions</th></tr></thead><tbody>
+  {% for a in auths %}<tr>
+    <td><b>{{ a.auth.code }}</b></td>
+    <td><span class="badge {{ a.state }}">{{ a.label }}</span>
+      {% if a.reasons %}<ul class="reasons">{% for x in a.reasons %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+      {% if a.revocation %}<div class="muted">Revoked by {{ a.revocation.revoked_by.username }}: {{ a.revocation.reason }}</div>{% endif %}</td>
+    <td>{{ a.issued_local|date:"D j M H:i" }}<div class="muted">by {{ a.auth.issued_by.username }}</div></td>
+    <td>{{ a.expires_local|date:"D j M" }} <b>{{ a.expires_local|date:"H:i" }}</b></td>
+    <td>v{{ a.auth.policy.version }} · {{ a.auth.get_mode_display }}<div class="muted">revision {{ a.auth.revision.revision_no }}</div></td>
+    <td>
+      {% if can.record_departure and a.state == "usable" %}
+      <form method="post" action="/readiness/authorizations/{{ a.auth.code }}/depart/" class="inline">{% csrf_token %}
+        <input type="hidden" name="idempotency_key" value="{{ a.depart_key }}"><button class="primary">Record departure</button></form>
+      {% endif %}
+      {% if can.revoke_authorization and a.state != "revoked" and a.state != "used" %}
+      <form method="post" action="/readiness/authorizations/{{ a.auth.code }}/revoke/" class="inline">{% csrf_token %}
+        <input name="reason" placeholder="Revocation reason (required)"><button class="primary">Revoke</button></form>
+      {% endif %}
+    </td></tr>
+  {% empty %}<tr><td colspan="6" class="muted">No authorizations for this visit.</td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
+
+<div class="card">
+  <h2>Departure events</h2>
+  <div class="tablewrap"><table><thead><tr><th>Departed ({{ tz }})</th><th>Authorization</th><th>Robot</th><th>Recorded by</th></tr></thead><tbody>
+  {% for d in departures %}<tr><td>{{ d.local|date:"D j M H:i" }}</td><td>{{ d.d.authorization.code }}</td><td>{{ d.d.robot.code }}</td><td>{{ d.d.recorded_by.username }}</td></tr>
+  {% empty %}<tr><td colspan="4" class="muted">No departure recorded.</td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
+
+<div class="card">
+  <h2>Evidence history</h2>
+  <div class="tablewrap"><table><thead><tr><th>Code</th><th>Kind</th><th>Result</th><th>Details</th><th>Observed ({{ tz }})</th><th>By</th><th>State</th></tr></thead><tbody>
+  {% for e in evidence %}<tr class="{% if e.void %}voided{% endif %}">
+    <td>{{ e.ev.code }}</td><td>{{ e.ev.get_kind_display }}</td><td>{{ e.ev.get_result_display }}</td>
+    <td>{% if e.ev.inspection %}Inspection {{ e.ev.inspection.code }}{% endif %}
+        {% if e.ev.details.soc_pct %}Battery {{ e.ev.details.soc_pct }}%{% endif %}
+        {% if e.ev.details.items %}{% for name, state in e.ev.details.items.items %}{{ name }}: {{ state }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</td>
+    <td>{{ e.observed_local|date:"D j M H:i" }}</td><td>{{ e.ev.recorded_by.username }}</td>
+    <td class="keep">{% if e.void %}<span class="badge revoked">Voided</span><div class="muted">{{ e.void.voided_by.username }}: {{ e.void.reason }}</div>
+        {% else %}{% if e.current %}Active{% else %}<span class="muted">Earlier revision r{{ e.ev.revision.revision_no }}</span>{% endif %}
+        {% if can.record_evidence %}<form method="post" action="/readiness/visits/{{ visit.code }}/void/" class="inline">{% csrf_token %}
+          <input type="hidden" name="evidence" value="{{ e.ev.code }}"><input name="reason" placeholder="Void reason (required)"><button class="primary">Void</button></form>{% endif %}
+        {% endif %}</td></tr>
+  {% empty %}<tr><td colspan="7" class="muted">No evidence recorded.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can.record_evidence %}
+  <form method="post" action="/readiness/visits/{{ visit.code }}/evidence/" style="margin-top:10px">{% csrf_token %}
+    <h2>Record evidence</h2>
+    <div class="row">
+      <label>Kind <select name="kind">{% for k, lbl in kinds %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></label>
+      <label>Result <select name="result"><option value="pass">Pass</option><option value="fail">Fail</option></select></label>
+      <label>Observed at (site time, optional) <input type="datetime-local" name="observed_at"></label>
+    </div>
+    <fieldset><legend>Pre-departure inspection</legend><label>Inspection code <input name="inspection_code" placeholder="e.g. INS-0001"></label></fieldset>
+    <fieldset><legend>Battery check</legend><label>Battery % <input name="soc_pct" type="number" min="1" max="100"></label></fieldset>
+    <fieldset><legend>Equipment check</legend><div class="row">
+      {% for name in equipment %}<input type="hidden" name="item_names" value="{{ name }}">
+      <label>{{ name }} <select name="item_{{ name }}"><option value="">not checked</option><option value="present">present</option><option value="missing">missing</option></select></label>{% endfor %}
+      <label>Other items <input name="extra_items" placeholder="name=present, name=missing"></label></div></fieldset>
+    <button class="primary">Record evidence</button>
+  </form>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Recovery plan</h2>
+  <div class="tablewrap"><table><thead><tr><th>Recorded ({{ tz }})</th><th>On-call engineer</th><th>Escalation contact</th><th>Escalation path</th><th>Equipment</th><th>Applies to</th></tr></thead><tbody>
+  {% for p in plans %}<tr><td>{{ p.local|date:"D j M H:i" }}<div class="muted">by {{ p.plan.recorded_by.username }}</div></td><td>{{ p.plan.on_call_engineer.code }}</td><td>{{ p.plan.escalation_contact.code }}</td>
+    <td>{{ p.plan.escalation_path }}</td><td>{{ p.plan.required_equipment|join:", "|default:"-" }}</td>
+    <td>{% if p.current %}Current revision{% else %}<span class="muted">Earlier revision r{{ p.plan.revision.revision_no }}</span>{% endif %}</td></tr>
+  {% empty %}<tr><td colspan="6" class="muted">No recovery plan recorded.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can.record_recovery_plan %}
+  <form method="post" action="/readiness/visits/{{ visit.code }}/recovery-plan/" class="row" style="margin-top:10px">{% csrf_token %}
+    <label>On-call engineer <select name="on_call"><option value="">-</option>{% for x in persons %}<option>{{ x.code }}</option>{% endfor %}</select></label>
+    <label>Escalation contact <select name="escalation"><option value="">-</option>{% for x in persons %}<option>{{ x.code }}</option>{% endfor %}</select></label>
+    <label>Escalation path <input name="escalation_path" size="40"></label>
+    <label>Equipment <input name="required_equipment" placeholder="recovery_kit, charger"></label>
+    <button class="primary">Record recovery plan</button>
+  </form>{% endif %}
+</div>
+
+<div class="card">
+  <h2>History</h2>
+  <div class="tablewrap"><table><thead><tr><th>When ({{ tz }})</th><th>What</th></tr></thead><tbody>
+  {% for h in history %}<tr><td class="muted">{{ h.at_local|date:"Y-m-d H:i" }}</td><td>{{ h.what }}</td></tr>
+  {% empty %}<tr><td colspan="2" class="muted">Nothing yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Readiness{% endblock %}
+{% block content %}
+{% include "readiness/_chrome.html" %}
+<h1>Departure readiness · upcoming confirmed visits</h1>
+<p class="muted">Three separate questions: is the <b>plan</b> still feasible, is the visit's <b>readiness</b> evidence complete, and has a time-limited <b>authorization</b> been issued? An authorization is a decision, not a departure; departures are recorded separately. Times are each site's local time.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Visit</th><th>Site</th><th>On site (local)</th><th>Planning</th><th>Readiness</th><th>Authorization</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+  <td><a href="/readiness/visits/{{ r.visit.code }}/"><b>{{ r.visit.code }}</b></a>{% if r.rev.robot %}<div class="muted">{{ r.rev.robot.code }}</div>{% endif %}</td>
+  <td>{{ r.visit.site.code }}</td>
+  <td>{{ r.start|date:"D j M H:i" }} <span class="muted">({{ r.tz }})</span></td>
+  <td><span class="badge {{ r.planning_state }}">{{ r.planning_label }}</span></td>
+  <td><span class="badge {{ r.readiness_state }}">{{ r.result.label }}</span>
+      {% if r.result.blockers %}<div class="muted">{{ r.result.blockers|length }} blocker{{ r.result.blockers|length|pluralize }}</div>{% endif %}</td>
+  <td>{% if r.auth %}<span class="badge {{ r.auth.state }}">{{ r.auth.label }}</span> <span class="muted">{{ r.auth.auth.code }}</span>{% else %}<span class="muted">None issued</span>{% endif %}</td>
+</tr>
+{% empty %}<tr><td colspan="6" class="muted">No upcoming confirmed visits.</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% endblock %}
