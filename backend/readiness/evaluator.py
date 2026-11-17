@@ -276,9 +276,9 @@ def _gate_reservations(w: _World, plan: Plan | None, b: _Blockers) -> None:
 
 
 def _resource_for(key: str, rev: VisitRevision) -> Resource | None:
-    if key == "robot":
+    if key == "robot" and rev.robot_id is not None:
         return Resource.objects.filter(kind="robot", robot_id=rev.robot_id).first()
-    if key == "vehicle":
+    if key == "vehicle" and rev.vehicle_id is not None:
         return Resource.objects.filter(kind="vehicle", vehicle_id=rev.vehicle_id).first()
     if key.startswith("person:"):
         return Resource.objects.filter(kind="person", person_id=int(key.split(":", 1)[1])).first()
