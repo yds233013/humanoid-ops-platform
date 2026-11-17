@@ -57,6 +57,17 @@ def _conn(autocommit: bool = True) -> psycopg.Connection:
     )
 
 
+def _owner_conn() -> psycopg.Connection:
+    return psycopg.connect(
+        host=os.environ.get("DB_HOST", "localhost"),
+        port=os.environ.get("DB_PORT", "5440"),
+        dbname=connection.settings_dict["NAME"],
+        user=os.environ.get("DB_OWNER_USER", "ops_owner"),
+        password=os.environ.get("DB_OWNER_PASSWORD", "ops_owner_dev"),
+        autocommit=True,
+    )
+
+
 def _visit(w) -> Visit:
     return Visit.objects.get(code=w.visit)
 
@@ -84,7 +95,8 @@ def raw_depart(
 
 
 def raw_authorize(cur, w, policy: ReadinessPolicy, snapshot: dict[str, Any] | None = None) -> int:
-    """Direct INSERT of an authorization for w.visit on `policy`, with the live snapshot unless given."""
+    """Raw INSERT of an authorization for w.visit on `policy`, with the live snapshot unless given (as the owner,
+    after asserting ops_app is refused)."""
     v = _visit(w)
     rev = v.current_revision
     robot = Robot.objects.get(pk=rev.robot_id)
@@ -97,25 +109,31 @@ def raw_authorize(cur, w, policy: ReadinessPolicy, snapshot: dict[str, Any] | No
             "pk", flat=True
         )
     )
-    cur.execute(
+    sql = (
         "INSERT INTO readiness_departureauthorization (code, visit_id, revision_id, robot_id, manifest_id, "
         "policy_id, mode, guard_snapshot, evidence_ids, recovery_plan_id, issued_by_id, issued_at, expires_at) "
         "VALUES (%s, %s, %s, %s, %s, %s, 'demo', %s, %s, %s, %s, now(), clock_timestamp() + interval '30 minutes') "
-        "RETURNING id",
-        [
-            f"DA-H{time.monotonic_ns() % 10**8}",
-            v.pk,
-            rev.pk,
-            robot.pk,
-            robot.current_manifest_id,
-            policy.pk,
-            Jsonb(snap),
-            Jsonb(ev_ids),
-            w.recovery_plan_id,
-            w.ops.pk,
-        ],
+        "RETURNING id"
     )
-    return int(cur.fetchone()[0])
+    vals = [
+        f"DA-H{time.monotonic_ns() % 10**8}",
+        v.pk,
+        rev.pk,
+        robot.pk,
+        robot.current_manifest_id,
+        policy.pk,
+        Jsonb(snap),
+        Jsonb(ev_ids),
+        w.recovery_plan_id,
+        w.ops.pk,
+    ]
+    # readiness/0005: ops_app (`cur`) has no INSERT privilege at all; asserted on every call. The schema owner
+    # (the identity readiness_issue_authorization runs as) still meets the insert trigger this test is about.
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        cur.execute(sql, vals)
+    with _owner_conn() as owner, owner.cursor() as ocur:
+        ocur.execute(sql, vals)
+        return int(ocur.fetchone()[0])
 
 
 def _codes(res) -> set[str]:

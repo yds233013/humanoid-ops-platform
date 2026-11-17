@@ -52,10 +52,19 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
         cur.execute(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' AND c.relkind = 'r' "
-            f"AND c.relname NOT IN ('{AUDIT}', 'django_migrations', 'fleet_deploymentsetting') "
+            f"AND c.relname NOT IN ('{AUDIT}', 'django_migrations', 'fleet_deploymentsetting', "
+            "'readiness_departureauthorization') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
+        # Deliberate exception (readiness/0005): authorizations are issued only through the SECURITY DEFINER
+        # function readiness_issue_authorization; the runtime role keeps SELECT and UPDATE (row locks) only.
+        cur.execute(
+            "SELECT has_table_privilege(current_user, 'readiness_departureauthorization', 'INSERT'), "
+            "has_table_privilege(current_user, 'readiness_departureauthorization', 'SELECT'), "
+            "has_table_privilege(current_user, 'readiness_departureauthorization', 'UPDATE')"
+        )
+        assert cur.fetchone() == (False, True, True)
 
 
 def test_runtime_role_is_not_superuser_and_owns_nothing(app_role_conn):

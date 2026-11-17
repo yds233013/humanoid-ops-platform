@@ -335,3 +335,23 @@ recovery plan), `w.policy_version`, `w.evidence` (kind -> code), `w.inspection`,
 
 Left to B's gates (not enforced in the DB): an equipment check marked `pass` with an item `missing`; whether
 the on-call person is actually an engineer (report as `review`, not `blocked`, since roles live on users).
+
+## 8. Authorization write boundary (migration readiness/0005, EM closure condition)
+
+The runtime role has **no INSERT** on `readiness_departureauthorization`. The only way to issue one is
+`readiness_issue_authorization(p_visit_id, p_issued_by, p_expires_at, p_evidence_ids, p_recovery_plan_id,
+p_guard_snapshot, p_mode) RETURNS TABLE (id, code)`: SECURITY DEFINER (schema owner), `search_path = public,
+pg_temp`, EXECUTE for ops_app only. `authorize_departure` calls it after its locks and `evaluate_readiness`;
+the Python evaluator remains the primary, explained decision, the function is the database-enforced minimum.
+It re-proves in SQL: issuer holds ops_lead; visit confirmed, current revision, not departed; snapshot equals
+the live guards (`readiness_guard_problem`, shared with the triggers); active policy, mode from demo_mode,
+production needs approved_procedure; robot in service, pattern approved_home, base authorization, no blocking
+robot/pattern hold, approved capability profile with known planning fields (synthetic refused in production);
+consent count on the current form covering the revision's scopes >= expected adults (unknown blocks); lead
+field_lead, second field_operator/field_lead, both robot_handler, valid now through on_site_end; latest
+recovery plan (required when the policy says so); latest evidence per policy kind passing and fresh; battery
+>= profile minimum (unknown blocks); required equipment present; `evidence_ids` exactly the relied set;
+`now < expires_at <= least(now + ttl, evidence observed_at + max_age)`. Not re-proven (Python only): site
+assessment, vehicle capacity/restraint, timeline and resource conflicts, the exact qualification activity
+window, reservation coverage (gate 3), on-call engineer role (review). The full list is in the migration's
+docstring.

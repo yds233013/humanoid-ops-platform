@@ -148,17 +148,35 @@ def _auth_row(w, c, expires: str = "clock_timestamp() + interval '30 minutes'", 
     return row
 
 
+def _owner_conn() -> psycopg.Connection:
+    return psycopg.connect(
+        host=os.environ.get("DB_HOST", "localhost"),
+        port=os.environ.get("DB_PORT", "5440"),
+        dbname=connection.settings_dict["NAME"],
+        user=os.environ.get("DB_OWNER_USER", "ops_owner"),
+        password=os.environ.get("DB_OWNER_PASSWORD", "ops_owner_dev"),
+        autocommit=True,
+    )
+
+
 def _ins_auth(cur, row) -> int:
+    """Raw authorization INSERT. `cur` is ops_app: since readiness/0005 it has no INSERT privilege at all (only
+    readiness_issue_authorization may issue), which is asserted here on every call. The same row is then
+    inserted as the schema OWNER, the only identity that can still INSERT (the issue function runs as it), so
+    the insert-trigger rules these tests assert are still exercised exactly as before."""
     row = dict(row)
     expires = row.pop("_expires")
     names = list(row)
     vals = [Jsonb(v) if isinstance(v, dict | list) else v for v in row.values()]
-    cur.execute(
+    sql = (
         f"INSERT INTO readiness_departureauthorization ({', '.join(names)}, expires_at) "
-        f"VALUES ({', '.join(['%s'] * len(names))}, {expires}) RETURNING id",
-        vals,
+        f"VALUES ({', '.join(['%s'] * len(names))}, {expires}) RETURNING id"
     )
-    return cur.fetchone()[0]
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        cur.execute(sql, vals)
+    with _owner_conn() as owner, owner.cursor() as ocur:
+        ocur.execute(sql, vals)
+        return ocur.fetchone()[0]
 
 
 def _departure(cur, w, auth_id: int, **over) -> int:

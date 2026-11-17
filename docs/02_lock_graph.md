@@ -73,6 +73,7 @@ Within a table, ids are locked in ascending order (`platform_core.locks.lock_gua
 | readiness policy approval / withdrawal | policy `lock_version` | Yes: policy U |
 | evidence insert / void, recovery plan insert | robot S (and persons S), then visit version | Yes: robot S, persons S, visit U |
 | departure authorization insert | locks robot S, visit S, policy S | Yes: command holds them |
+| `readiness_issue_authorization()` (readiness/0005, the only INSERT path for ops_app) | settings S (advisory), site S, pattern S, robot S, persons S, vehicle S, visit S, policies >= S; then the insert above | Yes: authorize_departure holds all of them (visit as U) |
 | authorization revocation insert | authorization U | Yes: visit U, authorization U |
 | departure event insert | robot S, visit S, policy S, authorization S | Yes: command holds them |
 | trip cargo insert | locks `planning_vehicletrip` U | The trip was created in the same transaction; last in the order |
