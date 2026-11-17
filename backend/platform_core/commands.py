@@ -11,7 +11,7 @@ Order inside every command (one database transaction, retried on deadlock / lock
 Any exception rolls back everything. A denial (step 3, or a PermissionDenied raised by the handler)
 is then recorded as a separate 'denied' audit row.
 
-Global lock order: role grants -> manifest patterns -> robots.
+Global lock order: platform_core/locks.py and docs/02_lock_graph.md (role grants -> settings -> sites...).
 """
 
 import hashlib
