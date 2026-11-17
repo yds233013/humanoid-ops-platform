@@ -166,7 +166,12 @@ def test_depart_first_then_change_applies_after(w, name):
         lambda: depart(w, code), lambda: change(w)
     )
     assert blocked, "the guard writer must wait for the departure's locks"
-    assert isinstance(first, dict) and isinstance(second, dict), (first, second)
+    assert isinstance(first, dict), first
+    if name == "reschedule":
+        # Once a visit has departed it can no longer be re-planned (readiness migration 0003).
+        assert isinstance(second, Conflict) and "departed" in str(second), second
+    else:
+        assert isinstance(second, dict), second
     ev = DepartureEvent.objects.get()
     assert ev.guard_snapshot == DepartureAuthorization.objects.get(code=code).guard_snapshot
     assert status(code)["state"] == "used"
