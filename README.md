@@ -2,7 +2,7 @@
 
 An internal operations platform for a small fleet of home humanoid robots. It coordinates and records operations. It does **not** control robots, implement emergency stops, or certify physical safety.
 
-**Status:** Slice 0 (foundation), Slice 1 (fleet core) and Slice 2 (visit planning and scheduling) built and tested. Slice 3 waits for review. Data is synthetic only.
+**Status:** Slice 0 (foundation), Slice 1 (fleet core), Slice 2 (visit planning and scheduling) and Slice 3 (deployment readiness and departure authorization) built and tested. Slice 3 waits for engineering review. Data is synthetic only.
 
 ## Quick start
 
@@ -99,9 +99,39 @@ Open http://localhost:8000/planning/ for the week planner, visit pages and sites
 
 Demo: V-0001 confirmed; V-0002 blocked (crew and van conflict); V-0003 requires review (restricted home); V-0004 blocked (consent withdrawn).
 
+## Slice 3: deployment readiness and departure authorization
+
+Open http://localhost:8000/readiness/ for upcoming visits, the per-visit checklist and readiness policies.
+Contract: `docs/03_readiness_contract.md`. Lock order: `docs/02_lock_graph.md`.
+
+- **Readiness policy:** versioned requirements (evidence kinds and maximum age, required equipment, recovery
+  plan, authorization lifetime). It needs an engineering-lead and a safety-reviewer approval, and its author
+  can't approve it. **One active policy:** the newest fully approved version. If it's withdrawn there is
+  none until a newer one is approved. There's never a fallback to an older one.
+- **Evidence:** pre-departure inspection (a real fleet inspection), equipment check, battery check, plus a
+  recovery plan. Each is bound to the visit's current plan revision and the robot's current configuration.
+  Evidence can be voided, never edited.
+- **Readiness check:** read-only. It re-checks planning live (consent, holds, crew qualifications, van,
+  bookings), the policy, evidence freshness, battery against the robot's minimum, equipment and the recovery
+  plan. It gives explained blockers. Unknown values block.
+- **Departure authorization:** a separate, time-limited decision. It records the exact versions it was
+  decided on (site, robot, configuration, crew, visit, policy). Any later change invalidates it: a hold,
+  withdrawn consent, a configuration change, a qualification change, a reschedule, new evidence, or a policy
+  change.
+- **Departure:** its own immutable record. Under locks it re-checks every version and re-runs the full
+  readiness check. One authorization, one departure. One visit, one departure. The database also enforces
+  both for direct SQL. A departed visit can't be re-planned.
+- **Demo vs production:** a `synthetic_demo` policy only works while `demo_mode` is on. Production refuses it.
+  Settings changes are serialized against authorization and departure by a database-enforced advisory lock.
+- **Never shown as clearance:** the UI never says "cleared to depart". Demo pages carry a "SYNTHETIC DEMO,
+  not real-world clearance" banner.
+
+Demo: V-0001 has an approved synthetic policy, fresh evidence and a recovery plan, so it is "Ready to request
+authorization". Evidence goes stale on the policy's clock (battery after 2 h).
+
 ## Not built yet (by design)
 
-- Departure authorization, field execution, maintenance, teleoperation, analytics.
+- Field execution, maintenance, teleoperation, analytics. Real procedures and hardware-specific safety evidence (production policies need `approved_procedure` sources that don't exist yet).
 - Task, site and vehicle hold scopes. They arrive with their domains.
 - SSO: local accounts for now. The identity provider is unknown (blocker B-09).
 - Deployment: no target environment yet.
