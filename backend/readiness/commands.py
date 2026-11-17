@@ -11,11 +11,18 @@ decision depends on -> checks -> insert. PostgreSQL re-checks the structural rul
 and the single-use rule (unique authorization on DepartureEvent).
 
 Locks (U = FOR UPDATE, S = FOR SHARE), after run_command's role-grant S:
-  authorize_departure   site S, pattern S, robot S, persons S (lead, second, recovery-plan people), vehicle S,
-                        visit U, policy S
+  authorize_departure   settings S (advisory), site S, pattern S, robot S, persons S (lead, second,
+                        recovery-plan people), vehicle S, visit U, policy S
   record_departure      same as authorize (the authorization's guards and the current ones), then
                         authorization U
   revoke_authorization  visit U, authorization U
+
+Deployment settings (demo_mode above all) are not versioned rows the runtime role can lock, so authorize
+and depart hold the settings advisory lock SHARED (platform_core.locks.SETTINGS_LOCK_KEY) until they commit;
+every settings write takes it EXCLUSIVE (fleet migration 0007). A demo -> production switch therefore either
+waits until an in-flight demo authorization / departure commits, or is committed first and then seen by the
+evaluator and the explicit mode checks below (settings are read only after the lock is held). Revocation does
+not depend on settings and does not take it.
 """
 
 from typing import Any
@@ -98,6 +105,7 @@ def _covered(locked: dict[str, set[int]], snap: dict[str, Any]) -> bool:
 
 def _lock(locked: dict[str, set[int]], label: str, authorization_id: int | None = None) -> None:
     lock_guards(
+        share_settings=True,  # demo_mode etc. cannot change until this decision commits
         share_sites=locked["sites"],
         share_patterns=locked["patterns"],
         share_robots=locked["robots"],
@@ -229,6 +237,12 @@ def record_departure(
         now = db_now()
         if now >= auth.expires_at:
             raise Conflict(f"Authorization {auth.code} expired at {auth.expires_at.isoformat()}")
+        if auth.mode == "demo" and not fleet_services.demo_mode():
+            # A synthetic demo authorization is never departure clearance in production, whatever its policy.
+            raise Conflict(
+                f"Authorization {auth.code} was issued in demo mode; "
+                "a demo authorization can never be used for departure in production"
+            )
         diff = snapshot_differences(stored, now_snap)
         if diff:
             raise Conflict(

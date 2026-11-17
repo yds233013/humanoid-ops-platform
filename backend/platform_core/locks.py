@@ -1,7 +1,15 @@
 """Guard-row locking in ONE global order (see docs/02_lock_graph.md):
 
-    role grants (run_command) -> sites -> manifest patterns -> robots -> persons -> vehicles -> visits
-      -> readiness policies -> departure authorizations
+    role grants (run_command) -> deployment settings (advisory, shared) -> sites -> manifest patterns
+      -> robots -> persons -> vehicles -> visits -> readiness policies -> departure authorizations
+
+Deployment settings (fleet_deploymentsetting) are writable only by the schema owner, and the runtime role has
+SELECT only, so it cannot row-lock them. Instead every change to that table takes the transaction-level
+advisory lock SETTINGS_LOCK_KEY EXCLUSIVE (statement trigger, fleet migration 0007), and a command whose
+decision depends on settings takes the same key SHARED (share_settings=True) before any row lock, then reads
+the settings. A settings change and such a command are therefore totally ordered: the command either commits
+entirely before the change is applied or reads the changed value. A settings change must run in its own
+transaction (it takes no row guards), so it can never hold a guard row while waiting for this lock.
 
 Writers that change whether something may be planned lock FOR UPDATE; checkers lock FOR SHARE. FOR SHARE
 conflicts with FOR UPDATE, so a writer and a checker on the same guard row are totally ordered. Reads that
@@ -15,6 +23,10 @@ from django.db import connection
 
 from platform_core.testhooks import checkpoint
 
+# "0F1EE7 5E77" ~ "FLEET SETT". Must equal the literal in fleet/migrations/0007_settings_advisory_lock.py
+# (tests/test_readiness_settings_race.py checks the installed trigger function). Never reuse it elsewhere.
+SETTINGS_LOCK_KEY = 0x0F1EE75E77  # 64942988919
+
 ORDER = [
     ("planning_site", "sites"),
     ("fleet_manifestpattern", "patterns"),
@@ -27,8 +39,15 @@ ORDER = [
 ]
 
 
+def lock_settings_shared() -> None:
+    """Hold the deployment-settings lock SHARED until this transaction ends. Needs no table privilege."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock_shared(%s)", [SETTINGS_LOCK_KEY])
+
+
 def lock_guards(
     *,
+    share_settings: bool = False,
     update_sites: Iterable[int] = (),
     share_sites: Iterable[int] = (),
     update_patterns: Iterable[int] = (),
@@ -57,6 +76,8 @@ def lock_guards(
         "policies": (update_policies, share_policies),
         "authorizations": (update_authorizations, share_authorizations),
     }
+    if share_settings:  # first: right after run_command's role grants, before every guard row
+        lock_settings_shared()
     with connection.cursor() as cur:
         for table, key in ORDER:
             upd_raw, shr_raw = requested[key]
