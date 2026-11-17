@@ -43,6 +43,16 @@ PERMISSIONS: dict[str, set[str]] = {
     "planning.manage_vehicles": {OPS_LEAD},
     "planning.plan": {OPS_LEAD},
     "planning.confirm": {OPS_LEAD},
+    # Slice 3: deployment readiness and departure authorization
+    "readiness.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
+    "readiness.manage_policy": {ENGINEERING_LEAD},
+    "readiness.approve_policy": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "readiness.withdraw_policy": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "readiness.record_evidence": {OPS_LEAD, FIELD_OPERATOR, ENGINEER},
+    "readiness.record_recovery_plan": {OPS_LEAD, ENGINEERING_LEAD},
+    "readiness.authorize_departure": {OPS_LEAD},
+    "readiness.revoke_authorization": {OPS_LEAD, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
+    "readiness.record_departure": {OPS_LEAD, FIELD_OPERATOR},
 }
 
 # Roles that may sign an inspection as performer or verifier.

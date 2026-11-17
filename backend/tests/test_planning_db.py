@@ -226,3 +226,30 @@ def test_reversed_or_empty_intervals_are_rejected(w, app_role_conn):
                 "SELECT %s, id, now(), now() - interval '1 hour' FROM planning_vehicle WHERE code = 'VAN-1'",
                 [rev.pk],
             )
+
+
+# ---------- Slice 3 phase 0: guard versions used by departure authorization
+def test_qualification_changes_bump_the_person_version(w, app_role_conn):
+    from planning.models import Person, Qualification
+
+    person = Person.objects.get(code="P-2")
+    before = person.version
+    q = Qualification.objects.filter(person=person, revoked_at__isnull=True).first()
+    w.p.revoke_qualification(w.ops, qualification_id=q.pk, reason="test")
+    assert Person.objects.get(pk=person.pk).version == before + 1
+    with app_role_conn.cursor() as cur:
+        with pytest.raises(psycopg.Error, match="identity is immutable"):
+            cur.execute("UPDATE planning_person SET code = 'P-9' WHERE id = %s", [person.pk])
+        with pytest.raises(psycopg.Error, match="cannot be deleted"):
+            cur.execute("DELETE FROM planning_person WHERE id = %s", [person.pk])
+
+
+def test_every_visit_update_bumps_the_visit_version(w, app_role_conn):
+    v, _, _, _ = _fixture_rows(w)
+    before = Visit.objects.get(code=v).version
+    w.p.confirm_visit(w.ops, visit_code=v)
+    after_confirm = Visit.objects.get(code=v).version
+    assert after_confirm > before
+    with app_role_conn.cursor() as cur:
+        cur.execute("UPDATE planning_visit SET version = 1 WHERE code = %s", [v])  # cannot be reset
+    assert Visit.objects.get(code=v).version == after_confirm + 1

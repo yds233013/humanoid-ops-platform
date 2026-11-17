@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Now
 from django.utils import timezone
 
 from accounts.roles import ALL_ROLES
@@ -11,7 +12,9 @@ class RoleGrant(models.Model):
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="role_grants")
     role = models.CharField(max_length=40, choices=[(r, r) for r in ALL_ROLES])
-    valid_from = models.DateTimeField(default=timezone.now)
+    # Database time, not the app host's clock: permission checks compare against clock_timestamp() in
+    # PostgreSQL, so an app clock a few ms ahead would make a brand-new grant briefly inactive.
+    valid_from = models.DateTimeField(db_default=Now())
     valid_to = models.DateTimeField(null=True, blank=True)
     granted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="+"

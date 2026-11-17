@@ -93,6 +93,7 @@ class ConsentRecord(models.Model):
 class Person(models.Model):
     user = models.OneToOneField(USER, on_delete=models.PROTECT, related_name="person")
     code = models.CharField(max_length=12, unique=True)
+    version = models.PositiveIntegerField(default=1)  # guard version, bumped by qualification triggers
 
     def __str__(self) -> str:
         return self.code
@@ -185,6 +186,7 @@ class Visit(models.Model):
     created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     cancelled_reason = models.TextField(blank=True)
+    version = models.PositiveIntegerField(default=1)  # guard version, bumped on every update (trigger)
 
     def __str__(self) -> str:
         return self.code

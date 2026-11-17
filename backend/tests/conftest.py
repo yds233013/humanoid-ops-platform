@@ -26,7 +26,7 @@ def _allow_test_teardown_to_flush_audit():
 
     def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
         sql = original(self, style, tables, reset_sequences=reset_sequences, allow_cascade=allow_cascade)
-        guarded = [t for t in tables if t.startswith(("platform_core_", "fleet_", "planning_"))]
+        guarded = [t for t in tables if t.startswith(("platform_core_", "fleet_", "planning_", "readiness_"))]
         return (
             [f"ALTER TABLE {t} DISABLE TRIGGER USER;" for t in guarded]
             + list(sql)

@@ -5,6 +5,7 @@ Every command acquires row locks in one global order. Triggers may only touch ro
 ```
 role grants (run_command, FOR SHARE)  ->  planning_site  ->  fleet_manifestpattern  ->  fleet_robot
   ->  planning_person  ->  planning_vehicle  ->  planning_visit  ->  planning_vehicletrip (cargo trigger)
+  ->  readiness_readinesspolicy  ->  readiness_departureauthorization        (Slice 3)
 ```
 
 Within a table, ids are locked in ascending order (`platform_core.locks.lock_guards`). Revocation locks the role-grant row `FOR UPDATE`, so it conflicts with a command's `FOR SHARE` check.
@@ -35,6 +36,8 @@ Within a table, ids are locked in ascending order (`platform_core.locks.lock_gua
 | pattern decision, capability profile/approval | pattern + robots on it | Pattern U (decide/publish/approve). Robots are later in the order |
 | base authorization insert/revoke | `fleet_robot` version | Yes: robot U |
 | consent insert/withdraw, assessment insert, assessment approval | `planning_site` version | Yes: site U |
+| qualification insert/revoke | `planning_person` version | Yes: person U |
+| any visit update | its own `version` (BEFORE UPDATE) | Yes: visit U |
 | trip cargo insert | locks `planning_vehicletrip` U | The trip was created in the same transaction; last in the order |
 
 ## Tests that prove it
