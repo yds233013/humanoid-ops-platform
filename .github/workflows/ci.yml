@@ -1,0 +1,47 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci
+        ports: ["5440:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5440"
+      DB_NAME: humanoid_ops
+      DB_OWNER_USER: ops_owner
+      DB_OWNER_PASSWORD: ops_owner_ci
+      DB_APP_USER: ops_app
+      DB_APP_PASSWORD: ops_app_ci
+      DJANGO_DB_IDENTITY: owner
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.11"
+      - name: Create database roles (same as docker/postgres/init/01-roles.sh)
+        env:
+          PGPASSWORD: postgres_ci
+        run: |
+          psql -h localhost -p 5440 -U postgres -v ON_ERROR_STOP=1 <<SQL
+          CREATE ROLE ops_owner LOGIN CREATEDB PASSWORD 'ops_owner_ci';
+          CREATE ROLE ops_app LOGIN PASSWORD 'ops_app_ci' NOCREATEDB NOCREATEROLE;
+          CREATE DATABASE humanoid_ops OWNER ops_owner;
+          SQL
+      - run: uv sync --frozen
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run mypy .
+      - run: uv run python manage.py makemigrations --check --dry-run
+      - run: uv run python manage.py migrate --noinput
+      - run: uv run pytest

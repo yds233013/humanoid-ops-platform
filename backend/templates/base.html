@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Fleet{% endblock %} · Ops Platform</title>
+<style>
+  :root{--ink:#14181F;--soft:#4A5260;--line:#D9D4C8;--bg:#FAF9F6;--card:#fff;--red:#9B1C1C;--redbg:#FDECEC;
+        --amber:#8A5A00;--amberbg:#FFF6E0;--blue:#1F4E79;--bluebg:#EAF2FA}
+  *{box-sizing:border-box} body{margin:0;font:15px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif;color:var(--ink);background:var(--bg)}
+  header{display:flex;justify-content:space-between;align-items:center;padding:12px 24px;background:var(--ink);color:#fff}
+  header a{color:#fff;text-decoration:none;font-weight:600} header form{display:inline}
+  header button{background:none;border:1px solid #fff6;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer}
+  main{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
+  .banner{padding:8px 12px;border-radius:6px;margin:0 0 12px;font-size:14px;border:1px solid}
+  .demo{background:var(--amberbg);border-color:#E9C46A;color:var(--amber)} .draft{background:var(--redbg);border-color:#E7A1A1;color:var(--red)}
+  table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
+  th{background:#F1EFEA;font-weight:600}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12.5px;font-weight:600;border:1px solid}
+  .elig{background:var(--bluebg);color:var(--blue);border-color:#9CC0E4} .no{background:var(--redbg);color:var(--red);border-color:#E7A1A1}
+  .muted{color:var(--soft);font-size:13px} ul.reasons{margin:4px 0 0;padding-left:18px;font-size:13px;color:var(--red)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:14px 0}
+  .msg{padding:8px 12px;border-radius:6px;margin-bottom:10px} .msg.success{background:var(--bluebg)} .msg.error{background:var(--redbg);color:var(--red)}
+  input,select,textarea{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px}
+  button.primary{background:var(--ink);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer;font:inherit}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center} h1{font-size:22px;margin:4px 0 12px} h2{font-size:17px;margin:0 0 8px}
+  .stale{color:var(--amber)} a{color:var(--blue)}
+  @media (max-width:700px){th:nth-child(3),td:nth-child(3){display:none}}
+</style>
+</head>
+<body>
+<header><a href="/fleet/">Fleet</a>
+{% if user.is_authenticated %}<span>{{ user.username }} <span class="muted" style="color:#B9C0CC">({{ roles|join:", " }})</span>
+<form method="post" action="/logout/">{% csrf_token %}<button>Log out</button></form></span>{% endif %}
+</header>
+<main>
+{% if demo_mode %}<div class="banner demo">SYNTHETIC DEMONSTRATION DATA. Not real robots, not company data.</div>{% endif %}
+{% if policy_draft %}<div class="banner draft">Hold release policy is a DRAFT (no safety approval). Releases are allowed only because this is a demo deployment.</div>{% endif %}
+{% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}
+{% block content %}{% endblock %}
+</main>
+</body></html>

@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_dev_only
+      DB_NAME: ${DB_NAME:-humanoid_ops}
+      DB_OWNER_USER: ${DB_OWNER_USER:-ops_owner}
+      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:-ops_owner_dev}
+      DB_APP_USER: ${DB_APP_USER:-ops_app}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:-ops_app_dev}
+    ports: ["5440:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${DB_NAME:-humanoid_ops}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: ./backend
+    env_file: [.env.example]
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DJANGO_DB_IDENTITY: owner
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_dev && python manage.py seed_fleet"]
+    depends_on:
+      db: {condition: service_healthy}
+
+  app:
+    build: ./backend
+    env_file: [.env.example]
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DJANGO_DB_IDENTITY: app
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+volumes:
+  pgdata:
