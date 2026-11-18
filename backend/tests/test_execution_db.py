@@ -1309,3 +1309,121 @@ def test_incident_code_must_be_a_real_code_so_blank_holds_never_qualify(w, app_r
         hold = ew.raw_hold(cur, w, source_ref="")
         ew.incident_row(cur, w, code, hold)
     assert not Incident.objects.exists()
+
+
+# ================================================================== 0004 (1): unaccounted during outbound
+def _lost_outbound(w, app_role_conn) -> int:
+    with app_role_conn.cursor() as cur:
+        ew.raw_verify(cur, w)
+    return ew.raw_incident(app_role_conn, w, unaccounted=True)  # custody -> unaccounted on this run
+
+
+def test_unaccounted_outbound_arrived_hub_then_recovery_and_closure(w, app_role_conn):
+    iid = _lost_outbound(w, app_role_conn)
+    n_custody = CustodyEvent.objects.count()
+    with app_role_conn.cursor() as cur:
+        ew.raw_trip_event(cur, w, "arrived_hub")  # the vehicle returns without its robot
+        assert CustodyEvent.objects.count() == n_custody  # no custody row: not a robot hub receipt
+        assert custody(cur, w.run.robot_id) == ("unaccounted", False)
+        for kind in ("arrived_site", "departed_site"):
+            with refused("already arrived at the hub"):
+                ew.raw_trip_event(cur, w, kind)
+    insp = ew.post_visit_inspection(w)
+    with app_role_conn.cursor() as cur:
+        with refused("latest custody is not the hub receipt"):
+            ew.raw_reconcile(cur, w, hub_receipt_id=None, inspection_id=insp)
+        rec = ew.raw_reconcile(cur, w, outcome="unresolved", discrepancies=["robot unaccounted"])
+        with refused("unresolved"):
+            ew.raw_close(cur, w, rec)
+        hub = ew.raw_custody(
+            cur,
+            w,
+            "unaccounted",
+            "hub",
+            basis="recovered",
+            incident_id=iid,
+            received_by="P-3",
+            note="SYNTHETIC: robot recovered and received at hub",
+        )  # recovery on the still-open run
+        assert custody(cur, w.run.robot_id) == ("hub", True)
+    insp = ew.post_visit_inspection(w)  # after the hub receipt
+    with app_role_conn.cursor() as cur:
+        ew.raw_close(cur, w, ew.raw_reconcile(cur, w, hub_receipt_id=hub, inspection_id=insp))
+    assert TripClosure.objects.filter(run=w.run).exists()
+    assert Incident.objects.get(pk=iid).hold.released_at is None  # the hold stays
+
+
+def test_unaccounted_outbound_refused_after_a_prior_trip_event(w, app_role_conn):
+    with app_role_conn.cursor() as cur:
+        ew.raw_verify(cur, w)
+        ew.raw_trip_event(cur, w, "arrived_site")
+    ew.raw_incident(app_role_conn, w, unaccounted=True)
+    with app_role_conn.cursor() as cur:
+        with refused("one at a time"):
+            ew.raw_trip_event(cur, w, "arrived_hub")
+
+
+def test_unaccounted_outbound_refused_without_a_prior_unaccounted_event(w, app_role_conn):
+    ew.raw_incident(app_role_conn, w, event_type="robot_unaccounted")  # incident but no custody move
+    with app_role_conn.cursor() as cur:
+        with refused("unaccounted on this run"):
+            ew.raw_trip_event(cur, w, "arrived_hub")  # custody: unverified vehicle
+
+
+def _forge_unaccounted(w, incident_id: int, run_id) -> None:
+    """Owner-only test setup (the trusted administrator may disable its own triggers): append an unaccounted
+    custody event that the triggers would never accept, to prove the trip trigger checks it independently."""
+    with _owner_conn() as owner, owner.cursor() as cur:
+        cur.execute("ALTER TABLE execution_custodyevent DISABLE TRIGGER execution_custody_guard")
+        try:
+            cur.execute(
+                "INSERT INTO execution_custodyevent (robot_id, seq, from_kind, to_kind, run_id, trip_id, visit_id, "
+                "custodian_id, received_by_id, basis, incident_id, note, recorded_by_id, recorded_at) "
+                "VALUES (%s, %s, 'vehicle', 'unaccounted', %s, %s, %s, NULL, NULL, 'handoff', %s, '', %s, now())",
+                [
+                    w.run.robot_id,
+                    ew.next_custody_seq(w.run.robot_id),
+                    run_id,
+                    w.run.trip_id if run_id else None,
+                    w.run.visit_id if run_id else None,
+                    incident_id,
+                    w.ops.pk,
+                ],
+            )
+        finally:
+            cur.execute("ALTER TABLE execution_custodyevent ENABLE TRIGGER execution_custody_guard")
+
+
+def test_unaccounted_outbound_refused_when_the_unaccounted_event_is_not_this_runs(w, app_role_conn):
+    with app_role_conn.cursor() as cur:
+        ew.raw_verify(cur, w)
+    lost = ew.raw_incident(app_role_conn, w, event_type="robot_unaccounted")
+    _forge_unaccounted(w, lost, run_id=None)  # an unaccounted event of no run / another run
+    with app_role_conn.cursor() as cur:
+        assert custody(cur, w.run.robot_id)[0] == "unaccounted"
+        with refused("unaccounted on this run"):
+            ew.raw_trip_event(cur, w, "arrived_hub")
+
+
+def test_unaccounted_outbound_refused_without_a_robot_unaccounted_incident(w, app_role_conn):
+    with app_role_conn.cursor() as cur:
+        ew.raw_verify(cur, w)
+    fall = ew.raw_incident(app_role_conn, w)  # event_type fall
+    _forge_unaccounted(w, fall, run_id=w.run.pk)
+    with app_role_conn.cursor() as cur, refused("unaccounted on this run"):
+        ew.raw_trip_event(cur, w, "arrived_hub")
+
+
+# ================================================================== 0004 (2): incident policy withdrawal
+def test_only_an_engineering_lead_may_withdraw_an_incident_policy(w, app_role_conn):
+    with app_role_conn.cursor() as cur:
+        pid = _policy(cur, w)
+        sql = (
+            "INSERT INTO execution_incidentpolicywithdrawal (policy_id, withdrawn_by_id, reason, recorded_at) "
+            "VALUES (%s, %s, 'pulled', NULL)"
+        )
+        with refused("active engineering_lead"):
+            cur.execute(sql, [pid, w.safety.pk])
+        cur.execute(sql, [pid, w.lead2.pk])  # control
+        cur.execute("SELECT execution_active_incident_policy_id()")
+        assert cur.fetchone()[0] is None
