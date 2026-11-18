@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Incident policies{% endblock %}
+{% block content %}
+{% include "execution/_chrome.html" %}
+<h1>Incident policies</h1>
+<p class="muted">An incident policy only classifies severity (scale, when escalation is required before closing, who may downgrade). It never decides whether a robot is held: every incident holds its robot. Active = the highest version ever fully approved; if that one is withdrawn there is none. A <b>synthetic demo</b> policy is usable only in demo mode.</p>
+{% if current %}<p>Active policy: <b>v{{ current.version }}</b> <span class="badge {% if current.source == 'synthetic_demo' %}synthetic{% else %}approved{% endif %}">{{ current.get_source_display }}</span></p>
+{% else %}<div class="banner draft">No active incident policy. Severity decisions are refused and every incident stays unclassified (holds are still placed).</div>{% endif %}
+<div class="tablewrap"><table>
+<thead><tr><th>Version</th><th>Status</th><th>Source</th><th>Approvals</th><th>Rules</th><th>Actions</th></tr></thead><tbody>
+{% for r in rows %}<tr>
+  <td><b>v{{ r.policy.version }}</b><div class="muted">by {{ r.policy.recorded_by.username }}</div>{% if r.policy.notes %}<div class="muted">{{ r.policy.notes }}</div>{% endif %}</td>
+  <td><span class="badge {% if r.status == 'approved' and r.synthetic %}synthetic{% else %}{{ r.status }}{% endif %}">{{ r.status|capfirst }}{% if r.status == 'approved' and r.synthetic %} (synthetic demo){% endif %}</span>
+      {% if r.is_current %}<div><b>Active</b></div>{% elif r.status == 'approved' %}<div class="muted">Superseded</div>{% endif %}
+      {% if r.withdrawal %}<div class="muted">Withdrawn by {{ r.withdrawal.withdrawn_by.username }}: {{ r.withdrawal.reason }}</div>{% endif %}</td>
+  <td>{% if r.synthetic %}<span class="badge synthetic">Synthetic demo</span>{% else %}{{ r.policy.get_source_display }}{% endif %}</td>
+  <td>{% for a in r.approvals %}<div>{{ a.label }}: {% if a.approval %}{{ a.approval.approver.username }}{% else %}<span class="muted">pending</span>
+      {% if can.approve_incident_policy and r.status == 'draft' %}<form method="post" action="/execution/policies/{{ r.policy.version }}/approve/" class="inline">{% csrf_token %}
+        <input type="hidden" name="slot" value="{{ a.slot }}"><button class="primary">Approve {{ a.slot }}</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
+  <td><pre>{{ r.rules }}</pre></td>
+  <td>{% if can.manage_incident_policy and r.status != 'withdrawn' %}<form method="post" action="/execution/policies/{{ r.policy.version }}/withdraw/" class="inline">{% csrf_token %}
+      <input name="reason" placeholder="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
+</tr>{% empty %}<tr><td colspan="6" class="muted">No incident policies yet.</td></tr>{% endfor %}
+</tbody></table></div>
+{% if can.manage_incident_policy %}
+<div class="card"><h2>Create an incident policy (starts as a draft)</h2>
+<form method="post" action="/execution/policies/create/">{% csrf_token %}
+  <div class="row"><label>Source <select name="source">{% for s, lbl in sources %}<option value="{{ s }}">{{ lbl }}</option>{% endfor %}</select></label>
+  <label>Notes <input name="notes" size="40"></label></div>
+  <p><label>Rules (JSON)<br><textarea name="rules" rows="8" cols="70">{{ example }}</textarea></label></p>
+  <button class="primary">Create draft policy</button>
+</form></div>{% endif %}
+{% endblock %}

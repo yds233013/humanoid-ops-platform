@@ -1,0 +1,14 @@
+{% if demo_banner %}<div class="banner ex-demo" role="status"><b>{{ demo_banner }}</b>. Custody, trips, sessions and incidents on this page are a synthetic workflow exercise only. The system records what people report; it does not move, stop or check a robot.</div>{% endif %}
+<p class="row ex-nav"><a href="/execution/">Execution runs</a> · <a href="/execution/incidents/">Incidents</a> · <a href="/execution/policies/">Incident policies</a> · <a href="/readiness/">Readiness</a> · <a href="/fleet/">Fleet</a></p>
+<style>
+ .ex-demo{background:var(--amberbg);border:2px solid #E9C46A;color:var(--amber);position:sticky;top:0;z-index:5}
+ .badge.verified,.badge.handoff,.badge.go,.badge.reconciled,.badge.approved,.badge.active,.badge.open{background:var(--bluebg);color:var(--blue);border-color:#9CC0E4}
+ .badge.unaccounted,.badge.no_go,.badge.unresolved,.badge.withdrawn,.badge.held,.badge.unknown,.badge.notback{background:var(--redbg);color:var(--red);border-color:#E7A1A1}
+ .badge.unverified,.badge.recovered,.badge.paused,.badge.draft,.badge.synthetic,.badge.unclassified,.badge.reported{background:var(--amberbg);color:var(--amber);border-color:#E9C46A}
+ .badge.closed,.badge.stopped,.badge.not_started,.badge.released,.badge.none,.badge.resolved,.badge.triaged,.badge.response_in_progress{background:#F1EFEA;color:var(--ink);border-color:var(--line)}
+ .notback{background:var(--redbg);border:2px solid #E7A1A1;color:var(--red)}
+ form.inline{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+ pre{margin:0;font-size:12px;white-space:pre-wrap}
+ .tablewrap{overflow-x:auto}
+ fieldset{border:1px solid var(--line);border-radius:6px;margin:8px 0;padding:8px}
+</style>

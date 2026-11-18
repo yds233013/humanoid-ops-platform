@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Execution runs{% endblock %}
+{% block content %}
+{% include "execution/_chrome.html" %}
+<h1>Field execution runs</h1>
+<p class="muted">A run opens when a departure is recorded and stays open until its trip is closed. Custody, trip progress and the visit session are separate records: the vehicle being back does not mean the robot is back. An administrative custody assignment is <b>not verified</b> until the field crew verify it.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Run</th><th>Visit</th><th>Robot</th><th>Custody</th><th>Trip</th><th>Session</th><th>Open interruptions</th><th>Open incidents</th><th>Run</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+  <td><a href="/execution/runs/{{ r.run.code }}/"><b>{{ r.run.code }}</b></a></td>
+  <td>{{ r.run.visit.code }}<div class="muted">{{ r.run.visit.site.code }}</div></td>
+  <td><a href="/fleet/{{ r.run.robot.code }}/">{{ r.run.robot.code }}</a></td>
+  <td><span class="badge {{ r.custody_state }}">{{ r.custody_text }}</span>{% if r.not_back %}<div><span class="badge notback">Robot is NOT back</span></div>{% endif %}</td>
+  <td>{{ r.trip_progress }}</td>
+  <td><span class="badge {{ r.session }}">{{ r.session_label }}</span></td>
+  <td>{{ r.open_interruptions|join:", "|default:"-" }}</td>
+  <td>{{ r.open_incidents|join:", "|default:"-" }}</td>
+  <td>{% if r.closed %}<span class="badge closed">Closed</span>{% else %}<span class="badge open">Open</span>{% endif %}</td>
+</tr>
+{% empty %}<tr><td colspan="9" class="muted">No execution runs yet. A run opens when a departure is recorded.</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% endblock %}
