@@ -8,6 +8,13 @@ role grants (run_command, FOR SHARE)  ->  deployment settings (advisory, SHARED)
   ->  readiness_readinesspolicy  ->  readiness_departureauthorization        (Slice 3)
 ```
 
+Slice 4 (field execution, `docs/04_field_execution_contract.md` section 5) appends:
+
+```
+  ->  execution_incidentpolicy  ->  execution_executionrun  ->  execution_incident
+```
+and `planning_vehicletrip` becomes an explicit `lock_guards` target at its existing position (after visits).
+
 ## Deployment settings lock (Slice 3, Engineer F)
 
 `fleet_deploymentsetting` is writable only by the schema owner; the runtime role has SELECT only, so it cannot
