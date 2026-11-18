@@ -12,6 +12,7 @@ RUNS INSIDE THE PAGE SNAPSHOT. The caller opens ``operations.snapshot.read_snaps
 STATEMENTS (contract 6.4). Constant in fleet size:
     1  thresholds (fleet_deploymentsetting)
     1  every SQL-derived rule, ordered and keyset-filtered in SQL
+    1  rules whose basis is unknown (unknown_basis, EM B2)
     1  qualifying readiness visits (first READINESS_CAP + the total count), only when the lookahead is valid
     1  the evaluated Visit rows, only when at least one visit qualifies
   + at most READINESS_CAP x E for ``readiness.evaluator.evaluate_readiness``
@@ -31,7 +32,7 @@ THRESHOLD_NOT_CONFIGURED (``since`` = ``at``). Every time-based rule fires when 
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -106,6 +107,9 @@ class OpsException:
     message: str
     action_url: str | None  # existing page where it is addressed; None when there is none in the app
     resolvable: bool  # resolution-path table, "always resolvable?"
+    # extra facts for the reader; ESCALATION_UNACKNOWLEDGED: {"incident", "incident_status"} (EM B1: an
+    # unacknowledged escalation stays listed after its incident is closed; closure is not acknowledgment)
+    context: dict[str, Any] = field(default_factory=dict, compare=True)
 
     @property
     def sort_key(self) -> SortKey:
@@ -115,8 +119,11 @@ class OpsException:
 @dataclass(frozen=True)
 class ExceptionPage:
     items: list[OpsException]
-    readiness_coverage: dict[str, Any]  # {"qualifying", "evaluated", "not_evaluated", "complete"} (4a)
+    readiness_coverage: dict[str, Any]  # {"qualifying", "evaluated", "not_evaluated", "complete", "skipped"}
     next_cursor: SortKey | None  # sort_key of the last item when more items follow, else None
+    # rules that could not be computed for an entity (EM B2), e.g. {"rule": "RETURN_OVERDUE", "run": code,
+    # "reason": "planned unloading end unknown"}; page-independent, ordered by rule then run code
+    unknown_basis: list[dict[str, str]] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------ thresholds
@@ -157,7 +164,8 @@ ex AS (
          'Robot ' || rs.robot_code || ' is unaccounted for'
            || coalesce(' (incident ' || ic.code || ')', '') AS message,
          coalesce('/execution/runs/' || rs.open_run_code || '/', '/execution/incidents/' || ic.code || '/',
-                  '/fleet/' || rs.robot_code || '/') AS action_url
+                  '/fleet/' || rs.robot_code || '/') AS action_url,
+         NULL::jsonb AS context
   FROM rs
   LEFT JOIN execution_custodyevent ce ON ce.id = rs.custody_event_id
   LEFT JOIN execution_incident ic ON ic.id = ce.incident_id
@@ -171,7 +179,7 @@ ex AS (
          'ops_lead',
          'Custody of robot ' || rs.robot_code || ' cannot be derived from its records (data integrity issue; '
            || 'escalate to engineering)',
-         '/fleet/' || rs.robot_code || '/'
+         '/fleet/' || rs.robot_code || '/', NULL::jsonb
   FROM rs
   WHERE rs.custody_kind = 'unknown'
 
@@ -180,7 +188,7 @@ ex AS (
   SELECT 'INCIDENT_UNTRIAGED', 'incident', q.incident_code, q.robot_code, v.code, q.reported_at, 'ops_lead',
          'Incident ' || q.incident_code || ' (' || q.event_type || ', robot ' || q.robot_code
            || ') has not been triaged',
-         '/execution/incidents/' || q.incident_code || '/'
+         '/execution/incidents/' || q.incident_code || '/', NULL::jsonb
   FROM q LEFT JOIN planning_visit v ON v.id = q.visit_id
   WHERE q.status = 'reported'
 
@@ -189,7 +197,7 @@ ex AS (
   SELECT 'SEVERITY_UNCLASSIFIED', 'incident', q.incident_code, q.robot_code, v.code, q.reported_at,
          'safety_reviewer',
          'Incident ' || q.incident_code || ' (robot ' || q.robot_code || ') has no severity decision',
-         '/execution/incidents/' || q.incident_code || '/'
+         '/execution/incidents/' || q.incident_code || '/', NULL::jsonb
   FROM q LEFT JOIN planning_visit v ON v.id = q.visit_id
   WHERE q.unclassified AND execution_active_incident_policy_id() IS NOT NULL
 
@@ -198,10 +206,12 @@ ex AS (
   SELECT 'ESCALATION_UNACKNOWLEDGED', 'escalation', 'ESC-' || e.id, rb.code, v.code, e.recorded_at,
          e.to_role::text,
          'Escalation ESC-' || e.id || ' of incident ' || i.code || ' to ' || e.to_role
-           || coalesce(' (' || pp.code || ')', '') || ' is not acknowledged',
-         '/execution/incidents/' || i.code || '/'
+           || coalesce(' (' || pp.code || ')', '') || ' is not acknowledged (incident ' || st.status || ')',
+         '/execution/incidents/' || i.code || '/',
+         jsonb_build_object('incident', i.code, 'incident_status', st.status)
   FROM execution_incidentescalation e
   JOIN execution_incident i ON i.id = e.incident_id
+  CROSS JOIN LATERAL (SELECT execution_incident_status(i.id) AS status) st
   JOIN fleet_robot rb ON rb.id = i.robot_id
   LEFT JOIN planning_visit v ON v.id = i.visit_id
   LEFT JOIN planning_person pp ON pp.id = e.to_person_id
@@ -213,7 +223,7 @@ ex AS (
          'ops_lead',
          'Interruption ' || n.code || ' on run ' || ors.run_code || ' is not resolved'
            || CASE WHEN n.incident_id IS NOT NULL THEN ' (incident hold workflow applies)' ELSE '' END,
-         '/execution/runs/' || ors.run_code || '/'
+         '/execution/runs/' || ors.run_code || '/', NULL::jsonb
   FROM execution_interruption n
   JOIN ors ON ors.run_id = n.run_id
   WHERE NOT EXISTS (SELECT 1 FROM execution_interruptionresolution s WHERE s.interruption_id = n.id)
@@ -222,7 +232,7 @@ ex AS (
   -- SITE_NO_GO: the latest site check of an open run is no_go
   SELECT 'SITE_NO_GO', 'run', ors.run_code, ors.robot_code, ors.visit_code, sc.recorded_at, 'ops_lead',
          'Latest site check of run ' || ors.run_code || ' (visit ' || ors.visit_code || ') is No-Go',
-         '/execution/runs/' || ors.run_code || '/'
+         '/execution/runs/' || ors.run_code || '/', NULL::jsonb
   FROM ors
   CROSS JOIN LATERAL (
     SELECT c.result, c.recorded_at FROM execution_sitecheck c WHERE c.run_id = ors.run_id
@@ -236,7 +246,7 @@ ex AS (
          'field_operator',
          'Departure custody assignment of run ' || ors.run_code || ' (robot ' || ors.robot_code
            || ') is not verified by the crew',
-         '/execution/runs/' || ors.run_code || '/'
+         '/execution/runs/' || ors.run_code || '/', NULL::jsonb
   FROM ors
   WHERE %(g_verify)s::int IS NOT NULL
     AND ors.departed_at + make_interval(mins => %(g_verify)s::int) <= %(at)s
@@ -251,7 +261,7 @@ ex AS (
          'ops_lead',
          'Run ' || ors.run_code || ' (robot ' || ors.robot_code || ') has not arrived at the hub after its '
            || 'planned unloading end',
-         '/execution/runs/' || ors.run_code || '/'
+         '/execution/runs/' || ors.run_code || '/', NULL::jsonb
   FROM ors
   WHERE %(g_return)s::int IS NOT NULL AND ors.arrived_hub_at IS NULL
     AND ors.planned_unloading_end + make_interval(mins => %(g_return)s::int) <= %(at)s
@@ -261,7 +271,7 @@ ex AS (
   SELECT 'RECONCILIATION_UNRESOLVED', 'run', ors.run_code, ors.robot_code, ors.visit_code,
          ors.latest_reconciliation_at, 'ops_lead',
          'Latest return reconciliation of run ' || ors.run_code || ' is unresolved',
-         '/execution/runs/' || ors.run_code || '/'
+         '/execution/runs/' || ors.run_code || '/', NULL::jsonb
   FROM ors
   WHERE ors.latest_reconciliation_outcome = 'unresolved'
 
@@ -271,7 +281,7 @@ ex AS (
          'field_operator',
          'Robot ' || ors.robot_code || ' is back at the hub (run ' || ors.run_code
            || ') without a post-visit inspection',
-         '/fleet/' || ors.robot_code || '/'
+         '/fleet/' || ors.robot_code || '/', NULL::jsonb
   FROM ors
   JOIN execution_custodyevent hr ON hr.id = ors.custody_event_id
   WHERE %(g_inspect)s::int IS NOT NULL AND ors.awaiting = 'post_visit_inspection'
@@ -283,7 +293,7 @@ ex AS (
          rs.holds_since, 'ops_lead',
          'Robot ' || rs.robot_code || ' has an active blocking hold (' || array_to_string(rs.hold_codes, ', ')
            || ') and is on confirmed visit ' || uv.code,
-         '/fleet/' || rs.robot_code || '/'
+         '/fleet/' || rs.robot_code || '/', NULL::jsonb
   FROM rs
   JOIN LATERAL (
     SELECT v.code FROM planning_visitrevision rv
@@ -293,11 +303,11 @@ ex AS (
   ) uv ON true
   WHERE cardinality(rs.hold_codes) > 0
 )
-SELECT code, priority, entity_type, entity_ref, robot, visit, since, owner_role, message, action_url
+SELECT code, priority, entity_type, entity_ref, robot, visit, since, owner_role, message, action_url, context
 FROM (
   SELECT ex.code COLLATE "C" AS code, ex.entity_type,
          ex.entity_ref COLLATE "C" AS entity_ref, ex.robot, ex.visit, ex.since, ex.owner_role, ex.message,
-         ex.action_url, (%(prio)s::jsonb ->> ex.code)::int AS priority
+         ex.action_url, ex.context, (%(prio)s::jsonb ->> ex.code)::int AS priority
   FROM ex
 ) t
 WHERE %(a_prio)s::int IS NULL
@@ -305,6 +315,15 @@ WHERE %(a_prio)s::int IS NULL
       > (%(a_prio)s::int, %(a_since)s::timestamptz, %(a_code)s::text COLLATE "C", %(a_ref)s::text COLLATE "C")
 ORDER BY priority, since, code, entity_ref
 LIMIT %(limit)s
+"""
+
+# EM B2: open runs not yet at the hub whose RETURN_OVERDUE basis (planned unloading end) is unknown. The
+# exception stays suppressed; the missing basis is listed instead. Independent of the threshold value.
+UNKNOWN_BASIS_SQL = r"""
+SELECT 'RETURN_OVERDUE', ors.run_code COLLATE "C", 'planned unloading end unknown'
+FROM operations_open_run_stage ors
+WHERE ors.arrived_hub_at IS NULL AND ors.planned_unloading_end IS NULL
+ORDER BY 2
 """
 
 READINESS_SQL = r"""
@@ -353,6 +372,7 @@ def _sql_rules(
             message=message,
             action_url=action_url,
             resolvable=RESOLVABLE[code],
+            context=json.loads(context) if isinstance(context, str) else (context or {}),
         )
         for (
             code,
@@ -365,6 +385,7 @@ def _sql_rules(
             owner_role,
             message,
             action_url,
+            context,
         ) in rows
     ]
 
@@ -373,7 +394,7 @@ def _readiness(at: datetime, lookahead: int | None) -> tuple[list[OpsException],
     """READINESS_INCOMPLETE_SOON (contract 4a): the authoritative evaluator for the first READINESS_CAP
     qualifying visits by (on_site_start, visit id); never inferred for the rest."""
     if lookahead is None:  # rule disabled; nothing evaluated, so coverage can never be claimed complete
-        return [], {"qualifying": 0, "evaluated": 0, "not_evaluated": 0, "complete": False}
+        return [], {"qualifying": 0, "evaluated": 0, "not_evaluated": 0, "complete": False, "skipped": False}
     with connection.cursor() as cur:
         cur.execute(READINESS_SQL, {"look": lookahead, "at": at, "cap": READINESS_CAP})
         rows = cur.fetchall()
@@ -407,6 +428,7 @@ def _readiness(at: datetime, lookahead: int | None) -> tuple[list[OpsException],
         "evaluated": evaluated,
         "not_evaluated": qualifying - evaluated,
         "complete": qualifying == evaluated,
+        "skipped": False,
     }
     return items, coverage
 
@@ -440,16 +462,31 @@ def _threshold_items(
 
 
 # ------------------------------------------------------------------ entry point
-def open_exceptions(at: datetime, *, limit: int | None = None, after: SortKey | None = None) -> ExceptionPage:
+def open_exceptions(
+    at: datetime,
+    *,
+    limit: int | None = None,
+    after: SortKey | None = None,
+    include_readiness: bool = True,
+) -> ExceptionPage:
     """Open exceptions at the snapshot time ``at`` in the total order, starting after the sort key ``after``
     (keyset pagination), at most ``limit`` items. Call inside ``read_snapshot()``; each call (page) is its own
-    snapshot. ``readiness_coverage`` always describes the whole readiness rule, not just this page."""
+    snapshot. ``readiness_coverage`` and ``unknown_basis`` describe the whole inbox, not just this page.
+    ``include_readiness=False`` (metrics page) runs no readiness evaluation: READINESS_INCOMPLETE_SOON is not
+    produced and the coverage says ``skipped`` (never complete)."""
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
     thresholds, missing = read_thresholds()
 
     sql_items = _sql_rules(at, thresholds, None if limit is None else limit + 1, after)
-    ready_items, coverage = _readiness(at, thresholds["ops_readiness_lookahead_min"])
+    with connection.cursor() as cur:
+        cur.execute(UNKNOWN_BASIS_SQL)
+        unknown = [{"rule": r, "run": run, "reason": why} for r, run, why in cur.fetchall()]
+    if include_readiness:
+        ready_items, coverage = _readiness(at, thresholds["ops_readiness_lookahead_min"])
+    else:
+        ready_items = []
+        coverage = {"qualifying": 0, "evaluated": 0, "not_evaluated": 0, "complete": False, "skipped": True}
     py_items = [
         x
         for x in ready_items + _threshold_items(at, thresholds, missing)
@@ -460,4 +497,6 @@ def open_exceptions(at: datetime, *, limit: int | None = None, after: SortKey | 
     if limit is not None and len(items) > limit:
         items = items[:limit]
         next_cursor = items[-1].sort_key
-    return ExceptionPage(items=items, readiness_coverage=coverage, next_cursor=next_cursor)
+    return ExceptionPage(
+        items=items, readiness_coverage=coverage, next_cursor=next_cursor, unknown_basis=unknown
+    )
