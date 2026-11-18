@@ -2,6 +2,8 @@
 reconciliation and trip closure. Every rule has a positive path and an explained refusal; the database triggers
 (tests/test_execution_db.py) are the backstop. SYNTHETIC data only."""
 
+from pathlib import Path
+
 import pytest
 
 from accounts.services import revoke_role
@@ -9,6 +11,7 @@ from execution import logistics as lg
 from execution import reconciliation as rc
 from execution import site_checks as sc
 from execution.custody import current_custody, departure_problem, open_run_id
+from execution.dossier import visit_dossier
 from execution.models import (
     CustodyEvent,
     CustodyVerification,
@@ -21,8 +24,8 @@ from execution.models import (
 )
 from fleet import services as fs
 from fleet.management.commands.seed_fleet import TEMPLATE_ITEMS
-from fleet.models import Hold
-from planning.models import ConsentRecord
+from fleet.models import Hold, Robot
+from planning.models import ConsentRecord, Visit
 from platform_core.commands import Conflict, Invalid, PermissionDenied
 from platform_core.models import AuditEvent
 from tests import execution_world as ew
@@ -266,12 +269,14 @@ def test_trip_events_in_order_once_each(w):
         trip(w, "lunch")
     with pytest.raises(Conflict, match="record arrived_site first"):
         trip(w, "departed_site")
-    with pytest.raises(Conflict, match="record arrived_site first"):
-        trip(w, "arrived_hub")
+    with pytest.raises(Conflict, match="needs the departure assignment verified"):
+        trip(w, "arrived_hub")  # an aborted outbound needs the verified assignment (below)
     verify(w)
     trip(w, "arrived_site")
     with pytest.raises(Conflict, match="already arrived at the site"):
         trip(w, "arrived_site")
+    with pytest.raises(Conflict, match="record departed_site first"):
+        trip(w, "arrived_hub")
     with pytest.raises(PermissionDenied):
         trip(w, "departed_site", by=w.eng)
     assert TripEvent.objects.filter(run=w.run).count() == 1
@@ -550,3 +555,163 @@ def test_each_command_locks_in_the_contract_order(w):
     assert seen == ["accounts_rolegrant", "fleet_robot", "planning_visit", "planning_vehicletrip", *run], seen
     seen = _capture(lambda: close(w))
     assert seen == ["accounts_rolegrant", "fleet_robot", "planning_visit", "planning_vehicletrip", *run], seen
+
+
+# ================================================================== 0003 (a): recovery with no open run
+def _unaccounted_without_run(w, app_role_conn, code="R-02"):
+    robot = Robot.objects.get(code=code)
+    iid = ew.raw_incident(app_role_conn, w, unaccounted=True, robot_id=robot.pk)
+    assert current_custody(robot.pk).kind == "unaccounted" and open_run_id(robot.pk) is None
+    return robot, iid
+
+
+def recover(w, robot="R-02", receiver="P-3", note="SYNTHETIC: found and received at hub", by=None):
+    return lg.recover_robot(by or w.ops, robot_code=robot, received_by_code=receiver, note=note)
+
+
+def test_recover_robot_with_no_run(w, app_role_conn):
+    robot, iid = _unaccounted_without_run(w, app_role_conn)
+    with pytest.raises(PermissionDenied, match="requires an ops_lead"):
+        recover(w, by=w.field)
+    with pytest.raises(PermissionDenied):
+        recover(w, by=w.eng)  # no execution.record_field_event at all
+    with pytest.raises(Conflict, match="P-4 does not hold an active"):
+        recover(w, receiver="P-4")
+    with pytest.raises(Invalid, match="needs a note"):
+        recover(w, note="  ")
+    with pytest.raises(Invalid, match="No robot"):
+        recover(w, robot="R-99")
+    assert current_custody(robot.pk).kind == "unaccounted"
+
+    r = recover(w)
+    assert r["from"] == "unaccounted" and r["to"] == "hub" and r["basis"] == "recovered"
+    assert r["custody"] == {"kind": "hub", "verified": True, "label": "hub"}
+    inc = Incident.objects.get(pk=iid)
+    assert r["incident"] == inc.code and r["received_by"] == "P-3" and r["custodian"] == "P-3"
+    ev = CustodyEvent.objects.get(pk=r["id"])
+    assert ev.run_id is None and ev.trip_id is None and ev.visit_id is None and ev.incident_id == iid
+    assert Hold.objects.get(pk=inc.hold_id).released_at is None  # recovery never touches the hold
+    assert open_run_id(robot.pk) is None and departure_problem(robot.pk) is None  # custody is hub again
+
+    with pytest.raises(Conflict, match="is not unaccounted for"):
+        recover(w)
+    with pytest.raises(Conflict, match="R-03 is not unaccounted for"):
+        recover(w, robot="R-03")  # never left the hub
+
+
+def test_recover_robot_after_its_run_closed(w, app_role_conn):
+    to_site(w)
+    to_hub(w)
+    reconcile(w, inspection=inspect(w))
+    close(w)
+    iid = ew.raw_incident(app_role_conn, w, unaccounted=True)  # found missing after closure, no run
+    assert custody(w).kind == "unaccounted"
+    r = recover(w, robot=w.robot.code, receiver="P-2")
+    assert r["incident"] == Incident.objects.get(pk=iid).code and custody(w).kind == "hub"
+    assert open_run_id(w.robot.pk) is None
+
+
+def test_recover_robot_refused_while_the_robot_has_an_open_run(w, app_role_conn):
+    to_site(w)
+    ew.raw_incident(app_role_conn, w, unaccounted=True)
+    with pytest.raises(
+        Conflict, match=f"open run \\({w.run.code}\\); record the recovery with transfer_custody"
+    ):
+        recover(w, robot=w.robot.code)
+    assert move(w, "vehicle", note="SYNTHETIC: recovered", by=w.ops)["basis"] == "recovered"  # the run path
+
+
+# ================================================================== 0003 (b): aborted outbound
+def test_aborted_outbound_needs_the_verified_assignment(w):
+    with pytest.raises(Conflict, match="needs the departure assignment verified by the field crew"):
+        trip(w, "arrived_hub")
+    assert not TripEvent.objects.exists()
+
+
+def test_aborted_outbound_returns_reconciles_and_closes(w):
+    verify(w)
+    back = trip(w, "arrived_hub")
+    assert back["aborted_outbound"] is True and back["seq"] == 3 and "warning" not in back
+    with pytest.raises(Conflict, match="already arrived at the hub; no further trip events"):
+        trip(w, "arrived_site")
+    with pytest.raises(Conflict, match="already arrived at the hub; no further trip events"):
+        trip(w, "departed_site")
+    with pytest.raises(Conflict, match="arrived at the site"):
+        move(w, "site")
+    hub = move(w, "hub", receiver="P-3")
+    with pytest.raises(Conflict, match="no further trip events"):
+        trip(w, "arrived_site")
+    r = reconcile(w, inspection=inspect(w))
+    assert r["outcome"] == "reconciled" and r["hub_receipt_seq"] == hub["seq"], r["problems"]
+    assert close(w)["closed"]
+    assert list(TripEvent.objects.filter(run=w.run).values_list("kind", flat=True)) == ["arrived_hub"]
+    assert open_run_id(w.robot.pk) is None and departure_problem(w.robot.pk) is None
+
+
+def test_normal_trip_arrived_hub_flag_is_false(w):
+    to_site(w)
+    move(w, "vehicle")
+    trip(w, "departed_site")
+    assert trip(w, "arrived_hub")["aborted_outbound"] is False
+
+
+def test_recover_robot_is_idempotent_on_its_key(w, app_role_conn):
+    robot, _ = _unaccounted_without_run(w, app_role_conn)
+    kw = {"robot_code": "R-02", "received_by_code": "P-3", "note": "SYNTHETIC: found"}
+    first = lg.recover_robot(w.ops, idempotency_key="rec-1", **kw)
+    again = lg.recover_robot(w.ops, idempotency_key="rec-1", **kw)
+    assert first["replayed"] is False and again["replayed"] is True and again["id"] == first["id"]
+    assert CustodyEvent.objects.filter(robot=robot, basis="recovered").count() == 1
+    with pytest.raises(Conflict, match="Idempotency key reused"):
+        lg.recover_robot(w.ops, idempotency_key="rec-1", **{**kw, "note": "different"})
+
+
+# ================================================================== 0004: vehicle back, robot unaccounted
+def _dossier(w):
+    return [(e.kind, e.text) for e in visit_dossier(Visit.objects.get(code=w.visit))]
+
+
+def _vehicle_back_robot_missing(w):
+    r = reconcile(w, inspection=inspect(w))
+    assert r["outcome"] == "unresolved" and r["hub_receipt_seq"] is None
+    assert "the robot has not been received at the hub (it is unaccounted for)" in r["problems"]
+    with pytest.raises(
+        Conflict, match=r"latest reconciliation is unresolved \(the robot is unaccounted for\)"
+    ):
+        close(w)
+    assert custody(w).kind == "unaccounted" and open_run_id(w.robot.pk) == w.run.pk
+    assert not CustodyEvent.objects.filter(robot=w.robot, to_kind="hub").exists()  # no hub receipt
+    entries = _dossier(w)
+    trip_entries = [t for k, t in entries if k == "trip"]
+    custody_entries = [t for k, t in entries if k == "custody"]
+    assert "Trip: arrived hub" in trip_entries
+    assert any("-> unaccounted" in t for t in custody_entries)
+    assert not any("-> hub" in t for t in custody_entries)  # the vehicle's arrival is not a robot receipt
+    assert not TripClosure.objects.exists()
+
+
+HAS_0004 = any((Path(__file__).resolve().parents[1] / "execution" / "migrations").glob("0004_*.py"))
+
+
+@pytest.mark.skipif(
+    not HAS_0004, reason="needs Engineer A's migration execution/0004 (EM-approved transition)"
+)
+def test_vehicle_returns_right_after_departure_while_the_robot_is_unaccounted(w, app_role_conn):
+    ew.raw_incident(app_role_conn, w, unaccounted=True)  # missing straight after departure (synthetic)
+    back = trip(w, "arrived_hub")
+    assert back["vehicle_returned_without_robot"] is True and back["aborted_outbound"] is False
+    assert back["seq"] == 3 and "robot is unaccounted for" in back["warning"]
+    with pytest.raises(Conflict, match="no further trip events"):
+        trip(w, "arrived_site")
+    _vehicle_back_robot_missing(w)
+
+
+def test_robot_unaccounted_at_the_site_then_vehicle_departs_and_returns(w, app_role_conn):
+    to_site(w)
+    iid = ew.raw_incident(app_role_conn, w, unaccounted=True)
+    with app_role_conn.cursor() as cur:
+        ew.raw_disposition(cur, w, "robot_unaccounted", incident_id=iid)
+    trip(w, "departed_site")
+    back = trip(w, "arrived_hub")
+    assert back["vehicle_returned_without_robot"] is False and "robot is unaccounted for" in back["warning"]
+    _vehicle_back_robot_missing(w)

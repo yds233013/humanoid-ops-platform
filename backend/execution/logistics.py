@@ -14,6 +14,7 @@ Locks (U = FOR UPDATE, S = FOR SHARE), after run_command's role-grant S:
   verify_custody      robot U, persons S (verifier), run U
   record_trip_event   robot U, visit S, trip U, run U
   transfer_custody    robot U, persons S (custodian, receiver), visit S, trip U, run U
+  recover_robot       robot U, persons S (receiver)                 (no open run; migration 0003)
 
 Custody is read only through execution.custody.current_custody (the SQL definition, contract D1).
 """
@@ -25,6 +26,7 @@ from django.db import connection
 
 from execution.custody import Custody, current_custody, open_run_id
 from execution.models import CustodyEvent, CustodyVerification, ExecutionRun, RecoveryDisposition, TripEvent
+from fleet.models import Robot
 from planning.models import Person
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, run_command
 from platform_core.locks import lock_guards
@@ -103,7 +105,7 @@ def custody_text(c: Custody) -> str:
         "site": "at the site",
         "unaccounted": "unaccounted for",
         "unknown": "unknown",
-    }.get(c.kind, c.kind) + ("" if c.verified or c.kind == "unknown" else " (not verified)")
+    }.get(c.kind, c.kind) + ("" if c.verified or c.kind in ("unknown", "unaccounted") else " (not verified)")
 
 
 def custody_dict(c: Custody) -> dict[str, Any]:
@@ -196,14 +198,46 @@ def record_trip_event(actor: Any, *, run_code: str, kind: str) -> dict[str, Any]
 
         require_open(run, "trip events")
         done = trip_kinds(run)
+        custody = current_custody(run.robot_id)
+        if "arrived_hub" in done:
+            raise Conflict(
+                f"The trip of run {run.code} has already arrived at the hub; no further trip events"
+            )
         if kind in done:
             raise Conflict(f"The trip of run {run.code} has already {TRIP_LABEL[kind]}")
-        expected = TRIP_ORDER[len(done)]
-        if kind != expected:
-            raise Conflict(
-                f"Trip events go arrived_site -> departed_site -> arrived_hub; record {expected} first"
-            )
-        custody = current_custody(run.robot_id)
+        first_hub = kind == "arrived_hub" and not done
+        ev_now = latest_event(run.robot_id)
+        missing = (
+            first_hub
+            and custody.kind == "unaccounted"
+            and ev_now is not None
+            and ev_now.run_id == run.pk
+            and ev_now.incident is not None
+            and ev_now.incident.robot_id == run.robot_id
+            and ev_now.incident.event_type == "robot_unaccounted"
+        )
+        # Migration 0004 (EM): `missing` = the vehicle came back straight after departure while the robot is
+        # unaccounted on this run. Recorded as the vehicle's arrival only; nothing is received at the hub.
+        aborted = first_hub and not missing
+        if aborted:
+            # Aborted outbound (migration 0003): back at the hub straight after departure, robot still aboard.
+            ev = latest_event(run.robot_id)
+            if not (custody.kind == "vehicle" and ev is not None and ev.trip_id == run.trip_id):
+                raise Conflict(
+                    f"An aborted outbound (arrived_hub straight after departure) needs the robot in the "
+                    f"vehicle on this trip; it is {custody_text(custody)}"
+                )
+            if not custody.verified:
+                raise Conflict(
+                    "An aborted outbound needs the departure assignment verified by the field crew first "
+                    "(the robot's vehicle custody is not verified)"
+                )
+        elif not missing:
+            expected = TRIP_ORDER[len(done)]
+            if kind != expected:
+                raise Conflict(
+                    f"Trip events go arrived_site -> departed_site -> arrived_hub; record {expected} first"
+                )
         if kind == "departed_site":
             ev = latest_event(run.robot_id)
             on_vehicle = (
@@ -230,8 +264,10 @@ def record_trip_event(actor: Any, *, run_code: str, kind: str) -> dict[str, Any]
             "run": run.code,
             "kind": kind,
             "seq": te.seq,
+            "aborted_outbound": aborted,
             "custody": custody_dict(custody),
         }
+        result["vehicle_returned_without_robot"] = bool(missing)
         if kind == "arrived_hub" and custody.kind != "vehicle":
             result["warning"] = (
                 f"The vehicle is back but the robot is {custody_text(custody)}; the trip cannot close until "
@@ -384,4 +420,98 @@ def transfer_custody(
 
     return run_command(
         actor, name, permission="execution.record_field_event", payload=payload, handler=handler
+    )
+
+
+# ------------------------------------------------------------------ recover_robot (no open run)
+def recover_robot(
+    actor: Any, *, robot_code: str, received_by_code: str, note: str, idempotency_key: str | None = None
+) -> dict[str, Any]:
+    """Record an unaccounted robot that has NO open run (its trip already closed, or it was reported
+    unaccounted with no run) as received back at the hub: unaccounted -> hub, basis recovered, no run, trip
+    or visit (migration 0003). ops_lead only; the receiver (who becomes the custodian) must hold a field
+    role; the note is the recovery acknowledgment. It never opens a run and never touches the incident or
+    its hold: the incident hold still blocks planning and readiness until released through the fleet
+    workflow. A robot that still has an open run is recovered through transfer_custody on that run."""
+    name = "execution.recover_robot"
+    payload = {"robot": robot_code, "received_by": received_by_code, "note": note}
+
+    def handler() -> Outcome:
+        try:
+            robot = Robot.objects.get(code=robot_code)
+        except Robot.DoesNotExist:
+            raise Invalid(f"No robot {robot_code}") from None
+        receiver = get_person(received_by_code, "receiver")
+        checkpoint(f"read:{name}")
+        lock_guards(update_robots=[robot.pk], share_persons=[receiver.pk], label=name)
+
+        if not has_role(actor.pk, "ops_lead"):
+            raise PermissionDenied("Recording a recovered robot requires an ops_lead")
+        run_id = open_run_id(robot.pk)
+        if run_id is not None:
+            code = ExecutionRun.objects.get(pk=run_id).code
+            raise Conflict(
+                f"Robot {robot.code} has an open run ({code}); record the recovery with transfer_custody "
+                "on that run"
+            )
+        custody = current_custody(robot.pk)
+        prev = latest_event(robot.pk)
+        if custody.kind != "unaccounted" or prev is None:
+            raise Conflict(
+                f"Robot {robot.code} is not unaccounted for (it is {custody_text(custody)}); "
+                "only an unaccounted robot can be recovered"
+            )
+        inc = prev.incident
+        if inc is None or inc.robot_id != robot.pk or inc.event_type != "robot_unaccounted":
+            raise Conflict(
+                f"Robot {robot.code}'s unaccounted custody does not reference a robot_unaccounted incident "
+                "on this robot; it cannot be recovered"
+            )
+        if not person_is_field_user(receiver):
+            raise Conflict(
+                f"The receiver {receiver.code} does not hold an active ops_lead or field_operator role"
+            )
+        if not note.strip():
+            raise Invalid("A recovery needs a note (the recovery acknowledgment)")
+
+        ev = CustodyEvent.objects.create(
+            robot=robot,
+            seq=prev.seq + 1,
+            from_kind="unaccounted",
+            to_kind="hub",
+            run=None,
+            trip=None,
+            visit=None,
+            custodian=receiver,
+            received_by=receiver,
+            basis="recovered",
+            incident_id=prev.incident_id,
+            note=note,
+            recorded_by=actor,
+        )
+        incident_code = ev.incident.code if ev.incident else None
+        return Outcome(
+            "custody_event",
+            str(ev.pk),
+            {
+                "id": ev.pk,
+                "robot": robot.code,
+                "seq": ev.seq,
+                "from": "unaccounted",
+                "to": "hub",
+                "basis": "recovered",
+                "custodian": receiver.code,
+                "received_by": receiver.code,
+                "incident": incident_code,
+                "custody": custody_dict(current_custody(robot.pk)),
+            },
+        )
+
+    return run_command(
+        actor,
+        name,
+        permission="execution.record_field_event",
+        payload=payload,
+        handler=handler,
+        idempotency_key=idempotency_key,
     )
