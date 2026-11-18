@@ -777,7 +777,18 @@ def request_visit(
     )
 
 
+def _departed(visit: Visit) -> bool:
+    from readiness.models import DepartureEvent  # readiness depends on planning, not the reverse
+
+    return DepartureEvent.objects.filter(visit_id=visit.pk).exists()
+
+
 def _release_active(visit: Visit, reason: str) -> None:
+    """Never for a departed visit (Slice 4 contract C1; the database refuses it too)."""
+    if _departed(visit):
+        raise Conflict(
+            f"Visit {visit.code} has departed; its reservations and trip can no longer be released"
+        )
     now = timezone.now()
     for res in Reservation.objects.filter(revision__visit=visit, released_at__isnull=True):
         res.released_at, res.released_reason = now, reason
@@ -1022,6 +1033,11 @@ def cancel_visit(actor: Any, *, visit_code: str, reason: str) -> dict[str, Any]:
         v.refresh_from_db()
         if v.status == "cancelled":
             raise Conflict("Already cancelled")
+        if _departed(v):
+            raise Conflict(
+                f"Visit {v.code} has departed; a departed visit can never be cancelled. "
+                "It ends through its execution record (return reconciliation and trip closure)."
+            )
         _release_active(v, "visit cancelled")
         v.status, v.cancelled_reason = "cancelled", reason
         v.save(update_fields=["status", "cancelled_reason"])

@@ -518,7 +518,8 @@ def _depart_now(w) -> None:
     rc.record_departure(w.ops, authorization_code=a.code)
 
 
-def test_departed_visit_cannot_be_rescheduled_by_command_but_can_be_cancelled(w):
+def test_departed_visit_cannot_be_rescheduled_or_cancelled_by_command(w):
+    """Slice 4 contract C1 (EM-approved change): a departed visit can no longer be cancelled either."""
     _depart_now(w)
     n = VisitRevision.objects.filter(visit=_visit(w)).count()
     with pytest.raises(Conflict, match="departed"):
@@ -527,8 +528,9 @@ def test_departed_visit_cannot_be_rescheduled_by_command_but_can_be_cancelled(w)
         plan(w, w.visit, robot="R-02")
     assert VisitRevision.objects.filter(visit=_visit(w)).count() == n
     assert _visit(w).status == "confirmed"
-    w.p.cancel_visit(w.ops, visit_code=w.visit, reason="returned early")
-    assert _visit(w).status == "cancelled"
+    with pytest.raises(Conflict, match="departed"):
+        w.p.cancel_visit(w.ops, visit_code=w.visit, reason="returned early")
+    assert _visit(w).status == "confirmed"
 
 
 def _raw_new_revision(cur, rev: VisitRevision) -> None:

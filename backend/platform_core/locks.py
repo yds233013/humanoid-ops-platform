@@ -1,7 +1,8 @@
 """Guard-row locking in ONE global order (see docs/02_lock_graph.md):
 
     role grants (run_command) -> deployment settings (advisory, shared) -> sites -> manifest patterns
-      -> robots -> persons -> vehicles -> visits -> readiness policies -> departure authorizations
+      -> robots -> persons -> vehicles -> visits -> vehicle trips -> readiness policies
+      -> departure authorizations -> incident policies -> execution runs -> incidents   (Slice 4)
 
 Deployment settings (fleet_deploymentsetting) are writable only by the schema owner, and the runtime role has
 SELECT only, so it cannot row-lock them. Instead every change to that table takes the transaction-level
@@ -34,8 +35,12 @@ ORDER = [
     ("planning_person", "persons"),
     ("planning_vehicle", "vehicles"),
     ("planning_visit", "visits"),
+    ("planning_vehicletrip", "trips"),
     ("readiness_readinesspolicy", "policies"),
     ("readiness_departureauthorization", "authorizations"),
+    ("execution_incidentpolicy", "incident_policies"),
+    ("execution_executionrun", "runs"),
+    ("execution_incident", "incidents"),
 ]
 
 
@@ -60,10 +65,18 @@ def lock_guards(
     share_vehicles: Iterable[int] = (),
     update_visits: Iterable[int] = (),
     share_visits: Iterable[int] = (),
+    update_trips: Iterable[int] = (),
+    share_trips: Iterable[int] = (),
     update_policies: Iterable[int] = (),
     share_policies: Iterable[int] = (),
     update_authorizations: Iterable[int] = (),
     share_authorizations: Iterable[int] = (),
+    update_incident_policies: Iterable[int] = (),
+    share_incident_policies: Iterable[int] = (),
+    update_runs: Iterable[int] = (),
+    share_runs: Iterable[int] = (),
+    update_incidents: Iterable[int] = (),
+    share_incidents: Iterable[int] = (),
     label: str = "",
 ) -> None:
     requested = {
@@ -73,8 +86,12 @@ def lock_guards(
         "persons": (update_persons, share_persons),
         "vehicles": (update_vehicles, share_vehicles),
         "visits": (update_visits, share_visits),
+        "trips": (update_trips, share_trips),
         "policies": (update_policies, share_policies),
         "authorizations": (update_authorizations, share_authorizations),
+        "incident_policies": (update_incident_policies, share_incident_policies),
+        "runs": (update_runs, share_runs),
+        "incidents": (update_incidents, share_incidents),
     }
     if share_settings:  # first: right after run_command's role grants, before every guard row
         lock_settings_shared()

@@ -53,6 +53,25 @@ PERMISSIONS: dict[str, set[str]] = {
     "readiness.authorize_departure": {OPS_LEAD},
     "readiness.revoke_authorization": {OPS_LEAD, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "readiness.record_departure": {OPS_LEAD, FIELD_OPERATOR},
+    # Slice 4: field execution and incident response
+    "execution.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
+    "execution.record_field_event": {OPS_LEAD, FIELD_OPERATOR},
+    "execution.report_incident": {
+        OPS_LEAD,
+        FIELD_OPERATOR,
+        ENGINEER,
+        ENGINEERING_LEAD,
+        SAFETY_REVIEWER,
+        FOUNDER,
+    },
+    "execution.triage_incident": {OPS_LEAD, ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "execution.change_severity": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "execution.close_incident": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "execution.record_disposition": {OPS_LEAD},
+    "execution.reconcile": {OPS_LEAD},
+    "execution.close_trip": {OPS_LEAD},
+    "execution.manage_incident_policy": {ENGINEERING_LEAD},
+    "execution.approve_incident_policy": {ENGINEERING_LEAD, SAFETY_REVIEWER},
 }
 
 # Roles that may sign an inspection as performer or verifier.

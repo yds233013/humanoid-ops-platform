@@ -33,7 +33,7 @@ from typing import Any
 from django.db import connection
 
 from fleet import services as fleet_services
-from planning.models import Person, Visit
+from planning.models import Person, VehicleTrip, Visit
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, RetryTransaction, run_command
 from platform_core.locks import lock_guards
 from platform_core.testhooks import checkpoint
@@ -130,12 +130,27 @@ def _covered(locked: dict[str, set[int]], snap: dict[str, Any]) -> bool:
     return all(need[k] <= locked[k] for k in need)
 
 
-def _lock(locked: dict[str, set[int]], label: str, authorization_id: int | None = None) -> None:
+def _lock(
+    locked: dict[str, set[int]],
+    label: str,
+    authorization_id: int | None = None,
+    *,
+    departure: bool = False,
+) -> None:
+    """Departure (Slice 4, contract C2) locks the robot and the visit's trip FOR UPDATE: its trigger opens the
+    execution run and writes the robot's first custody event. Same positions in the global order."""
+    trips: list[int] = []
+    if departure:
+        trips = list(
+            VehicleTrip.objects.filter(revision__visit_id__in=locked["visits"]).values_list("pk", flat=True)
+        )
     lock_guards(
         share_settings=True,  # demo_mode etc. cannot change until this decision commits
         share_sites=locked["sites"],
         share_patterns=locked["patterns"],
-        share_robots=locked["robots"],
+        share_robots=() if departure else locked["robots"],
+        update_robots=locked["robots"] if departure else (),
+        update_trips=trips,
         share_persons=locked["persons"],
         share_vehicles=locked["vehicles"],
         update_visits=locked["visits"],
@@ -249,7 +264,7 @@ def record_departure(
         read = take_guard_snapshot(v)
         checkpoint("read:readiness.record_departure")
         locked = _lock_set(stored, read)
-        _lock(locked, "readiness.record_departure", authorization_id=auth.pk)
+        _lock(locked, "readiness.record_departure", authorization_id=auth.pk, departure=True)
         v.refresh_from_db()
         now_snap = take_guard_snapshot(v)
         if v.current_revision_id != read.get("revision_id") or not _covered(locked, now_snap):
