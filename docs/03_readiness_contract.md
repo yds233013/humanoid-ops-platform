@@ -348,10 +348,17 @@ the live guards (`readiness_guard_problem`, shared with the triggers); active po
 production needs approved_procedure; robot in service, pattern approved_home, base authorization, no blocking
 robot/pattern hold, approved capability profile with known planning fields (synthetic refused in production);
 consent count on the current form covering the revision's scopes >= expected adults (unknown blocks); lead
-field_lead, second field_operator/field_lead, both robot_handler, valid now through on_site_end; latest
+field_lead, second field_operator/field_lead, both robot_handler (window: see 0006 below); latest
 recovery plan (required when the policy says so); latest evidence per policy kind passing and fresh; battery
 >= profile minimum (unknown blocks); required equipment present; `evidence_ids` exactly the relied set;
-`now < expires_at <= least(now + ttl, evidence observed_at + max_age)`. Not re-proven (Python only): site
-assessment, vehicle capacity/restraint, timeline and resource conflicts, the exact qualification activity
-window, reservation coverage (gate 3), on-call engineer role (review). The full list is in the migration's
-docstring.
+`now < expires_at <= least(now + ttl, evidence observed_at + max_age)`.
+
+Migration readiness/0006 (EM follow-up) adds the planning gates: site assessment (approved, non-superseded,
+valid on the site-local visit date; not_eligible and eligible_restricted refuse; no excluded task), the live
+plan timeline (same formula as planning), every live-plan reservation of the current revision active and
+covering its interval, an unreleased vehicle trip carrying the robot (stricter than the evaluator), vehicle
+capacity and restraint kit known, lead and second distinct, and qualification windows identical to planning
+(inspection start, or loading start for robot_handler, through unloading end) replacing 0005's simplified
+window. The only evaluator item not re-proven is the on-call engineer role (a review item); the database also
+cannot know the human behind ops_app. `tests/test_readiness_authz_boundary.py` maps every evaluator and
+planning blocker code to its SQL refusal.
