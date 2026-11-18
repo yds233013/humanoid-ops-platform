@@ -34,6 +34,7 @@ urlpatterns = [
     # Slice 2: planner
     path("planning/", planning_views.week, name="planning-week"),
     path("readiness/", include("readiness.urls")),
+    path("execution/", include("execution.urls")),
     path("planning/sites/", planning_views.sites),
     path("planning/visits/<str:code>/", planning_views.visit_detail, name="planning-visit"),
     path("planning/visits/<str:code>/plan/", planning_views.plan_view),

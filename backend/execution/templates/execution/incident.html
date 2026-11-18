@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{{ i.code }} incident{% endblock %}
+{% block content %}
+{% include "execution/_chrome.html" %}
+<p><a href="/execution/incidents/">&larr; Incidents</a>{% if i.run %} · <a href="/execution/runs/{{ i.run.code }}/">Run {{ i.run.code }}</a>{% endif %}</p>
+<h1>{{ i.code }} <span class="muted">{{ i.get_event_type_display }} · <a href="/fleet/{{ i.robot.code }}/">{{ i.robot.code }}</a></span></h1>
+
+<div class="card">
+  <h2>Report</h2>
+  <div class="row">
+    <span>Status: <span class="badge {{ status }}">{{ status }}</span></span>
+    <span>Severity: <span class="badge {{ severity }}">{{ severity }}</span></span>
+    <span>Hold: <a href="/fleet/{{ i.robot.code }}/">{{ i.hold.code }}</a> {% if hold_active %}<span class="badge held">Still active - robot held</span>{% else %}<span class="badge released">Released {{ i.hold.released_at|date:"D j M H:i" }}</span>{% endif %}</span>
+  </div>
+  <table style="margin-top:8px"><tbody>
+    <tr><th>Occurred at</th><td>{{ occurred_local|date:"D j M Y H:i" }} ({{ tz }})</td></tr>
+    <tr><th>Reported at</th><td>{{ reported_local|date:"D j M Y H:i" }} ({{ tz }}) by {{ i.recorded_by.username }}</td></tr>
+    <tr><th>Knowledge source</th><td>{{ i.get_knowledge_source_display }}</td></tr>
+    <tr><th>Manifest</th><td>{% if i.manifest %}#{{ i.manifest_id }} · pattern {{ i.manifest.pattern.code }} · autonomy {{ i.manifest.autonomy_version }}{% else %}<span class="muted">none recorded</span>{% endif %}</td></tr>
+    <tr><th>Run / visit</th><td>{% if i.run %}<a href="/execution/runs/{{ i.run.code }}/">{{ i.run.code }}</a> · {{ i.visit.code }}{% else %}<span class="muted">no open run when reported</span>{% endif %}</td></tr>
+    <tr><th>Robot custody now</th><td>{{ custody_text }}</td></tr>
+    <tr><th>Description</th><td>{{ i.description }}</td></tr>
+  </tbody></table>
+  <p class="muted">The hold is released only through the fleet hold-release workflow on <a href="/fleet/{{ i.robot.code }}/">/fleet/{{ i.robot.code }}/</a>. Changing this incident's status never touches it.</p>
+</div>
+
+<div class="card">
+  <h2>Severity history</h2>
+  <div class="tablewrap"><table><thead><tr><th>Level</th><th>Policy</th><th>Reason</th><th>By</th><th>When ({{ tz }})</th></tr></thead><tbody>
+  {% for s in severities %}<tr><td><b>{{ s.d.level }}</b></td><td>v{{ s.d.policy.version }}</td><td>{{ s.d.reason }}</td><td>{{ s.d.recorded_by.username }}</td><td>{{ s.local|date:"D j M H:i" }}</td></tr>
+  {% empty %}<tr><td colspan="5" class="muted">Unclassified: no severity decision recorded.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can.change_severity %}{% if policy %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/severity/" class="row" style="margin-top:10px">{% csrf_token %}
+    <label>Level <select name="level">{% for l in scale %}<option>{{ l }}</option>{% endfor %}</select></label>
+    <label>Reason <input name="reason" size="40"></label>
+    <button class="primary">Record severity decision</button><span class="muted">Under incident policy v{{ policy.version }}.</span>
+  </form>{% else %}<p class="muted">No active incident policy: severity stays unclassified (the hold is in place regardless).</p>{% endif %}{% endif %}
+</div>
+
+<div class="card">
+  <h2>Status history</h2>
+  <div class="tablewrap"><table><thead><tr><th>Status</th><th>By</th><th>When ({{ tz }})</th></tr></thead><tbody>
+  <tr><td>reported</td><td>{{ i.recorded_by.username }}</td><td>{{ reported_local|date:"D j M H:i" }}</td></tr>
+  {% for s in statuses %}<tr><td>{{ s.s.to_status }}</td><td>{{ s.s.recorded_by.username }}</td><td>{{ s.local|date:"D j M H:i" }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if next_status %}{% if can.triage_incident or can.close_incident %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/status/" class="row" style="margin-top:10px">{% csrf_token %}
+    <input type="hidden" name="to_status" value="{{ next_status }}">
+    <button class="primary">Move to {{ next_status }}</button>
+    <span class="muted">One step at a time. Closing needs every escalation acknowledged. The robot's hold is unchanged.</span>
+  </form>{% endif %}{% endif %}
+</div>
+
+<div class="card">
+  <h2>Escalations</h2>
+  <div class="tablewrap"><table><thead><tr><th>To</th><th>Requested action</th><th>By</th><th>Acknowledgment</th></tr></thead><tbody>
+  {% for x in escalations %}<tr><td>{{ x.e.to_role }}{% if x.e.to_person %} ({{ x.e.to_person.code }}){% endif %}</td><td>{{ x.e.requested_action }}</td><td>{{ x.e.recorded_by.username }}</td>
+    <td>{% if x.ack %}Acknowledged by {{ x.ack.acknowledged_by.username }} <span class="muted">{{ x.ack.recorded_at|date:"D j M H:i" }}</span>
+      {% else %}<span class="badge unresolved">Not acknowledged</span>
+      {% if x.can_ack %}<form method="post" action="/execution/incidents/{{ i.code }}/ack/" class="inline">{% csrf_token %}<input type="hidden" name="escalation" value="{{ x.e.pk }}"><button class="primary">Acknowledge</button></form>{% endif %}{% endif %}</td></tr>
+  {% empty %}<tr><td colspan="4" class="muted">No escalations.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can.triage_incident %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/escalate/" class="row" style="margin-top:10px">{% csrf_token %}
+    <label>To role <select name="to_role">{% for r in roles_all %}<option>{{ r }}</option>{% endfor %}</select></label>
+    <label>Person (optional) <select name="to_person"><option value="">-</option>{% for p in persons %}<option>{{ p.code }}</option>{% endfor %}</select></label>
+    <label>Requested action <input name="requested_action" size="40"></label>
+    <button class="primary">Escalate</button>
+  </form>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Fault observations</h2>
+  <div class="tablewrap"><table><thead><tr><th>Component</th><th>Status</th><th>Evidence</th><th>By</th><th>When</th></tr></thead><tbody>
+  {% for f in faults %}<tr><td>{{ f.component }}</td><td>{{ f.get_status_display }}</td><td>{{ f.evidence_ref|default:"-" }}</td><td>{{ f.recorded_by.username }}</td><td class="muted">{{ f.recorded_at|date:"D j M H:i" }}</td></tr>
+  {% empty %}<tr><td colspan="5" class="muted">No fault observations.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can.triage_incident %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/fault/" class="row" style="margin-top:10px">{% csrf_token %}
+    <label>Component <input name="component"></label>
+    <label>Status <select name="status"><option value="suspected">Suspected</option><option value="confirmed">Confirmed</option></select></label>
+    <label>Evidence ref <input name="evidence_ref"></label>
+    <button class="primary">Record fault observation</button>
+  </form>{% endif %}
+</div>
+
+{% if can_recover and is_ops_lead %}
+<div class="card">
+  <h2>Record recovery (no open run)</h2>
+  <p class="muted">The robot is unaccounted for and has no open run. Recording that it was received at the hub does not resolve this incident or release its hold.</p>
+  <form method="post" action="/execution/incidents/{{ i.code }}/recover/" class="row">{% csrf_token %}
+    <label>Received by <select name="received_by">{% for p in persons %}<option>{{ p.code }}</option>{% endfor %}</select></label>
+    <label>Recovery acknowledgment <input name="note" size="40"></label>
+    <button class="primary">Record recovery to hub</button>
+  </form>
+</div>{% endif %}
+{% endblock %}
