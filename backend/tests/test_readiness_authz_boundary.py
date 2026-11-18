@@ -12,10 +12,12 @@ SYNTHETIC data only.
 """
 
 import copy
+import inspect
 import os
+import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 import psycopg
@@ -26,10 +28,12 @@ from psycopg.types.json import Jsonb
 
 from fleet import services as fs
 from fleet.models import Robot
-from planning.models import ConsentRecord, Qualification, Visit
+from planning import services as planning_services
+from planning.models import ConsentRecord, Qualification, Reservation, SiteAssessment, Visit
 from platform_core.commands import Conflict
 from platform_core.models import AuditEvent
 from readiness import commands as rc
+from readiness import evaluator
 from readiness import evidence as rx
 from readiness.evaluator import db_now, evaluate_readiness, take_guard_snapshot
 from readiness.models import DepartureAuthorization, DepartureEvent, ReadinessEvidence, RecoveryPlan
@@ -252,7 +256,7 @@ BLOCKED: list[tuple[Callable[[Any], None], str]] = [
     (_withdrawn_policy, "no active readiness policy"),
     (_production, "synthetic_demo policy can never authorize"),
     (_unconfirmed, "only a confirmed visit"),
-    (_revoked_qualification, "robot handlers"),
+    (_revoked_qualification, "P-2 is not qualified for robot handling"),
     (_out_of_service, "not in service"),
     (_base_auth_revoked, "base home-use authorization"),
 ]
@@ -460,3 +464,289 @@ def test_function_is_security_definer_with_fixed_search_path_and_runtime_role_ow
             pass
         cur.execute("SELECT has_table_privilege(%s, 'readiness_departureauthorization', 'INSERT')", [app])
         assert cur.fetchone()[0] is False
+
+
+# ================================================================== 6. planning gates (migration readiness/0006)
+def _supersede_assessment(w, decision="eligible", valid_until=date(2027, 3, 1), excluded=None, approve=True):
+    cur = SiteAssessment.objects.filter(site__code="S-1").order_by("-assessed_at", "-pk").first()
+    a = w.p.record_assessment(
+        w.field,
+        site_code="S-1",
+        decision=decision,
+        valid_until=valid_until,
+        restrictions="" if decision == "eligible" else "SYNTHETIC restriction",
+        excluded_tasks=excluded or [],
+        supersedes_id=cur.pk,
+    )
+    if approve:
+        w.p.approve_assessment(w.ops, assessment_id=int(a["entity_id"]))
+
+
+def _reservation(w, purpose: str, kind: str, person_code: str | None = None) -> Reservation:
+    qs = Reservation.objects.filter(
+        revision=_visit(w).current_revision, purpose=purpose, resource__kind=kind, released_at__isnull=True
+    )
+    if person_code:
+        qs = qs.filter(resource__person__code=person_code)
+    return qs.get()
+
+
+def _raw_release(w, purpose: str, kind: str, person_code: str | None = None) -> None:
+    res = _reservation(w, purpose, kind, person_code)
+    with _app_cursor() as cur:
+        cur.execute(
+            "UPDATE planning_reservation SET released_at = now(), released_reason = 'raw' WHERE id = %s",
+            [res.pk],
+        )
+
+
+@contextmanager
+def _app_cursor() -> Iterator[psycopg.Cursor]:
+    """A raw ops_app autocommit cursor (direct SQL as the runtime role)."""
+    conn = psycopg.connect(
+        host=os.environ.get("DB_HOST", "localhost"),
+        port=os.environ.get("DB_PORT", "5440"),
+        dbname=connection.settings_dict["NAME"],
+        user=settings.DB_APP_ROLE,
+        password=os.environ.get("DB_APP_PASSWORD", "ops_app_dev"),
+        autocommit=True,
+    )
+    try:
+        with conn.cursor() as cur:
+            yield cur
+    finally:
+        conn.close()
+
+
+def _raw_vehicle(w, sql_set: str) -> None:
+    with _app_cursor() as cur:
+        cur.execute(
+            f"UPDATE planning_vehicle SET {sql_set} WHERE id = %s", [_visit(w).current_revision.vehicle_id]
+        )
+
+
+def _timeline(w) -> dict[str, Any]:
+    rev = _visit(w).current_revision
+    return {
+        "insp_start": _reservation(w, "inspection", "robot").starts_at,
+        "load_start": _reservation(w, "loading", "robot").starts_at,
+        "unload_end": _reservation(w, "unloading", "robot").ends_at,
+        "on_site_end": rev.on_site_end,
+    }
+
+
+def _replace_qualification(w, person: str, kind: str, valid_from, valid_to) -> None:
+    q = Qualification.objects.get(person__code=person, kind=kind, revoked_at__isnull=True)
+    w.p.revoke_qualification(w.ops, qualification_id=q.pk, reason="boundary test")
+    w.p.grant_qualification(w.ops, person_code=person, kind=kind, valid_from=valid_from, valid_to=valid_to)
+
+
+def _assessment_missing(w):
+    _supersede_assessment(w, approve=False)  # the old one is superseded, the new one is not approved
+
+
+def _assessment_expired(w):
+    _supersede_assessment(w, valid_until=date(2026, 12, 7))  # the visit is on 2026-12-08 site-local
+
+
+def _assessment_not_eligible(w):
+    _supersede_assessment(w, decision="not_eligible")
+
+
+def _assessment_restricted(w):
+    _supersede_assessment(w, decision="eligible_restricted")
+
+
+def _assessment_excludes_task(w):
+    _supersede_assessment(w, excluded=["T-04"])
+
+
+def _released_robot_on_site(w):
+    _raw_release(w, "on_site", "robot")
+
+
+def _released_lead_field_shift(w):
+    _raw_release(w, "field_shift", "person", "P-1")
+
+
+def _released_vehicle_trip_reservation(w):
+    _raw_release(w, "trip", "vehicle")
+
+
+def _vehicle_capacity_unknown(w):
+    _raw_vehicle(w, "robot_capacity = NULL")
+
+
+def _vehicle_restraint_missing(w):
+    _raw_vehicle(w, "restraint_kit = ''")
+
+
+def _qualification_expires_mid_activity(w):
+    t = _timeline(w)  # valid now and at on_site_end, but not through unloading end
+    assert t["on_site_end"] + timedelta(minutes=1) < t["unload_end"]
+    _replace_qualification(
+        w, "P-2", "field_operator", db_now() - timedelta(days=1), t["on_site_end"] + timedelta(minutes=1)
+    )
+
+
+def _qualification_starts_after_inspection_start(w):
+    t = _timeline(w)
+    assert t["insp_start"] + timedelta(minutes=1) < t["load_start"]
+    _replace_qualification(
+        w,
+        "P-2",
+        "field_operator",
+        t["insp_start"] + timedelta(minutes=1),
+        t["unload_end"] + timedelta(days=30),
+    )
+
+
+def _robot_handling_starts_after_loading_start(w):
+    t = _timeline(w)
+    _replace_qualification(
+        w,
+        "P-1",
+        "robot_handler",
+        t["load_start"] + timedelta(minutes=1),
+        t["unload_end"] + timedelta(days=30),
+    )
+
+
+PLANNING_BLOCKED: list[tuple[Callable[[Any], None], str, str]] = [
+    (_assessment_missing, "no approved, current site assessment", "PLANNING_SITE_NOT_ASSESSED"),
+    (_assessment_expired, "no approved, current site assessment", "PLANNING_SITE_NOT_ASSESSED"),
+    (_assessment_not_eligible, "assessed as not eligible", "PLANNING_SITE_NOT_ELIGIBLE"),
+    (_assessment_restricted, "has restrictions", "PLANNING_SITE_RESTRICTED"),
+    (_assessment_excludes_task, "tasks excluded at this site: T-04", "PLANNING_TASK_EXCLUDED"),
+    (_released_robot_on_site, "were released", "RESERVATIONS_MISSING"),
+    (_released_lead_field_shift, "were released", "RESERVATIONS_MISSING"),
+    (_released_vehicle_trip_reservation, "were released", "RESERVATIONS_MISSING"),
+    (_vehicle_capacity_unknown, "robot capacity is unknown", "PLANNING_VEHICLE_CAPACITY_UNKNOWN"),
+    (_vehicle_restraint_missing, "no recorded restraint kit", "PLANNING_VEHICLE_RESTRAINT_UNKNOWN"),
+    (
+        _qualification_expires_mid_activity,
+        "second P-2 is not qualified as field operator",
+        "PLANNING_QUALIFICATION",
+    ),
+    (
+        _qualification_starts_after_inspection_start,
+        "second P-2 is not qualified as field operator",
+        "PLANNING_QUALIFICATION",
+    ),
+    (
+        _robot_handling_starts_after_loading_start,
+        "lead P-1 is not qualified for robot handling",
+        "PLANNING_QUALIFICATION",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "change,match,code", PLANNING_BLOCKED, ids=[c.__name__.strip("_") for c, _, _ in PLANNING_BLOCKED]
+)
+def test_function_refuses_planning_gates_with_live_arguments(w, app_role_conn, change, match, code):
+    change(w)
+    res = evaluate_readiness(_visit(w))
+    assert not res.ready and code in {b["code"] for b in res.blockers}, res.blockers  # Python agrees
+    with app_role_conn.cursor() as cur, pytest.raises(psycopg.errors.CheckViolation, match=match):
+        issue(cur, live_args(w))
+    assert not DepartureAuthorization.objects.exists()
+
+
+def test_released_vehicle_trip_row_is_refused(w, app_role_conn):
+    """Stricter than the evaluator (EM request): a raw release of the vehicle trip row itself, with its 'trip'
+    reservation still active. The evaluator's gate 3 checks reservations, not the trip row."""
+    with app_role_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE planning_vehicletrip SET released_at = now() WHERE revision_id = %s",
+            [_visit(w).current_revision_id],
+        )
+        assert cur.rowcount == 1
+    res = evaluate_readiness(_visit(w))
+    assert res.ready, "documents the evaluator's behaviour; if this changes, update the boundary docstring"
+    with (
+        app_role_conn.cursor() as cur,
+        pytest.raises(psycopg.errors.CheckViolation, match="no unreleased vehicle trip"),
+    ):
+        issue(cur, live_args(w))
+    with pytest.raises(Conflict, match="no unreleased vehicle trip"):  # the command fails closed on it
+        rc.authorize_departure(w.ops, visit_code=w.visit)
+    assert not DepartureAuthorization.objects.exists()
+
+
+# ================================================================== 7. every blocker code is accounted for
+GAP = "NOT RE-PROVEN"
+META = "NO CONDITION OF ITS OWN"
+# evaluator / planning blocker code -> literal text of the SQL refusal that re-proves it (asserted to exist in the
+# function definitions below), or (GAP | META, reason). Allowed gaps: non-safety items only.
+SQL_COVERAGE: dict[str, Any] = {
+    "VISIT_NOT_CONFIRMED": "only a confirmed visit can be authorized",
+    "VISIT_ALREADY_DEPARTED": "this visit has already departed",
+    "PLANNING_NOT_FEASIBLE": (
+        META,
+        "fallback when planning is infeasible without a blocker; every PLANNING_ code is mapped",
+    ),
+    "RESERVATIONS_MISSING": "reservation(s) for the current revision were released",
+    "POLICY_MISSING": "there is no active readiness policy",
+    "POLICY_NOT_APPROVED_PROCEDURE": "synthetic_demo policy can never authorize departure in production",
+    "EVIDENCE_MISSING": "for the current revision and configuration",
+    "EVIDENCE_FAILED": "%s %s failed",
+    "EVIDENCE_STALE": "is stale (older than",
+    "EVIDENCE_WRONG_CONFIGURATION": "for the current revision and configuration",
+    "BATTERY_MIN_UNKNOWN": "the departure battery minimum is unknown",
+    "BATTERY_LOW": "departure minimum",
+    "EQUIPMENT_MISSING": "does not show present",
+    "RECOVERY_PLAN_MISSING": "no recovery plan for the current revision and configuration",
+    "RECOVERY_ONCALL_NOT_ENGINEER": (GAP, "review item (role of the on-call person), never a blocker"),
+    "EXPIRY_NOT_POSITIVE": "expires_at must be in the future",
+    "PLANNING_SITE_NOT_ASSESSED": "no approved, current site assessment covers the visit date",
+    "PLANNING_SITE_NOT_ELIGIBLE": "the site was assessed as not eligible",
+    "PLANNING_SITE_RESTRICTED": "the site assessment has restrictions",
+    "PLANNING_TASK_EXCLUDED": "tasks excluded at this site",
+    "PLANNING_CONSENT": "adults have valid",
+    "PLANNING_UNKNOWN_TRAVEL": "travel time is unknown",
+    "PLANNING_UNKNOWN_INSPECTION_TIME": "pre-visit inspection duration is not configured",
+    "PLANNING_ROBOT_MISSING": "the current revision has no robot",
+    "PLANNING_ROBOT_NOT_ELIGIBLE": "not in service",
+    "PLANNING_UNKNOWN_LOAD_TIME": "loading/unloading time is unknown",
+    "PLANNING_UNKNOWN_CHARGE_TIME": "charge turnaround is unknown",
+    "PLANNING_CREW_INCOMPLETE": "the revision needs a lead and a second person",
+    "PLANNING_CREW_SAME_PERSON": "lead and second must be different people",
+    "PLANNING_VEHICLE_MISSING": "no vehicle assigned",
+    "PLANNING_VEHICLE_CAPACITY_UNKNOWN": "robot capacity is unknown",
+    "PLANNING_VEHICLE_RESTRAINT_UNKNOWN": "has no recorded restraint kit",
+    "PLANNING_QUALIFICATION": "is not qualified for robot handling during the activity",
+    "PLANNING_CONFLICT": "is not covered by an active reservation",
+}
+ALLOWED_GAPS = {"RECOVERY_ONCALL_NOT_ENGINEER"}
+
+
+def _planning_codes() -> set[str]:
+    src = inspect.getsource(planning_services.evaluate)
+    return set(re.findall(r'_add\(\s*b,\s*(?:"\w+"|level),\s*"([A-Z_]+)"', src))
+
+
+@pytest.mark.django_db
+def test_every_blocker_code_is_mapped_to_its_sql_refusal():
+    planning = _planning_codes()
+    assert {"SITE_NOT_ASSESSED", "CONFLICT", "QUALIFICATION", "VEHICLE_RESTRAINT_UNKNOWN"} <= planning
+    expected = set(evaluator.BLOCKER_CODES) | {evaluator.PLANNING_PREFIX + c for c in planning}
+    assert set(SQL_COVERAGE) == expected, (
+        f"unmapped: {sorted(expected - set(SQL_COVERAGE))}, stale: {sorted(set(SQL_COVERAGE) - expected)}"
+    )
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT string_agg(pg_get_functiondef(p.oid), E'\n') FROM pg_proc p "
+            "WHERE p.proname IN ('readiness_issue_authorization', 'readiness_guard_problem')"
+        )
+        source = cur.fetchone()[0]
+    for code, target in SQL_COVERAGE.items():
+        if isinstance(target, tuple):
+            kind, _why = target
+            assert kind in (GAP, META), code
+            if kind == GAP:
+                assert code in ALLOWED_GAPS, f"{code} is a safety gate and must be re-proven in SQL"
+            else:
+                assert code == evaluator.PLANNING_NOT_FEASIBLE
+        else:
+            assert target in source, f"{code}: refusal text {target!r} not found in the SQL functions"
