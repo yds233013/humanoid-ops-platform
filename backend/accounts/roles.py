@@ -72,6 +72,9 @@ PERMISSIONS: dict[str, set[str]] = {
     "execution.close_trip": {OPS_LEAD},
     "execution.manage_incident_policy": {ENGINEERING_LEAD},
     "execution.approve_incident_policy": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    # Slice 5: operations command center (read-only)
+    "operations.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
+    "operations.metrics": {OPS_LEAD, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
 }
 
 # Roles that may sign an inspection as performer or verifier.

@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "planning",
     "readiness",
     "execution",
+    "operations",
 ]
 
 MIDDLEWARE = [
