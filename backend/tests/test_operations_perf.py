@@ -256,3 +256,52 @@ def test_scale_p95(request, monkeypatch):
         if v["p95_ms"] > (READINESS_MS if k in WITH_READINESS else FAST_MS)
     }
     assert not over, f"p95 over budget (ms): {over}; full: {s}"
+
+
+# ------------------------------------------------------------------ EM review #9: whole HTTP endpoints
+HTTP_CASES = {
+    # path, budget (ms): the contract's latency targets are endpoint-level, so this includes auth,
+    # permission check, snapshot setup, the read model, serialization and template rendering.
+    "/api/ops/overview": FAST_MS,
+    "/api/ops/incidents": FAST_MS,
+    "/api/ops/metrics": FAST_MS,
+    "/api/ops/exceptions": READINESS_MS,  # the inbox runs the readiness evaluator
+    "/api/ops/timeline": READINESS_MS,
+    "/ops/": FAST_MS,
+    "/ops/incidents/": FAST_MS,
+    "/ops/metrics/": FAST_MS,
+    "/ops/exceptions/": READINESS_MS,
+    "/ops/timeline/": READINESS_MS,
+}
+
+
+@pytest.mark.perf
+@pytest.mark.django_db(transaction=True)  # the snapshot must be the outermost transaction
+def test_scale_http_endpoints_p95(request):
+    if not _perf_selected(request.config):
+        pytest.skip("run with -m perf (endpoint-level p95 budgets on the scale fixture)")
+    from django.db import transaction
+    from django.test import Client
+
+    from tests.conftest import make_user
+
+    with transaction.atomic():  # scale_world uses a temp table that lives for one transaction
+        build()
+    c = Client()
+    c.force_login(make_user("perf_ops", "ops_lead"))
+    params = {"window_min": str(WINDOW)}
+    results: dict[str, dict[str, float]] = {}
+    for path, budget in HTTP_CASES.items():
+        q = params if "timeline" in path else {}
+        assert c.get(path, q).status_code == 200, path  # warm-up, and the endpoint must work
+        samples = []
+        for _ in range(RUNS):
+            t0 = time.perf_counter()
+            resp = c.get(path, q)
+            samples.append((time.perf_counter() - t0) * 1000)
+            assert resp.status_code == 200, path
+        results[path] = {"p95_ms": round(p95(samples), 1), "median_ms": round(sorted(samples)[RUNS // 2], 1)}
+        results[path]["budget_ms"] = budget
+    print(f"\nendpoint p95 over {RUNS} runs:", json.dumps(results, indent=1))
+    over = {k: v["p95_ms"] for k, v in results.items() if v["p95_ms"] > v["budget_ms"]}
+    assert not over, f"endpoint p95 over budget (ms): {over}; full: {results}"

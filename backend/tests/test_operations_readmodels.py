@@ -667,3 +667,31 @@ def test_timeline_flags_match_exception_inbox_when_available():
     for f in flags:
         assert inbox.get((f.code, f.entity_ref)) == f.since, f
     assert page.readiness_coverage == t.readiness_coverage
+
+
+@pytest.mark.django_db(transaction=True)
+def test_two_qualifying_visits_have_identical_readiness_triples_in_timeline_and_inbox():
+    """EM review #2: per-visit since = that visit's on_site_start - lookahead, identical in timeline and inbox."""
+    from operations.exceptions import open_exceptions
+
+    w = ow.ops_world("tr_", robots=3)
+    set_thresholds()
+    a = new_confirmed_visit(w, robot="R-02", d=DAY + timedelta(days=3))
+    b = new_confirmed_visit(w, robot="R-03", d=DAY + timedelta(days=6))
+    with read_snapshot() as at:
+        t = rm.timeline(at, window_min=WINDOW)
+        page = open_exceptions(at)
+    tl_triples = {
+        (f.code, f.entity_ref, f.since)
+        for v in t.visits
+        for f in v.flags
+        if f.code == "READINESS_INCOMPLETE_SOON"
+    }
+    inbox_triples = {
+        (x.code, x.entity_ref, x.since) for x in page.items if x.code == "READINESS_INCOMPLETE_SOON"
+    }
+    mine = {x for x in tl_triples if x[1] in (a, b)}
+    assert {x[1] for x in mine} == {a, b}
+    sinces = {x[1]: x[2] for x in mine}
+    assert sinces[a] != sinces[b]  # each visit has its own since
+    assert mine <= inbox_triples

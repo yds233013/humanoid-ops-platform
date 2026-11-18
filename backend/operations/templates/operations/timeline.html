@@ -4,6 +4,7 @@
 {% include "operations/_chrome.html" %}
 <h1>Operations timeline · next {{ window_min }} minutes</h1>
 <form method="get" class="row"><label>Window (minutes) <input name="window_min" type="number" min="1" max="129600" value="{{ window_min }}"></label><button class="primary" type="submit">Show</button></form>
+<p class="muted" data-coverage-scope="1">Readiness coverage on this page: {{ readiness_coverage_scope }}. The exception inbox counts every qualifying visit in the readiness lookahead, so its numbers can differ.</p>
 {% if coverage %}<div class="banner op-partial" role="alert" data-coverage="partial"><b>Readiness exceptions are incomplete: {{ coverage.not_evaluated }} upcoming visit{{ coverage.not_evaluated|pluralize }} {{ coverage.not_evaluated|pluralize:"was,were" }} not evaluated</b> ({{ coverage.evaluated }} of {{ coverage.qualifying }} qualifying visits were checked with the readiness evaluator in this snapshot). Visits marked "Not evaluated" have no readiness result here; see the <a href="/readiness/">upcoming visits list</a>.</div>{% endif %}
 {% if timeline.unconfigured_thresholds %}<div class="banner op-partial" role="alert">Some time rules could not run because their setting is missing or invalid: {{ timeline.unconfigured_thresholds|join:", " }}. Their flags are not shown.</div>{% endif %}
 <p class="muted">Times are UTC. A readiness label comes only from the readiness evaluator run in this snapshot; it is not a departure decision.</p>

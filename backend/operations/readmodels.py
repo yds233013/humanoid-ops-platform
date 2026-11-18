@@ -444,10 +444,11 @@ def timeline(at: datetime, *, window_min: int) -> Timeline:
 
     Readiness (contract 4a): a visit qualifies when its on-site start is at most
     ``ops_readiness_lookahead_min`` after ``at``. The authoritative evaluator runs for the first 10
-    qualifying visits of the window, in (on-site start, visit id) order - the same selection as the exception
-    inbox, since both lists are prefixes of one ordering - and every other visit shows "Not evaluated".
-    ``readiness_coverage`` counts the qualifying visits of this window; it is complete only when every one
-    was evaluated (never when the lookahead threshold is unconfigured)."""
+    qualifying visits INSIDE THIS WINDOW, in (on-site start, visit id) order, and every other visit shows
+    "Not evaluated". When the window is shorter than the lookahead this is NOT the inbox's selection (the
+    inbox draws from every qualifying visit in the lookahead), so coverage is window-scoped and labelled so
+    on the page/API (``readiness_coverage_scope``). It is complete only when every qualifying visit of the
+    window was evaluated (never when the lookahead threshold is unconfigured)."""
     if isinstance(window_min, bool) or not isinstance(window_min, int) or window_min <= 0:
         raise ValueError("window_min must be a positive integer number of minutes")
     from planning.models import Visit

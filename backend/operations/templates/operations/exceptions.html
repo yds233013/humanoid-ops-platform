@@ -19,5 +19,10 @@
   <td>{% if e.action_url %}<a href="{{ e.action_url }}">Open</a>{% else %}<span class="muted">No page in the app</span>{% endif %}{% if e.resolvable is not None and not e.resolvable %}<div class="muted">May not be resolvable there yet</div>{% endif %}</td>
 </tr>{% empty %}<tr><td colspan="7" class="muted">No open exceptions in this snapshot{% if coverage %} (readiness coverage is partial, see above){% endif %}.</td></tr>{% endfor %}
 </tbody></table></div>
+{% if unknown_basis %}<h2>Not computable</h2>
+<div class="banner op-partial" role="status" data-unknown-basis="1">These checks could not be computed because the scheduling basis is missing. They are not on-time; they are unknown.</div>
+<div class="tablewrap"><table><thead><tr><th>Rule</th><th>Run</th><th>Why it cannot be computed</th></tr></thead><tbody>
+{% for u in unknown_basis %}<tr data-unknown-rule="{{ u.rule }}" data-unknown-run="{{ u.run }}"><td>{{ u.rule }}</td><td><a href="/execution/runs/{{ u.run }}/">{{ u.run }}</a></td><td>{{ u.reason }}</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
 {% if next_cursor %}<p><a href="/ops/exceptions/?cursor={{ next_cursor|urlencode }}" rel="next">Next page</a> <span class="muted">(opens a new snapshot)</span></p>{% endif %}
 {% endtimezone %}{% endblock %}

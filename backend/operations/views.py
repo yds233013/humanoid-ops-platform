@@ -15,10 +15,7 @@ outermost transaction; if a caller still wraps the view in a transaction, read_s
 snapshot.
 """
 
-import base64
-import binascii
 import importlib
-import json
 from collections.abc import Callable
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -26,6 +23,7 @@ from decimal import Decimal
 from functools import wraps
 from typing import Any
 
+from django.core import signing
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
@@ -107,35 +105,66 @@ def field(obj: Any, name: str, default: Any = None) -> Any:
 
 
 # ------------------------------------------------------------------ cursor (contract 5, R4)
+CURSOR_SALT = "operations.exceptions.cursor"
+CURSOR_MAX_LEN = 1024
+CURSOR_KEYS = {"after", "page", "first_at", "prev_at"}
+
+
 def encode_cursor(after: Any, page: int, first_at: datetime, prev_at: datetime) -> str:
-    """Opaque continuation token: the read model's cursor (last sort key), page number, prior snapshot times.
+    """Continuation token: the read model's cursor (last sort key), page number, prior snapshot times.
+    Signed with Django's signer (EM review: the snapshot metadata it carries must not be forgeable).
     Each continuation page is a NEW snapshot; the token only records which snapshots came before."""
     payload = {"after": jsonable(after), "page": page, "first_at": iso(first_at), "prev_at": iso(prev_at)}
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    return signing.dumps(payload, salt=CURSOR_SALT, compress=True)
+
+
+def _aware(raw: Any) -> datetime:
+    if not isinstance(raw, str) or len(raw) > 64:
+        raise TypeError("timestamp")
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        raise ValueError("naive timestamp")
+    return dt
 
 
 def decode_cursor(token: str) -> dict[str, Any]:
+    """Validate the WHOLE token: signature, size, exact keys and every type. Anything else is a 400."""
     try:
-        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
-        payload = json.loads(raw)
+        if not isinstance(token, str) or not token or len(token) > CURSOR_MAX_LEN:
+            raise ValueError("length")
+        payload = signing.loads(token, salt=CURSOR_SALT)
+        if not isinstance(payload, dict) or set(payload) != CURSOR_KEYS:
+            raise ValueError("shape")
         page = payload["page"]
-        if not isinstance(page, int) or isinstance(page, bool) or page < 2:
+        if not isinstance(page, int) or isinstance(page, bool) or not 2 <= page <= 1_000_000:
             raise ValueError("page")
+        _after_for_read_model(payload["after"])  # the sort key must be well-formed too
         return {
             "after": payload["after"],
             "page": page,
-            "first_at": datetime.fromisoformat(payload["first_at"]),
-            "prev_at": datetime.fromisoformat(payload["prev_at"]),
+            "first_at": _aware(payload["first_at"]),
+            "prev_at": _aware(payload["prev_at"]),
         }
-    except (ValueError, KeyError, TypeError, binascii.Error, UnicodeDecodeError) as exc:
+    except (
+        BadParam,
+        signing.BadSignature,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+        OverflowError,
+    ) as exc:
         raise BadParam("cursor is not a valid continuation token") from exc
 
 
 def _after_for_read_model(after: Any) -> tuple[int, datetime, str, str]:
     """The exceptions sort key (priority, since, code, entity_ref) back from its JSON form."""
     try:
+        if not isinstance(after, list | tuple) or len(after) != 4:
+            raise TypeError("sort key")
         prio, since, code, ref = after
+        if not isinstance(since, str) or len(since) > 64:
+            raise TypeError("sort key")
         if not isinstance(prio, int) or isinstance(prio, bool) or not isinstance(code, str):
             raise TypeError("sort key")
         if not isinstance(ref, str):
@@ -177,6 +206,8 @@ def exceptions_data(at: datetime, cursor: str | None) -> dict[str, Any]:
         "new_snapshot": cont is not None,
         "items": list(field(result, "items", [])),
         "readiness_coverage": field(result, "readiness_coverage"),
+        # EM B2: runs whose RETURN_OVERDUE cannot be computed (no planned unloading end) are shown, not hidden
+        "unknown_basis": list(field(result, "unknown_basis", []) or []),
         "next_cursor": encode_cursor(next_cursor, page_no + 1, first_at, at) if next_cursor else None,
     }
 
@@ -208,6 +239,9 @@ def timeline_data(at: datetime, window_min: int) -> dict[str, Any]:
         "window_min": window_min,
         "timeline": result,
         "readiness_coverage": field(result, "readiness_coverage"),
+        # EM review: the timeline's coverage counts only qualifying visits inside this window; the inbox's
+        # counts every qualifying visit in the readiness lookahead. Label it so the two are never confused.
+        "readiness_coverage_scope": f"visits inside this {window_min}-minute timeline window only",
     }
 
 

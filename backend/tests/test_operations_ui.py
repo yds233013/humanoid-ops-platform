@@ -263,17 +263,55 @@ def test_views_are_marked_non_atomic():
 
 # ------------------------------------------------------------------ cursor
 def test_cursor_round_trip_and_tamper():
+    """EM review #3: the whole token is validated and signed; every malformed or tampered input is a 400."""
+    import base64
+    import json
     from datetime import UTC, datetime
+
+    from django.core import signing
 
     t1 = datetime(2026, 11, 18, 9, 0, tzinfo=UTC)
     t2 = datetime(2026, 11, 18, 9, 1, tzinfo=UTC)
-    tok = views.encode_cursor(["2", "x"], 2, t1, t2)
+    key = [3, "2026-11-18T08:00:00+00:00", "SITE_NO_GO", "EX-0001"]
+    tok = views.encode_cursor(key, 2, t1, t2)
     d = views.decode_cursor(tok)
-    assert d == {"after": ["2", "x"], "page": 2, "first_at": t1, "prev_at": t2}
-    page1 = views.encode_cursor(None, 1, t1, t2)
-    for bad in ["", "abc", "!!!!", tok[:-3], page1, "eyJ4IjoxfQ"]:
+    assert d == {"after": key, "page": 2, "first_at": t1, "prev_at": t2}
+
+    def signed(payload):
+        return signing.dumps(payload, salt=views.CURSOR_SALT, compress=True)
+
+    good = {"after": key, "page": 2, "first_at": t1.isoformat(), "prev_at": t2.isoformat()}
+    unsigned = base64.urlsafe_b64encode(json.dumps(good).encode()).decode()
+    bad_tokens = [
+        "",
+        "abc",
+        "!!!!",
+        tok[:-3],  # truncated signature
+        tok[:-1] + ("A" if tok[-1] != "A" else "B"),  # tampered signature
+        unsigned,  # the old unsigned format is no longer accepted
+        "x" * (views.CURSOR_MAX_LEN + 1),
+        views.encode_cursor(key, 1, t1, t2),  # page 1 is never a continuation
+        signed("scalar"),
+        signed([1, 2, 3]),
+        signed({k: v for k, v in good.items() if k != "prev_at"}),  # missing field
+        signed({**good, "extra": 1}),
+        signed({**good, "page": True}),
+        signed({**good, "page": "2"}),
+        signed({**good, "page": 10**9}),
+        signed({**good, "first_at": "2026-11-18T09:00:00"}),  # naive timestamp
+        signed({**good, "first_at": "not a time"}),
+        signed({**good, "after": key[:3]}),  # sort key of the wrong length
+        signed({**good, "after": [3, "2026-11-18T08:00:00", "X", "Y"]}),  # naive since
+        signed({**good, "after": ["3", key[1], key[2], key[3]]}),
+        signed({**good, "after": "3,x"}),
+        signed({**good, "after": None}),
+    ]
+    for bad in bad_tokens:
         with pytest.raises(views.BadParam):
             views.decode_cursor(bad)
+    c = client("ops_lead", name="u_cursor")
+    for bad in bad_tokens[1:8]:  # "" is simply "no cursor" (page 1) over HTTP
+        assert c.get("/api/ops/exceptions", {"cursor": bad}).status_code == 400
 
 
 # ------------------------------------------------------------------ pages with data (need Engineers B and C)
@@ -600,3 +638,48 @@ def test_statement_budget_per_endpoint_constant_in_fleet_size():
     for u, n in small.items():
         assert n <= 12, (u, n)
     assert small == big, (small, big)
+
+
+# ------------------------------------------------------------------ EM code review fixes (af834ac)
+def test_unknown_basis_is_visible_on_the_inbox_page_and_api():
+    """EM review #1 / B2: no planned unloading end -> no RETURN_OVERDUE, but operators see the unknown basis."""
+    w = world("ub_")
+    with connection.cursor() as cur:
+        cur.execute("ALTER TABLE planning_reservation DISABLE TRIGGER USER")
+        cur.execute(
+            "DELETE FROM planning_reservation WHERE purpose = 'unloading' AND revision_id = %s",
+            [w.run.revision_id],
+        )
+        cur.execute("ALTER TABLE planning_reservation ENABLE TRIGGER USER")
+    c = client("ops_lead", name="u_ub")
+    body = c.get("/ops/exceptions/").content.decode()
+    assert 'data-unknown-basis="1"' in body
+    assert f'data-unknown-rule="RETURN_OVERDUE" data-unknown-run="{w.run.code}"' in body
+    assert ("RETURN_OVERDUE", w.run.code) not in _exception_rows(body)
+    api = c.get("/api/ops/exceptions").json()
+    assert {"rule": "RETURN_OVERDUE", "run": w.run.code, "reason": "planned unloading end unknown"} in api[
+        "unknown_basis"
+    ]
+    assert not [x for x in api["items"] if x["code"] == "RETURN_OVERDUE" and x["entity_ref"] == w.run.code]
+
+
+def test_metrics_values_are_formatted_and_current_fleet_is_prominent():
+    """EM review #6/#7: ratios render as percentages (Metric.display); the current-fleet limit is a banner."""
+    world("mf_")
+    body = client("ops_lead", name="u_mf").get("/ops/metrics/").content.decode()
+    values = re.findall(r'data-value="([^"]*)"', body)
+    assert values, "no metric values rendered"
+    assert not [v for v in values if re.fullmatch(r"0\.\d+", v)], values  # no raw ratios
+    assert any("%" in v for v in values), values  # ratio metrics render as percentages
+    assert 'data-current-fleet-note="1"' in body and 'data-current-fleet="1"' in body
+    assert "ratio</span>" not in body
+
+
+def test_timeline_coverage_scope_is_labelled_on_page_and_api():
+    """EM review #4: timeline coverage is window-scoped and says so; the inbox's may differ."""
+    world("sc_")
+    c = client("ops_lead", name="u_sc")
+    body = c.get("/ops/timeline/", {"window_min": "60"}).content.decode()
+    assert 'data-coverage-scope="1"' in body and "60-minute timeline window only" in body
+    api = c.get("/api/ops/timeline", {"window_min": "60"}).json()
+    assert api["readiness_coverage_scope"] == "visits inside this 60-minute timeline window only"
