@@ -298,3 +298,20 @@ CI → EM review.
 | Rev 3: return-without-robot order | new `custody_seq_at_event` on trip events, set under the robot lock; classification by event order; legacy rows `ambiguous`; four acceptance cases (4) |
 | Rev 3: section 8 D3 | replaced with the approved design (8) |
 | Rev 3: exception identity | entity_ref per code; escalations keyed by escalation id; uniqueness test (3) |
+
+## 10. EM-approved amendment A1 (performance and semantics, 2026-11-19)
+
+Approved by the EM during integration; it changes only the items below and reopens nothing else.
+
+| item | amendment |
+|---|---|
+| Latency budgets (6.5) | p95 ≤ 400 ms: fleet overview, incident queue, metrics, exception inbox **without** readiness evaluation. p95 ≤ 2,000 ms (separate release gate, still tested): timeline and exception inbox **with** readiness evaluation. Evaluator time is measured and reported separately from the read-model work. |
+| SQL budget (6.4) | unchanged: 12 + 10 × E; E provisionally pinned at 70 (measured 60-69 at scale). |
+| Readiness cap (4a) | unchanged: 10 authoritative evaluations per page, partial-coverage disclosure. |
+| Metrics (4) | the metrics page never runs the readiness evaluator. It shows "Open operational exceptions - readiness not evaluated" from `open_exceptions(..., include_readiness=False)`, never labelled as the total. |
+| READINESS_INCOMPLETE_SOON `since` (3) | `on_site_start - ops_readiness_lookahead_min`; qualifying visit = confirmed, current revision, not departed, `on_site_start - L <= at` and `on_site_end > at`. |
+| Thresholds (3) | valid = ASCII digits, 1..5,256,000 minutes; anything else is not configured. |
+| Text ordering (3) | text sort keys compared with `COLLATE "C"` so SQL and Python order identically. |
+| ESCALATION_UNACKNOWLEDGED (3) | kept after the incident is closed (closure is not acknowledgment); the item shows the incident's status. |
+| RETURN_OVERDUE basis (3) | if the planned unloading end is unknown, the exception is not produced and no deadline is invented; the missing basis is exposed as unknown (inbox `unknown_basis`, timeline `RETURN_DEADLINE_UNKNOWN`). |
+| Action links (3) | where no dedicated page exists (post-visit inspection, held robot, custody unknown) the link is the robot's fleet page; THRESHOLD_NOT_CONFIGURED has none. |
