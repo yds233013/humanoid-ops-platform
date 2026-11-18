@@ -22,6 +22,9 @@ dev = [
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
 addopts = "-ra --strict-markers"
+markers = [
+    "perf: Slice 5 p95 time budget on the scale fixture (run with -m perf; skipped otherwise)",
+]
 testpaths = ["tests"]
 
 [tool.ruff]
