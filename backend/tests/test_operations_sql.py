@@ -949,3 +949,165 @@ def test_scale_fixture_oracle_and_explain_without_growing_seq_scans():
             assert top["Execution Time"] < 2000, f"{v}: {top['Execution Time']:.0f} ms on the scale fixture"
         print("pages", {k: n for k, n in pages.items() if n > 1})
         assert not problems, f"sequential scans of growing tables where an index would help: {problems}"
+
+
+# ================================================================== custody vs trip-event race (EM verification)
+# Two real ops_app connections race on the SAME robot/run. The first transaction holds the robot row lock (taken
+# by its insert trigger); the second insert's trigger must wait on that robot row (observed in pg_stat_activity /
+# pg_locks, never a sleep used as synchronization) and, once the first commits, see exactly what it committed.
+def _pid(conn: psycopg.Connection) -> int:
+    return int(conn.execute("SELECT pg_backend_pid()").fetchone()[0])
+
+
+def _person_id(code: str) -> int:
+    from planning.models import Person
+
+    return Person.objects.get(code=code).pk
+
+
+def _insert_custody(
+    conn, run: ExecutionRun, frm: str, to: str, seq: int, by: int, receiver: str = "P-2"
+) -> None:
+    conn.execute(
+        "INSERT INTO execution_custodyevent (robot_id, seq, from_kind, to_kind, run_id, trip_id, visit_id,"
+        " custodian_id, received_by_id, basis, note, recorded_by_id, recorded_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'handoff', '', %s, now())",
+        [
+            run.robot_id,
+            seq,
+            frm,
+            to,
+            run.pk,
+            run.trip_id,
+            run.visit_id,
+            _person_id("P-1"),
+            _person_id(receiver),
+            by,
+        ],
+    )
+
+
+def _insert_trip(conn, run: ExecutionRun, kind: str, by: int) -> None:
+    seq = {"arrived_site": 1, "departed_site": 2, "arrived_hub": 3}[kind]
+    conn.execute(
+        "INSERT INTO execution_tripevent (trip_id, run_id, seq, kind, recorded_by_id, recorded_at)"
+        " VALUES (%s, %s, %s, %s, %s, now())",
+        [run.trip_id, run.pk, seq, kind, by],
+    )
+
+
+def _await_robot_lock_wait(observer, waiter_pid: int, holder_pid: int) -> None:
+    """Block until `waiter_pid` is observed waiting (wait_event_type 'Lock') on the robot ROW held by
+    `holder_pid`: it holds the tuple lock on that fleet_robot row and waits on the holder's transaction."""
+    deadline = time.monotonic() + 15
+    while True:
+        row = observer.execute(
+            "SELECT a.wait_event_type, pg_blocking_pids(a.pid),"
+            " EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'tuple'"
+            "         AND l.relation = 'fleet_robot'::regclass AND l.granted),"
+            " EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'transactionid'"
+            "         AND NOT l.granted)"
+            " FROM pg_stat_activity a WHERE a.pid = %s",
+            [waiter_pid],
+        ).fetchone()
+        if row and row[0] == "Lock" and holder_pid in row[1] and row[2] and row[3]:
+            break
+        assert time.monotonic() < deadline, (
+            f"second transaction never observed waiting on the robot row: {row}"
+        )
+        time.sleep(0.02)  # polling interval of the observation only; ordering comes from the lock itself
+
+
+def _race(first_sql, second_sql) -> dict[str, Any]:
+    """first_sql(conn) runs in an open transaction; second_sql(conn) runs (autocommit) in a thread and must wait
+    on the robot lock until the first commits. Returns the outcome of the second."""
+    first, second, observer = _app_conn(), _app_conn(autocommit=True), _app_conn(autocommit=True)
+    result: dict[str, Any] = {}
+    try:
+        first_sql(first)  # holds the robot row lock (insert trigger FOR UPDATE), not committed
+        ready = threading.Event()
+
+        def run_second():
+            result["pid"] = _pid(second)
+            ready.set()
+            try:
+                second_sql(second)
+                result["ok"] = True
+            except psycopg.Error as exc:
+                result["error"] = exc
+
+        t = threading.Thread(target=run_second)
+        t.start()
+        assert ready.wait(10)
+        _await_robot_lock_wait(observer, result["pid"], _pid(first))
+        assert "ok" not in result and "error" not in result  # still waiting before the first commits
+        result["observed_waiting"] = True
+        first.commit()
+        t.join(15)
+        assert not t.is_alive()
+    finally:
+        first.close()
+        second.close()
+        observer.close()
+    return result
+
+
+def _event_seq(run: ExecutionRun, kind: str) -> int | None:
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT custody_seq_at_event FROM execution_tripevent WHERE run_id = %s AND kind = %s",
+            [run.pk, kind],
+        )
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_race_custody_commits_first_then_trip_event_records_the_new_seq():
+    w = ow.ops_world("ra_", robots=2, incident_policy=False)
+    run = ow.depart_new(w, "R-02")
+    ow.advance(w, run, "at_site")  # custody #2 = site
+    fid = w.field.pk
+    out = _race(
+        lambda c: _insert_custody(c, run, "site", "vehicle", 3, fid),  # site -> vehicle, holds the robot
+        lambda c: _insert_trip(
+            c, run, "departed_site", fid
+        ),  # waits on the robot, then needs vehicle custody
+    )
+    assert out.get("observed_waiting") and out.get("ok") is True, out
+    seq = _event_seq(run, "departed_site")
+    assert seq == 3 and custody_at(run, seq) == "vehicle"  # the NEW seq: the committed handoff
+
+
+@pytest.mark.django_db(transaction=True)
+def test_race_trip_event_commits_first_custody_waits_then_follows_its_own_rules():
+    w = ow.ops_world("rb_", robots=3, incident_policy=False)
+    fid = w.field.pk
+
+    # (a) arrived_hub holds the robot; vehicle -> hub waits, then SUCCEEDS (its rule needs arrived_hub, now committed)
+    run = ow.depart_new(w, "R-02")
+    ow.advance(w, run, "returning")  # custody #3 = vehicle, departed_site recorded
+    out = _race(
+        lambda c: _insert_trip(c, run, "arrived_hub", fid),
+        lambda c: _insert_custody(c, run, "vehicle", "hub", 4, fid, receiver="P-3"),
+    )
+    assert out.get("observed_waiting") and out.get("ok") is True, out
+    seq = _event_seq(run, "arrived_hub")
+    assert seq == 3 and custody_at(run, seq) == "vehicle"  # the OLD seq: the robot was still in the vehicle
+    assert CustodyEvent.objects.filter(robot_id=run.robot_id).order_by("-seq").first().to_kind == "hub"
+
+    # (b) departed_site (robot left on site) holds the robot; site -> vehicle waits, then is REFUSED by its own rule
+    run3 = ow.depart_new(w, "R-03")
+    ow.advance(w, run3, "at_site")  # custody #2 = site
+    icode = ow.report(w, "R-03", event="other")
+    w.cmd.disposition(run3, "robot_left_on_site", incident=icode)
+    out = _race(
+        lambda c: _insert_trip(c, run3, "departed_site", fid),
+        lambda c: _insert_custody(c, run3, "site", "vehicle", 3, fid),
+    )
+    assert out.get("observed_waiting") and "ok" not in out, out
+    assert isinstance(out["error"], psycopg.errors.CheckViolation)
+    assert "site -> vehicle: the trip has already departed the site" in str(out["error"])
+    seq = _event_seq(run3, "departed_site")
+    assert seq == 2 and custody_at(run3, seq) == "site"  # the OLD seq, and no custody row was added
+    assert CustodyEvent.objects.filter(robot_id=run3.robot_id).count() == 2
