@@ -699,6 +699,7 @@ SQL_COVERAGE: dict[str, Any] = {
     "RECOVERY_PLAN_MISSING": "no recovery plan for the current revision and configuration",
     "RECOVERY_ONCALL_NOT_ENGINEER": (GAP, "review item (role of the on-call person), never a blocker"),
     "EXPIRY_NOT_POSITIVE": "expires_at must be in the future",
+    "ROBOT_NOT_AT_HUB": "is not at hub",  # Slice 4 C3: execution_robot_departure_problem (table trigger)
     "PLANNING_SITE_NOT_ASSESSED": "no approved, current site assessment covers the visit date",
     "PLANNING_SITE_NOT_ELIGIBLE": "the site was assessed as not eligible",
     "PLANNING_SITE_RESTRICTED": "the site assessment has restrictions",
@@ -737,7 +738,8 @@ def test_every_blocker_code_is_mapped_to_its_sql_refusal():
     with connection.cursor() as cur:
         cur.execute(
             "SELECT string_agg(pg_get_functiondef(p.oid), E'\n') FROM pg_proc p "
-            "WHERE p.proname IN ('readiness_issue_authorization', 'readiness_guard_problem')"
+            "WHERE p.proname IN ('readiness_issue_authorization', 'readiness_guard_problem', "
+            "'execution_robot_departure_problem')"
         )
         source = cur.fetchone()[0]
     for code, target in SQL_COVERAGE.items():

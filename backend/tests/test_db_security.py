@@ -53,7 +53,7 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' AND c.relkind = 'r' "
             f"AND c.relname NOT IN ('{AUDIT}', 'django_migrations', 'fleet_deploymentsetting', "
-            "'readiness_departureauthorization') "
+            "'readiness_departureauthorization', 'execution_executionrun') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
@@ -63,6 +63,14 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "SELECT has_table_privilege(current_user, 'readiness_departureauthorization', 'INSERT'), "
             "has_table_privilege(current_user, 'readiness_departureauthorization', 'SELECT'), "
             "has_table_privilege(current_user, 'readiness_departureauthorization', 'UPDATE')"
+        )
+        assert cur.fetchone() == (False, True, True)
+        # Deliberate exception (Slice 4, execution/0002): execution runs are created only by the trigger on
+        # readiness_departureevent; the runtime role keeps SELECT and UPDATE (row locks) only.
+        cur.execute(
+            "SELECT has_table_privilege(current_user, 'execution_executionrun', 'INSERT'), "
+            "has_table_privilege(current_user, 'execution_executionrun', 'SELECT'), "
+            "has_table_privilege(current_user, 'execution_executionrun', 'UPDATE')"
         )
         assert cur.fetchone() == (False, True, True)
 

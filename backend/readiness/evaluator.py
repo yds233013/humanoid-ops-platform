@@ -84,6 +84,7 @@ EQUIPMENT_MISSING = "EQUIPMENT_MISSING"
 RECOVERY_PLAN_MISSING = "RECOVERY_PLAN_MISSING"
 RECOVERY_ONCALL_NOT_ENGINEER = "RECOVERY_ONCALL_NOT_ENGINEER"  # level "review"
 EXPIRY_NOT_POSITIVE = "EXPIRY_NOT_POSITIVE"
+ROBOT_NOT_AT_HUB = "ROBOT_NOT_AT_HUB"  # Slice 4 contract C3
 
 BLOCKER_CODES = (
     VISIT_NOT_CONFIRMED,
@@ -102,6 +103,7 @@ BLOCKER_CODES = (
     RECOVERY_PLAN_MISSING,
     RECOVERY_ONCALL_NOT_ENGINEER,
     EXPIRY_NOT_POSITIVE,
+    ROBOT_NOT_AT_HUB,
 )
 
 
@@ -235,6 +237,22 @@ def _gate_visit(w: _World, b: _Blockers) -> None:
             VISIT_ALREADY_DEPARTED,
             f"A departure is already recorded for {w.visit.code}; one visit has exactly one departure",
             "Plan a new visit for any further trip",
+        )
+
+
+def _gate_custody(w: _World, b: _Blockers) -> None:
+    """Slice 4 contract C3: the robot must be at the hub (baseline or a verified hub receipt) with no open
+    execution run. Same SQL definition the authorization and departure triggers use."""
+    if w.robot is None:
+        return
+    from execution.custody import departure_problem  # execution depends on readiness, not the reverse
+
+    problem = departure_problem(w.robot.pk)
+    if problem:
+        b.add(
+            ROBOT_NOT_AT_HUB,
+            problem[:1].upper() + problem[1:],
+            "Finish the robot's current run: return it to the hub, reconcile and close the trip",
         )
 
 
@@ -511,6 +529,7 @@ def evaluate_readiness(visit: Visit, at: datetime | None = None) -> ReadinessRes
     relied: dict[int, datetime | None] = {}  # evidence id -> its expiry bound (None: no age requirement)
 
     _gate_visit(w, b)  # 1
+    _gate_custody(w, b)  # 1b (Slice 4, C3)
     plan = _gate_planning(w, b)  # 2
     _gate_reservations(w, plan, b)  # 3
     _gate_policy(w, b)  # 4
