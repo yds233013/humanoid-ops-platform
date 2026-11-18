@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% load tz %}
+{% block title %}Incident queue{% endblock %}
+{% block content %}{% timezone "UTC" %}
+{% include "operations/_chrome.html" %}
+<h1>Incident queue</h1>
+<p class="muted">Open incidents (not closed): unclassified severity first, then by severity rank, age and code. The suggested follow-up owner is derived from escalations; it is a suggestion, not a formal assignment. Act on the incident page. Times are UTC.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Incident</th><th>Robot</th><th>Status</th><th>Severity</th><th>Reported</th><th>Hold</th><th>Escalations</th><th>Suggested follow-up owner</th></tr></thead>
+<tbody>
+{% for i in incidents %}<tr data-incident="{{ i.code }}">
+  <td><a href="{{ i.url }}"><b>{{ i.code }}</b></a><div class="muted">{{ i.event_type }}</div></td>
+  <td><a href="/fleet/{{ i.robot }}/">{{ i.robot }}</a>{% if i.run %}<div class="muted"><a href="/execution/runs/{{ i.run }}/">{{ i.run }}</a></div>{% endif %}</td>
+  <td><span class="badge neutral">{{ i.status }}</span></td>
+  <td>{% if i.unclassified %}<span class="badge attn">unclassified</span>{% else %}<span class="badge neutral">{{ i.severity_level }}</span>{% endif %}</td>
+  <td>{{ i.reported_at|date:"D j M H:i" }}</td>
+  <td>{{ i.hold }} {% if i.hold_active %}<span class="badge attn">Active hold</span>{% else %}<span class="badge neutral">Released</span>{% endif %}</td>
+  <td>{% if i.unacknowledged_escalations %}<span class="badge attn">{{ i.unacknowledged_escalations }} unacknowledged</span>{% else %}<span class="muted">none open</span>{% endif %}</td>
+  <td>{{ i.suggested_owner_role }}{% if i.suggested_owner_person %} <span class="muted">({{ i.suggested_owner_person }})</span>{% endif %}</td>
+</tr>{% empty %}<tr><td colspan="8" class="muted">No open incidents.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endtimezone %}{% endblock %}
