@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% load tz %}
+{% block title %}Exceptions{% endblock %}
+{% block content %}{% timezone "UTC" %}
+{% include "operations/_chrome.html" %}
+<h1>Exception inbox</h1>
+{% if coverage %}<div class="banner op-partial" role="alert" data-coverage="partial"><b>Readiness exceptions are incomplete: {{ coverage.not_evaluated }} upcoming visit{{ coverage.not_evaluated|pluralize }} {{ coverage.not_evaluated|pluralize:"was,were" }} not evaluated</b> ({{ coverage.evaluated }} of {{ coverage.qualifying }} qualifying visits were checked with the readiness evaluator in this snapshot). This list is not exhaustive. Check the remaining visits on the <a href="/readiness/">upcoming visits list</a>.</div>{% endif %}
+{% if new_snapshot %}<div class="banner demo" data-continuation="1">Page {{ page }} is a new snapshot as of {{ as_of_text }}; page 1 was as of {{ first_page_as_of_text }}{% if page > 2 %} and page {{ page|add:"-1" }} as of {{ previous_page_as_of_text }}{% endif %}. Rows may have changed between the pages. <a href="/ops/exceptions/">Start again from page 1</a>.</div>{% endif %}
+<p class="muted">Times are UTC. Ordered by priority, then since, code and reference. Priority is an operational triage order, not a safety severity. Each row links to the existing page where the work is done; not every exception can be resolved there (the last column says when).</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Priority</th><th>Code</th><th>About</th><th>Since</th><th>Suggested follow-up owner</th><th>What happened</th><th>Where to act</th></tr></thead>
+<tbody>
+{% for e in items %}<tr data-code="{{ e.code }}" data-ref="{{ e.entity_ref }}">
+  <td><span class="badge p{{ e.priority }}">P{{ e.priority }}</span></td>
+  <td><b>{{ e.code }}</b></td>
+  <td>{{ e.entity_ref }}{% if e.robot %}<div class="muted">robot <a href="/fleet/{{ e.robot }}/">{{ e.robot }}</a></div>{% endif %}{% if e.visit %}<div class="muted">visit <a href="/planning/visits/{{ e.visit }}/">{{ e.visit }}</a></div>{% endif %}</td>
+  <td>{{ e.since|date:"D j M H:i" }}</td>
+  <td>{{ e.owner_role }}</td>
+  <td>{{ e.message }}</td>
+  <td>{% if e.action_url %}<a href="{{ e.action_url }}">Open</a>{% else %}<span class="muted">No page in the app</span>{% endif %}{% if e.resolvable is not None and not e.resolvable %}<div class="muted">May not be resolvable there yet</div>{% endif %}</td>
+</tr>{% empty %}<tr><td colspan="7" class="muted">No open exceptions in this snapshot{% if coverage %} (readiness coverage is partial, see above){% endif %}.</td></tr>{% endfor %}
+</tbody></table></div>
+{% if next_cursor %}<p><a href="/ops/exceptions/?cursor={{ next_cursor|urlencode }}" rel="next">Next page</a> <span class="muted">(opens a new snapshot)</span></p>{% endif %}
+{% endtimezone %}{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% load tz %}
+{% block title %}Operations metrics{% endblock %}
+{% block content %}{% timezone "UTC" %}
+{% include "operations/_chrome.html" %}
+<h1>Operational metrics</h1>
+<form method="get" class="row"><label>From <input name="start" type="date"></label><label>To <input name="end" type="date"></label><button class="primary" type="submit">Show</button></form>
+<p>Window <b>{{ start_text }}</b> to <b>{{ end_text }}</b> (start inclusive, end exclusive).</p>
+<p class="muted">{{ metrics.note }} Each metric shows its kind, numerator and denominator; a zero denominator shows N/A.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Metric</th><th>Kind</th><th>Value</th><th>Numerator</th><th>Denominator</th><th>Definition</th></tr></thead>
+<tbody>
+{% for m in metrics.items %}<tr data-metric="{{ m.key }}">
+  <td><b>{{ m.label }}</b></td>
+  <td>{{ m.kind }}</td>
+  <td>{% if m.value is None %}N/A{% else %}{{ m.value }} <span class="muted">{{ m.unit }}</span>{% endif %}</td>
+  <td>{% if m.numerator is None %}<span class="muted">n/a</span>{% else %}{{ m.numerator }}{% endif %}</td>
+  <td>{% if m.denominator is None %}<span class="muted">(count)</span>{% else %}{{ m.denominator }}{% endif %}</td>
+  <td class="muted">{{ m.definition }}</td>
+</tr>{% empty %}<tr><td colspan="6" class="muted">No metrics.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endtimezone %}{% endblock %}
