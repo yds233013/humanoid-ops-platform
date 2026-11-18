@@ -455,3 +455,31 @@ def close_run(cur, w: SimpleNamespace) -> int:
     hub = latest_custody(w).pk
     rec = raw_reconcile(cur, w, hub_receipt_id=hub, inspection_id=post_visit_inspection(w))
     return raw_close(cur, w, rec)
+
+
+def raw_recover_to_hub(
+    cur,
+    w: SimpleNamespace,
+    incident_id: int | None,
+    *,
+    robot_id: int | None = None,
+    custodian: str | None = "P-1",
+    received_by: str | None = "P-2",
+    note: str = "SYNTHETIC: robot recovered and received at hub",
+    by: Any = None,
+) -> int:
+    """0003: unaccounted -> hub, basis recovered, with NO run (the robot has no open run)."""
+    return raw_custody(
+        cur,
+        w,
+        "unaccounted",
+        "hub",
+        custodian=custodian,
+        received_by=received_by,
+        basis="recovered",
+        incident_id=incident_id,
+        note=note,
+        run=False,
+        by=by,
+        robot_id=robot_id,
+    )

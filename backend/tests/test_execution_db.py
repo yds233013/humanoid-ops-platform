@@ -6,6 +6,8 @@ positive control: the valid insert succeeds. The world is built through the real
 """
 
 import os
+import threading
+import time
 from datetime import timedelta
 
 import psycopg
@@ -27,13 +29,14 @@ from fleet.models import Hold, Robot
 from planning.models import ConsentRecord, Reservation, VehicleTrip, Visit, VisitRevision
 from platform_core.commands import Conflict
 from readiness import commands as rc
-from readiness.evaluator import take_guard_snapshot
+from readiness.evaluator import evaluate_readiness, take_guard_snapshot
 from readiness.models import DepartureAuthorization, DepartureEvent, ReadinessEvidence
 from tests import execution_world as ew
 from tests.conftest import make_user
 from tests.fleet_world import set_setting
 from tests.planning_world import DAY
 from tests.readiness_world import build_readiness
+from tests.test_fleet_concurrency import Interleaving
 
 CHECK = psycopg.errors.CheckViolation
 DENIED = psycopg.errors.InsufficientPrivilege
@@ -415,10 +418,10 @@ def test_no_run_unaccounted_report_for_a_robot_without_runs(w, app_role_conn):
 # ================================================================== trip events and site checks
 def test_trip_events_in_order_and_departed_site_needs_vehicle_custody(w, app_role_conn):
     with app_role_conn.cursor() as cur:
+        with refused("aborted outbound"):  # arrived_hub first needs VERIFIED vehicle custody (0003)
+            ew.raw_trip_event(cur, w, "arrived_hub")
         with refused("one at a time"):
-            ew.raw_trip_event(cur, w, "arrived_hub")  # seq 3 before 1 and 2
-        with pytest.raises(CHECK, match="trip_event_order"):
-            ew.raw_trip_event(cur, w, "arrived_hub", seq=1)
+            ew.raw_trip_event(cur, w, "arrived_site", seq=2)
         ew.to_site(cur, w)
         with refused("verified vehicle custody"):
             ew.raw_trip_event(cur, w, "departed_site")
@@ -1116,3 +1119,193 @@ def test_after_closure_the_robot_is_at_hub_and_may_depart_again(w, app_role_conn
     ev = CustodyEvent.objects.get(run=run2)
     assert (ev.seq, ev.from_kind, ev.to_kind) == (5, "hub", "vehicle")
     assert SessionEvent.objects.filter(run=run2).count() == 0
+
+
+# ================================================================== 0003 (a): recovery with no open run
+def _closed_then_lost(w, app_role_conn) -> tuple[str, int]:
+    """Close w.run, plan + evidence a next-day visit for the same robot, then report it unaccounted (no run)."""
+    with app_role_conn.cursor() as cur:
+        ew.to_site(cur, w)
+        ew.to_hub(cur, w)
+        ew.close_run(cur, w)
+    v2 = _second_visit(w, "R-01")
+    iid = ew.raw_incident(app_role_conn, w, unaccounted=True)
+    assert Incident.objects.get(pk=iid).run_id is None
+    return v2, iid
+
+
+def test_no_run_recovery_to_hub_after_a_closed_run(w, app_role_conn):
+    v2, iid = _closed_then_lost(w, app_role_conn)
+    other = ew.raw_incident(app_role_conn, w)  # a later, unrelated incident on the same robot
+    rid = w.run.robot_id
+    with app_role_conn.cursor() as cur:
+        with refused("ops_lead"):
+            ew.raw_recover_to_hub(cur, w, iid, by=w.field)
+        with refused("incident that made the robot unaccounted"):
+            ew.raw_recover_to_hub(cur, w, other)
+        with refused("incident that made the robot unaccounted"):
+            ew.raw_recover_to_hub(cur, w, None)
+        with refused("receiver must hold"):
+            ew.raw_recover_to_hub(cur, w, iid, received_by="P-4")
+        with refused("needs a receiver"):
+            ew.raw_recover_to_hub(cur, w, iid, received_by=None)
+        with refused("needs a note"):
+            ew.raw_recover_to_hub(cur, w, iid, note="  ")
+        with refused("only an unaccounted report or a recovery to hub"):
+            ew.raw_custody(
+                cur, w, "unaccounted", "vehicle", basis="recovered", incident_id=iid, note="x", run=False
+            )
+        with refused("recovery"):
+            ew.raw_custody(
+                cur, w, "unaccounted", "hub", basis="handoff", incident_id=iid, note="x", run=False
+            )
+        ew.raw_recover_to_hub(cur, w, iid)  # control
+        assert custody(cur, rid) == ("hub", True)
+        cur.execute("SELECT execution_robot_departure_problem(%s)", [rid])
+        assert cur.fetchone()[0] is None  # C3 custody satisfied: verified hub, no open run
+        with refused("custody cannot move from hub to hub|wrong custody origin|custody_moves"):
+            ew.raw_recover_to_hub(cur, w, iid)  # not unaccounted any more
+    assert ExecutionRun.objects.filter(robot_id=rid).count() == 1  # no run opened or reopened
+    assert TripClosure.objects.filter(run=w.run).exists()
+    inc = Incident.objects.get(pk=iid)
+    assert inc.hold.released_at is None and inc.status_changes.count() == 0  # incident + hold untouched
+    # ... and the hold still blocks readiness: evaluator blocker, authorization refused
+    blockers = {b["code"] for b in evaluate_readiness(Visit.objects.get(code=v2)).blockers}
+    assert "PLANNING_ROBOT_NOT_ELIGIBLE" in blockers, blockers
+    with pytest.raises(Conflict):
+        rc.authorize_departure(w.ops, visit_code=v2)
+    assert not DepartureAuthorization.objects.filter(visit__code=v2).exists()
+
+
+def test_no_run_recovery_refused_while_the_robot_has_an_open_run(w, app_role_conn):
+    with app_role_conn.cursor() as cur:
+        ew.raw_verify(cur, w)
+    iid = ew.raw_incident(app_role_conn, w, unaccounted=True)  # bound to the open run
+    with app_role_conn.cursor() as cur:
+        with refused("open run must reference that run"):
+            ew.raw_recover_to_hub(cur, w, iid)
+        ew.raw_custody(
+            cur, w, "unaccounted", "vehicle", basis="recovered", incident_id=iid, note="SYNTHETIC found"
+        )  # control: the in-run recovery path is unchanged
+    assert ExecutionRun.objects.count() == 1
+
+
+def _recovery_conn() -> psycopg.Connection:
+    return psycopg.connect(
+        host=os.environ.get("DB_HOST", "localhost"),
+        port=os.environ.get("DB_PORT", "5440"),
+        dbname=connection.settings_dict["NAME"],
+        user=os.environ.get("DB_APP_USER", "ops_app"),
+        password=os.environ.get("DB_APP_PASSWORD", "ops_app_dev"),
+        autocommit=False,
+    )
+
+
+def test_recovery_first_then_authorize_waits_and_is_still_refused_by_the_hold(w, app_role_conn):
+    v2, iid = _closed_then_lost(w, app_role_conn)
+    out: dict = {}
+    rec = _recovery_conn()
+    try:
+        with rec.cursor() as cur:
+            ew.raw_recover_to_hub(cur, w, iid)  # robot FOR UPDATE held, uncommitted
+
+            def authorize():
+                try:
+                    out["result"] = rc.authorize_departure(w.ops, visit_code=v2)
+                except Exception as e:  # noqa: BLE001 - asserted below
+                    out["error"] = e
+                finally:
+                    connection.close()
+
+            t = threading.Thread(target=authorize)
+            t.start()
+            time.sleep(0.6)
+            assert t.is_alive(), out  # authorize waits on the robot row
+            rec.commit()
+            t.join(30)
+    finally:
+        rec.close()
+    assert isinstance(out.get("error"), Conflict), out
+    assert "PLANNING_ROBOT_NOT_ELIGIBLE" in str(out["error"]) or "hold" in str(out["error"]), out
+    with app_role_conn.cursor() as cur:
+        assert custody(cur, w.run.robot_id) == ("hub", True)
+    assert not DepartureAuthorization.objects.filter(visit__code=v2).exists()
+
+
+def test_authorize_first_then_recovery_waits_and_authorization_never_bypasses(w, app_role_conn):
+    v2, iid = _closed_then_lost(w, app_role_conn)
+
+    def recover():
+        with _recovery_conn() as conn, conn.cursor() as cur:
+            rid = ew.raw_recover_to_hub(cur, w, iid)
+            conn.commit()
+            return rid
+
+    blocked, first, second = Interleaving("locked:readiness.authorize_departure").run(
+        lambda: rc.authorize_departure(w.ops, visit_code=v2), recover
+    )
+    assert blocked, "the recovery must wait for authorize's robot lock"
+    assert isinstance(first, Conflict), first  # unaccounted + held at authorize time
+    assert isinstance(second, int), second  # the recovery then commits
+    assert not DepartureAuthorization.objects.filter(visit__code=v2).exists()
+    with pytest.raises(Conflict):  # and afterwards the hold still refuses it
+        rc.authorize_departure(w.ops, visit_code=v2)
+
+
+# ================================================================== 0003 (b): aborted outbound
+def test_aborted_outbound_needs_verified_vehicle_custody(w, app_role_conn):
+    with app_role_conn.cursor() as cur:
+        with refused("aborted outbound"):
+            ew.raw_trip_event(cur, w, "arrived_hub")  # departure assignment not verified
+        ew.raw_verify(cur, w)
+        ew.raw_trip_event(cur, w, "arrived_hub")  # control
+        for kind in ("arrived_site", "departed_site", "arrived_hub"):
+            with refused("already arrived at the hub"):
+                ew.raw_trip_event(cur, w, kind)
+        with refused("arrived at the site"):  # the robot can no longer be handed to the site
+            ew.raw_custody(cur, w, "vehicle", "site")
+
+
+def test_aborted_outbound_returns_and_the_trip_closes(w, app_role_conn):
+    with app_role_conn.cursor() as cur:
+        ew.raw_verify(cur, w)
+        ew.raw_trip_event(cur, w, "arrived_hub")
+        hub = ew.raw_custody(cur, w, "vehicle", "hub", received_by="P-3")
+    insp = ew.post_visit_inspection(w)
+    with app_role_conn.cursor() as cur:
+        rec = ew.raw_reconcile(cur, w, hub_receipt_id=hub, inspection_id=insp)
+        ew.raw_close(cur, w, rec)
+        assert custody(cur, w.run.robot_id) == ("hub", True)
+        cur.execute("SELECT execution_robot_departure_problem(%s)", [w.run.robot_id])
+        assert cur.fetchone()[0] is None
+
+
+def test_aborted_outbound_refused_for_an_unaccounted_robot_and_reconciliation_stays_unresolved(
+    w, app_role_conn
+):
+    with app_role_conn.cursor() as cur:
+        ew.to_site(cur, w)
+    iid = ew.raw_incident(app_role_conn, w, unaccounted=True)
+    with app_role_conn.cursor() as cur:
+        ew.raw_disposition(cur, w, "robot_unaccounted", incident_id=iid)
+        ew.raw_trip_event(cur, w, "departed_site")
+        ew.raw_trip_event(cur, w, "arrived_hub")  # the vehicle is back, the robot is not
+        with refused("latest custody is not the hub receipt"):
+            ew.raw_reconcile(cur, w, inspection_id=None)
+        ew.raw_reconcile(cur, w, outcome="unresolved", discrepancies=["robot unaccounted"])
+
+
+# ================================================================== incident code / blank source_ref
+def test_incident_code_must_be_a_real_code_so_blank_holds_never_qualify(w, app_role_conn):
+    with refused("IC-NNNN"), app_role_conn.transaction(), app_role_conn.cursor() as cur:
+        hold = ew.raw_hold(cur, w, source_ref="")  # a blank manual-style incident hold
+        ew.incident_row(cur, w, "", hold)
+    with (
+        refused("must place its own blocking robot hold"),
+        app_role_conn.transaction(),
+        app_role_conn.cursor() as cur,
+    ):
+        code = ew._code(cur, "execution_incident_code_seq", "IC")
+        hold = ew.raw_hold(cur, w, source_ref="")
+        ew.incident_row(cur, w, code, hold)
+    assert not Incident.objects.exists()

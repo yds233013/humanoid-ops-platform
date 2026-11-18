@@ -201,7 +201,7 @@ class CustodyEvent(models.Model):
     to_kind = models.CharField(max_length=12, choices=CUSTODY_KINDS)
     run = models.ForeignKey(
         ExecutionRun, null=True, blank=True, on_delete=models.PROTECT, related_name="custody_events"
-    )  # the robot's open run; NULL only for a no-run unaccounted report
+    )  # the robot's open run; NULL only for a no-run unaccounted report or a no-run recovery to hub (0003)
     trip = models.ForeignKey(
         "planning.VehicleTrip", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )  # = run.trip whenever run is set
@@ -238,7 +238,12 @@ class CustodyEvent(models.Model):
                 name="custody_incident_iff_unaccounted",
             ),
             models.CheckConstraint(
-                condition=Q(run__isnull=False) | Q(to_kind="unaccounted"), name="custody_run_required"
+                condition=(
+                    Q(run__isnull=False)
+                    | Q(to_kind="unaccounted")
+                    | Q(from_kind="unaccounted", to_kind="hub", basis="recovered")
+                ),
+                name="custody_run_required",
             ),
         ]
 
