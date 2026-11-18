@@ -1,7 +1,7 @@
 # Slice 5 Contract: Operations Command Center
 
-Status: DRAFT rev 2 for engineering review · 2026-11-18 (rev 2 applies the EM review of rev 1 `b71cf03`; section 9
-is the correction matrix) · baseline `slice-4-closed` (`31419fe`, 677 tests).
+Status: DRAFT rev 3 for engineering review · 2026-11-18 (rev 2 applied the EM review of rev 1 `b71cf03`; rev 3
+applies the review of rev 2 `fd4d3c1`; section 9 is the correction matrix) · baseline `slice-4-closed` (`31419fe`, 677 tests).
 Not frozen until the EM approves. Same rules as Slices 3-4: after freeze, names, signatures, file ownership and
 budgets change only through the integration lead with the exact reason.
 
@@ -102,7 +102,21 @@ Settings are read inside the page snapshot and are read-only from the command ce
 needed because nothing is decided or written.
 
 **Total ordering** (identical in SQL, Python, API and pages): `(priority ASC, since ASC, code ASC, entity_ref ASC)`;
-`(code, entity_ref)` is unique per exception, so the order is total.
+`(code, entity_ref)` is unique per exception, so the order is total. `entity_ref` is always the identifier of the
+single underlying row the exception is about, so repeated events never collide:
+
+| code | entity_ref |
+|---|---|
+| ROBOT_UNACCOUNTED, CUSTODY_UNKNOWN | robot code |
+| HELD_ROBOT_ASSIGNED | `<robot code>/<visit code>` (one per held robot and confirmed visit) |
+| INCIDENT_UNTRIAGED, SEVERITY_UNCLASSIFIED | incident code |
+| ESCALATION_UNACKNOWLEDGED | `ESC-<escalation id>` (one per unacknowledged escalation; several per incident allowed) |
+| INTERRUPTION_OPEN | interruption code |
+| SITE_NO_GO, CUSTODY_UNVERIFIED, RETURN_OVERDUE, RECONCILIATION_UNRESOLVED, POST_VISIT_INSPECTION_MISSING | run code |
+| READINESS_INCOMPLETE_SOON | visit code |
+| THRESHOLD_NOT_CONFIGURED | setting key |
+
+A test builds repeated escalations, interruptions and visits for one robot/incident and asserts uniqueness.
 
 ### Resolution path per code (R6)
 
@@ -142,6 +156,12 @@ The command center never claims that every exception can be cleared.
   confirmed visits whose on-site start is within `ops_readiness_lookahead_min`, earliest first, **at most 10**.
   Visits beyond the cap show **"Not evaluated"** and are counted ("N more not evaluated"); nothing is ever shown as
   ready without the evaluator having run in this snapshot.
+- Selection is deterministic: qualifying visits ordered by `(on_site_start, visit id)`, the first 10 evaluated.
+- When qualifying visits remain unevaluated, the readiness part of the inbox is **partial**: the inbox and the API
+  carry `readiness_coverage = {"qualifying": N, "evaluated": 10, "not_evaluated": N - 10, "complete": false}`, the
+  page shows a prominent banner "Readiness exceptions are incomplete: N - 10 upcoming visits were not evaluated",
+  and links to `/readiness/` (the existing upcoming-visits list) for those visits. The inbox is never presented as
+  exhaustive in that case; `complete` is true only when every qualifying visit was evaluated.
 - The query budget is explicit and total (section 6.4): those pages are budgeted at
   `12 + 10 × E` statements, where `E` = the evaluator's statement count for one visit, pinned by a test on the
   scale fixture (the test fails if `E` grows, so the bound stays honest).
@@ -152,12 +172,32 @@ The command center never claims that every exception can be cleared.
 |---|---|---|
 | Departure cohort completion | historical cohort | departures in [start, end) whose run has a TripClosure by `at` / departures in [start, end) |
 | Turnaround | historical cohort | median and p90 of (TripClosure time − departed_at) over the same cohort's closed runs |
-| Return without robot | event count | `arrived_hub` trip events in the window where the robot's custody **at that event's time** (custody events with recorded_at <= the trip event) was not hub/vehicle-on-this-trip |
+| Return without robot | event count, historical state by event order | see "Historical custody at vehicle arrival" below |
 | Incident rate | event count | incidents with `occurred_at` in the window per 10 departures in the window, and per robot that departed in the window |
 | Scheduled robot utilization | event over window, current-fleet denominator | per robot, union of reservation intervals of confirmed or departed visits, clipped to [start, end), summed / (robots currently in_service × window minutes); labelled "current fleet denominator: lifecycle history before `at` is not reconstructed" |
 | Open exceptions / open incidents | current state at `at` | counts from section 3 / the incident queue |
 
   All are labelled synthetic-demo measures, not targets.
+
+**Historical custody at vehicle arrival (event order, not timestamps).** Timestamps alone are not a total order
+across the custody and trip-event streams. Slice 5 adds one column, `execution_tripevent.custody_seq_at_event`
+(Engineer A; an operations-owned migration touching only this column and the trip-event insert trigger): the
+trigger first locks the robot `FOR UPDATE`, then the run (global order: robot before run; the command already holds
+both), and records the robot's latest custody `seq` when the trip event is inserted. Every custody insert also
+locks the robot, so the two streams are totally ordered per robot by that lock, and the recorded seq is exactly
+the custody that existed when the vehicle arrived. Later hub receipts never change it (append-only row).
+
+Each `arrived_hub` event is classified by the custody event with that seq:
+- `with_robot`: to_kind vehicle on this trip;
+- `robot_unaccounted`: to_kind unaccounted;
+- `robot_at_site`: to_kind site;
+- `robot_already_at_hub`: to_kind hub (not reachable through the triggers; counted if it appears);
+- `ambiguous`: the column is NULL (trip events recorded before this migration); reported as its own count, never
+  guessed from timestamps.
+
+"Return without robot" = `robot_unaccounted` + `robot_at_site`. Acceptance tests: vehicle returns with the robot;
+after the robot became unaccounted; while the robot is at the site; a hub receipt recorded after the arrival
+(including in the same transaction) leaves the classification unchanged; legacy NULL rows are `ambiguous`.
 
 ## 5. Architecture
 
@@ -230,9 +270,10 @@ CI → EM review.
   command. Proposal: derived in Slice 5; explicit assignment only if the EM wants it, as a small Slice 4 addendum.
 - **D2 Eligibility in SQL:** re-express fleet eligibility as a set-based SQL view with an oracle test (proposal),
   vs calling the Python per robot (simpler, O(N) queries, breaks budget 4).
-- **D3 Readiness label in overview/timeline:** the readiness evaluator is per-visit Python (many queries). Proposal:
-  evaluate only for visits inside the lookahead window, capped at 25 per page, and show "not evaluated" beyond the
-  cap; the budget in 6.4 excludes these capped evaluations and they are counted separately (≤ 25 × evaluator).
+- **D3 Readiness (approved as in 4a):** no readiness label on the overview; the authoritative evaluator runs only for
+  the first 10 qualifying visits in the lookahead (ordered by on-site start, then visit id); beyond the cap "Not
+  evaluated" with a count and a partial-coverage banner; inclusive total budget `12 + 10 × E` with `E` pinned by a
+  test (6.4).
 - **D4 Thresholds as deployment settings** (owner-written, synthetic demo values) and
   `THRESHOLD_NOT_CONFIGURED` when missing.
 - **D5 Snapshot isolation** `REPEATABLE READ READ ONLY` per page (no locks), accepting that a page can be up to one
@@ -253,3 +294,7 @@ CI → EM review.
 | R4 | one total ordering everywhere; cursor encodes key + filters + snapshot time; each continuation page is a new snapshot and says so (3, 5) |
 | R5 | view-privilege tests for ops_app and 403/no-data tests for users without operations.read (5) |
 | R6 | resolution-path table per exception code incl. "not always resolvable" cases (3) |
+| Rev 3: readiness coverage | partial-coverage flag, count, banner and link when the cap cuts qualifying visits; deterministic (start, id) selection (4a) |
+| Rev 3: return-without-robot order | new `custody_seq_at_event` on trip events, set under the robot lock; classification by event order; legacy rows `ambiguous`; four acceptance cases (4) |
+| Rev 3: section 8 D3 | replaced with the approved design (8) |
+| Rev 3: exception identity | entity_ref per code; escalations keyed by escalation id; uniqueness test (3) |
