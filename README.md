@@ -2,7 +2,7 @@
 
 An internal operations platform for a small fleet of home humanoid robots. It coordinates and records operations. It does **not** control robots, implement emergency stops, or certify physical safety.
 
-**Status:** Slice 0 (foundation), Slice 1 (fleet core), Slice 2 (visit planning and scheduling) and Slice 3 (deployment readiness and departure authorization) built and tested. Slice 3 waits for engineering review. Data is synthetic only.
+**Status:** Slice 0 (foundation), Slice 1 (fleet core), Slice 2 (visit planning and scheduling), Slice 3 (deployment readiness and departure authorization) and Slice 4 (field execution and incident response) built and tested. Data is synthetic only.
 
 ## Quick start
 
@@ -129,9 +129,35 @@ Contract: `docs/03_readiness_contract.md`. Lock order: `docs/02_lock_graph.md`.
 Demo: V-0001 has an approved synthetic policy, fresh evidence and a recovery plan, so it is "Ready to request
 authorization". Evidence goes stale on the policy's clock (battery after 2 h).
 
+## Slice 4: field execution and incident response
+
+Open http://localhost:8000/execution/ for execution runs, incidents and incident policies; each visit has a dossier
+at `/execution/visits/<code>/dossier/`. Contract: `docs/04_field_execution_contract.md`.
+
+The platform records what authorized people report after departure. It does not move, stop or operate robots.
+
+- **Execution run:** opened by the database in the same transaction as the departure. It can't be created any
+  other way, even by direct SQL.
+- **Custody:** one append-only history per robot (hub, vehicle, site, unaccounted). The departure creates an
+  *administrative assignment, not verified* until the crew verify the physical handoff. Every move names a
+  custodian and an identified receiver. A robot can't be in two places.
+- **Site check:** Go / No-Go is computed (custody at the site, consents cover the adults present, every condition
+  ok); a No-Go is recorded, never hidden. Work sessions start and resume only on a current Go.
+- **Incidents:** every incident places a blocking robot hold **in the same transaction**, with or without an
+  approved incident policy, also when reported late, after the visit, or with no run. Severity, status and
+  escalation are separate, append-only decisions. Resolving or closing an incident never releases the hold; that
+  stays with the fleet hold-release workflow.
+- **Return:** the vehicle coming back is not the robot coming back. A trip closes only after a hub receipt, a
+  post-visit inspection and a reconciled return. A robot left on site or unaccounted keeps the trip open.
+- **A departed visit has happened:** it can't be cancelled, rescheduled or released afterwards. A robot can't be
+  authorized again until its run is closed and it is back at the hub.
+
+Demo: `make seed` adds a synthetic site-check template and a synthetic_demo incident policy (demo mode only).
+Authorize and record V-0001's departure on the readiness page, then work the run on `/execution/`.
+
 ## Not built yet (by design)
 
-- Field execution, maintenance, teleoperation, analytics. Real procedures and hardware-specific safety evidence (production policies need `approved_procedure` sources that don't exist yet).
+- Maintenance, teleoperation, analytics. Real procedures and hardware-specific safety evidence (production policies need `approved_procedure` sources that don't exist yet).
 - Task, site and vehicle hold scopes. They arrive with their domains.
 - SSO: local accounts for now. The identity provider is unknown (blocker B-09).
 - Deployment: no target environment yet.

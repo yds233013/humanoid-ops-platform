@@ -224,7 +224,8 @@ def test_logistics_forms_refusals_and_permission_messages(w):
     html = _post(w.eng, _run_url(w, "trip-event/"), {"kind": "arrived_site"})
     assert "Refused (permission denied)" in html
     html = _post(w.field, _run_url(w, "trip-event/"), {"kind": "arrived_hub"})
-    assert "Refused (conflict)" in html and "record arrived_site first" in html
+    # arrived_hub first is the EM-approved aborted outbound, refused while the departure assignment is unverified
+    assert "Refused (conflict)" in html and "needs the departure assignment verified" in html
     html = _post(
         w.field, _run_url(w, "custody/"), {"to_kind": "site", "custodian": "P-1", "received_by": "P-2"}
     )

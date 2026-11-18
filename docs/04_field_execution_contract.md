@@ -1,6 +1,8 @@
 # Slice 4 Contract: Field Execution and Incident Response
 
-Status: DRAFT rev 2 for engineering review · 2026-11-18 · baseline `9228ae8` (529 tests). Rev 2 applies the EM's
+Status: FROZEN by the EM at `cf2600c` (rev 2) · 2026-11-18. Later EM-approved amendments, implemented in
+execution migrations 0003-0004: recovery with no open run, aborted outbound return, vehicle return while the robot
+is unaccounted, engineering-lead-only incident policy withdrawal. Original header: · baseline `9228ae8` (529 tests). Rev 2 applies the EM's
 required amendments on rev 1 (`1a0ded5`); section 11 lists each one. Not frozen until the EM approves. After
 freeze, engineers do not change names, signatures, lock order or file ownership; a needed change is reported to
 the integration lead with the exact reason.
