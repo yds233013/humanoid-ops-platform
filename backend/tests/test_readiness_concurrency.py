@@ -447,14 +447,16 @@ def test_depart_lock_sequence(w):
     a = DepartureAuthorization.objects.get(code=code)
     seen = _capture_locks(lambda: depart(w, code))
     _assert_global_order(seen)
+    # Slice 4 contract C2: departure locks the robot and the visit's trip FOR UPDATE (same order positions).
     assert [(t, m) for t, m, _ in seen] == [
         ("accounts_rolegrant", "SHARE"),
         ("planning_site", "SHARE"),
         ("fleet_manifestpattern", "SHARE"),
-        ("fleet_robot", "SHARE"),
+        ("fleet_robot", "UPDATE"),
         *[("planning_person", "SHARE")] * 4,
         ("planning_vehicle", "SHARE"),
         ("planning_visit", "UPDATE"),
+        ("planning_vehicletrip", "UPDATE"),
         ("readiness_readinesspolicy", "SHARE"),
         ("readiness_departureauthorization", "UPDATE"),
     ]

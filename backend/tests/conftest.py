@@ -31,8 +31,12 @@ def _allow_test_teardown_to_flush_audit():
             for t in tables
             if t.startswith(("platform_core_", "fleet_", "planning_", "readiness_", "execution_"))
         ]
+        # Test-only: teardown TRUNCATEs ~100 tables; on a loaded Docker host that alone can exceed the app's
+        # 10 s statement_timeout. Lift it for the flush transaction only (SET LOCAL); lock_timeout is unchanged,
+        # so a flush blocked by a leaked lock still fails fast.
         return (
-            [f"ALTER TABLE {t} DISABLE TRIGGER USER;" for t in guarded]
+            ["SET LOCAL statement_timeout = '120s';"]
+            + [f"ALTER TABLE {t} DISABLE TRIGGER USER;" for t in guarded]
             + list(sql)
             + [f"ALTER TABLE {t} ENABLE TRIGGER USER;" for t in guarded]
         )
