@@ -15,7 +15,7 @@ migrate: db    ## run migrations as the schema owner
 	$(ENV) $(BE) DJANGO_DB_IDENTITY=owner uv run python manage.py migrate --noinput
 
 seed: migrate  ## create synthetic dev users
-	$(ENV) $(BE) DJANGO_DB_IDENTITY=owner uv run python manage.py seed_dev && DJANGO_DB_IDENTITY=owner uv run python manage.py seed_fleet && DJANGO_DB_IDENTITY=owner uv run python manage.py seed_planning && DJANGO_DB_IDENTITY=owner uv run python manage.py seed_readiness
+	$(ENV) $(BE) DJANGO_DB_IDENTITY=owner uv run python manage.py seed_dev && DJANGO_DB_IDENTITY=owner uv run python manage.py seed_fleet && DJANGO_DB_IDENTITY=owner uv run python manage.py seed_planning && DJANGO_DB_IDENTITY=owner uv run python manage.py seed_readiness && DJANGO_DB_IDENTITY=owner uv run python manage.py seed_execution
 
 run: migrate   ## run the app on the host as the runtime role
 	$(ENV) $(BE) DJANGO_DB_IDENTITY=app uv run python manage.py runserver
