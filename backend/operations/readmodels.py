@@ -59,6 +59,16 @@ def read_thresholds() -> dict[str, int | None]:
     return {k: parse_threshold(raw.get(k)) for k in THRESHOLD_KEYS}
 
 
+def _readiness_since(on_site_start: datetime, lookahead: int | None) -> datetime:
+    """READINESS_INCOMPLETE_SOON `since` (amendment A1): on_site_start - lookahead (clamped)."""
+    if lookahead is None:
+        return on_site_start
+    try:
+        return on_site_start - timedelta(minutes=lookahead)
+    except OverflowError:
+        return datetime.min.replace(tzinfo=on_site_start.tzinfo)
+
+
 def _cutoff(at: datetime, minutes: int | None) -> datetime | None:
     """Latest `since` that fires at `at` (inclusive rule `at >= since + threshold`), or None when the rule
     cannot fire (threshold unconfigured, or so large that no representable time reaches it)."""
@@ -466,8 +476,7 @@ def timeline(at: datetime, *, window_min: int) -> Timeline:
             results[vid] = evaluate_readiness(objs[vid], at=at)
 
     qualifying_ids = {r["visit_id"] for r in qualifying}
-    # the rule's `since` is now - lookahead (the earliest representable time if that underflows)
-    readiness_since = _cutoff(at, lookahead) or datetime.min.replace(tzinfo=at.tzinfo)
+    # Contract amendment A1: the rule's `since` is the visit's on_site_start - lookahead (same as the inbox).
     visits = []
     for r in visit_rows:
         res = results.get(r["visit_id"])
@@ -477,7 +486,13 @@ def timeline(at: datetime, *, window_min: int) -> Timeline:
                 Flag("HELD_ROBOT_ASSIGNED", f"{r['robot_code']}/{r['visit_code']}", r["holds_since"])
             )
         if res is not None and not res.ready:
-            flags.append(Flag("READINESS_INCOMPLETE_SOON", r["visit_code"], readiness_since))
+            flags.append(
+                Flag(
+                    "READINESS_INCOMPLETE_SOON",
+                    r["visit_code"],
+                    _readiness_since(r["on_site_start"], lookahead),
+                )
+            )
         visits.append(
             TimelineVisit(
                 visit=r["visit_code"],
@@ -524,6 +539,7 @@ def timeline(at: datetime, *, window_min: int) -> Timeline:
         "evaluated": done,
         "not_evaluated": n - done,
         "complete": lookahead is not None and done == n,
+        "skipped": False,  # same shape as the inbox's coverage (amendment A1); the timeline always evaluates
     }
     return Timeline(
         at=at,

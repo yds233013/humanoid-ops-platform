@@ -353,7 +353,8 @@ def test_timeline_visits_window_order_exclusions_and_readiness_labels():
     )  # build_readiness recorded evidence
     assert by[later].readiness_label == "Readiness incomplete"
     assert "EVIDENCE_MISSING" in by[later].readiness_blockers
-    since = at - timedelta(minutes=int(THRESHOLDS[rm.READINESS_LOOKAHEAD]))
+    # amendment A1: since = the visit's on_site_start - lookahead (identical to the exception inbox)
+    since = by[later].on_site_start - timedelta(minutes=int(THRESHOLDS[rm.READINESS_LOOKAHEAD]))
     h = Hold.objects.get(code=hold)
     assert by[later].flags == [
         rm.Flag("HELD_ROBOT_ASSIGNED", f"R-02/{later}", h.placed_at),
@@ -364,7 +365,13 @@ def test_timeline_visits_window_order_exclusions_and_readiness_labels():
         "R-02",
         f"/readiness/visits/{later}/",
     )
-    assert t.readiness_coverage == {"qualifying": 3, "evaluated": 3, "not_evaluated": 0, "complete": True}
+    assert t.readiness_coverage == {
+        "qualifying": 3,
+        "evaluated": 3,
+        "not_evaluated": 0,
+        "complete": True,
+        "skipped": False,
+    }
     assert t.unconfigured_thresholds == []
 
     start = Visit.objects.get(code=w.visit).current_revision.on_site_start
@@ -410,7 +417,13 @@ def test_timeline_readiness_cap_partial_coverage_and_statement_budget():
     assert [v.readiness_evaluated for v in t.visits] == [True] * 10 + [False] * 2
     assert [v.readiness_label for v in t.visits[10:]] == ["Not evaluated"] * 2
     assert all(v.flags == [] for v in t.visits[10:])  # never inferred
-    assert t.readiness_coverage == {"qualifying": 12, "evaluated": 10, "not_evaluated": 2, "complete": False}
+    assert t.readiness_coverage == {
+        "qualifying": 12,
+        "evaluated": 10,
+        "not_evaluated": 2,
+        "complete": False,
+        "skipped": False,
+    }
 
     # budget: thresholds + visits + runs + one Visit load + E per evaluated visit (E measured here)
     from readiness.evaluator import evaluate_readiness
@@ -442,6 +455,7 @@ def test_timeline_lookahead_unconfigured_evaluates_nothing():
             "evaluated": 0,
             "not_evaluated": 0,
             "complete": False,
+            "skipped": False,
         }
         assert t.unconfigured_thresholds == [rm.READINESS_LOOKAHEAD]
 
