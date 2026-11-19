@@ -104,20 +104,34 @@ class Qualification(models.Model):
         ("field_lead", "Field lead"),
         ("field_operator", "Field operator"),
         ("robot_handler", "Robot handling / loading"),
+        # Slice 7 (X-8): signs inspections that readiness relies on. Granted by a safety reviewer only, never
+        # to
+        # oneself, never backdated (planning/0006 trigger), with a training-record reference in basis_ref.
+        ("readiness_inspector", "Readiness inspector"),
     ]
     person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="qualifications")
     kind = models.CharField(max_length=20, choices=KINDS)
+    # NOT NULL after BEFORE triggers: an immediate readiness_inspector grant inserts NULL and the trigger sets
+    # it
+    # to the same clock_timestamp() as granted_at (contract 07a section 7.2, P1-6).
     valid_from = models.DateTimeField()
     valid_to = models.DateTimeField()
     granted_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
-    granted_at = models.DateTimeField(auto_now_add=True)
+    granted_at = models.DateTimeField(auto_now_add=True)  # forced to clock_timestamp() by the insert trigger
     revoked_at = models.DateTimeField(null=True, blank=True)
+    basis_ref = models.TextField(blank=True, default="", db_default="")  # training record reference only
 
     class Meta:
         constraints = [
             models.CheckConstraint(
                 condition=Q(valid_to__gt=models.F("valid_from")), name="qualification_window"
-            )
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    kind__in=["field_lead", "field_operator", "robot_handler", "readiness_inspector"]
+                ),
+                name="qualification_kind_valid",
+            ),
         ]
 
     def __str__(self) -> str:

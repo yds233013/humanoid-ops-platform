@@ -8,8 +8,22 @@ All demo values are SYNTHETIC. Nothing here describes a real robot.
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Now
 
 USER = settings.AUTH_USER_MODEL
+
+# Slice 7 (docs/07a_production_guardrails_contract.md). Sources are descriptive only: no production gate reads
+# them as proof of approval; they are read only to REFUSE (synthetic content is never production-usable).
+TEMPLATE_SOURCES = [("synthetic_demo", "Synthetic demo"), ("engineering_doc", "Engineering document")]
+RULE_SOURCES = TEMPLATE_SOURCES
+HOLD_POLICY_SOURCES = [("synthetic_demo", "Synthetic demo"), ("approved_procedure", "Approved procedure")]
+APPROVAL_SLOTS = [("engineering", "Engineering lead"), ("safety", "Safety reviewer")]
+TEMPLATE_PURPOSES = [("pre_departure", "Pre-departure"), ("periodic", "Periodic")]
+MAX_INTERVAL_MIN = 5_256_000  # ten years
+
+
+def _in(field: str, choices: list[tuple[str, str]]) -> Q:
+    return Q(**{f"{field}__in": [k for k, _ in choices]})
 
 
 class DeploymentSetting(models.Model):
@@ -184,15 +198,23 @@ class HoldPolicy(models.Model):
 
     version = models.PositiveIntegerField(unique=True)
     rules = models.JSONField()
+    # Slice 7 (G-01): approved_procedure needs a procedure_ref, the floor and three approvals (incl. founder).
+    source = models.CharField(max_length=30, choices=HOLD_POLICY_SOURCES, default="synthetic_demo")
+    procedure_ref = models.TextField(blank=True, default="", db_default="")
     created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=_in("source", HOLD_POLICY_SOURCES), name="hold_policy_source")
+        ]
 
     def __str__(self) -> str:
         return f"policy v{self.version}"
 
 
 class HoldPolicyApproval(models.Model):
-    SLOTS = [("engineering", "Engineering lead"), ("safety", "Safety reviewer")]
+    SLOTS = [("engineering", "Engineering lead"), ("safety", "Safety reviewer"), ("founder", "Founder")]
     policy = models.ForeignKey(HoldPolicy, on_delete=models.PROTECT, related_name="approvals")
     slot = models.CharField(max_length=20, choices=SLOTS)
     approver = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
@@ -206,6 +228,33 @@ class HoldPolicyApproval(models.Model):
 
     def __str__(self) -> str:
         return f"{self.policy_id}:{self.slot}"
+
+
+class HoldPolicyWithdrawal(models.Model):
+    """Slice 7 (G-01). Append-only; a withdrawn policy is never active and has no fallback."""
+
+    policy = models.OneToOneField(HoldPolicy, on_delete=models.PROTECT, related_name="withdrawal")
+    withdrawn_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    reason = models.TextField()
+    withdrawn_at = models.DateTimeField(db_default=Now())
+
+    def __str__(self) -> str:
+        return f"withdrawn policy {self.policy_id}"
+
+
+class HoldPolicyRegistry(models.Model):
+    """Slice 7 (G-01, P0-3): the singleton serialization point (id = 1, inserted by fleet/0008). No data.
+    Policy create / approve / withdraw lock it FOR UPDATE; placement, release and rebasing lock it FOR SHARE.
+    Last in the
+    global lock order (platform_core.locks.ORDER). Append-only: row locks only."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(id=1), name="hold_policy_registry_singleton")]
+
+    def __str__(self) -> str:
+        return "hold-policy registry"
 
 
 class Hold(models.Model):
@@ -266,6 +315,11 @@ class ReleaseApproval(models.Model):
     evidence_refs = models.JSONField(default=list)
     note = models.TextField(blank=True)
     approved_at = models.DateTimeField(auto_now_add=True)
+    # Slice 7: forced by the trigger to the hold's effective rebase; only approvals with that rebase fill
+    # slots.
+    rebase = models.ForeignKey(
+        "HoldRebase", null=True, blank=True, on_delete=models.PROTECT, related_name="release_approvals"
+    )
 
     def __str__(self) -> str:
         return f"{self.hold_id}:{self.slot}"
@@ -281,6 +335,67 @@ class ReleaseApprovalWithdrawal(models.Model):
         return f"withdrawn {self.approval_id}"
 
 
+class HoldRebase(models.Model):
+    """Slice 7 (G-01, EM decision 11): a named two-person decision to re-base an unreleasable hold onto the
+    active production policy. Effective only through a HoldRebaseActivation (inserted by the final-approval
+    trigger)."""
+
+    code = models.CharField(max_length=12, unique=True)  # RB-0001, fleet_hold_rebase_code_seq
+    hold = models.ForeignKey(Hold, on_delete=models.PROTECT, related_name="rebases")
+    from_policy = models.ForeignKey(
+        HoldPolicy, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    to_policy = models.ForeignKey(HoldPolicy, on_delete=models.PROTECT, related_name="+")
+    based_on_rebase = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    required_slots = models.JSONField(default=list)
+    reason = models.TextField()
+    requested_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    requested_at = models.DateTimeField(db_default=Now())
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class HoldRebaseApproval(models.Model):
+    rebase = models.ForeignKey(HoldRebase, on_delete=models.PROTECT, related_name="approvals")
+    slot = models.CharField(max_length=20, choices=APPROVAL_SLOTS)
+    approver = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    approved_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["rebase", "slot"], name="uniq_rebase_slot"),
+            models.UniqueConstraint(fields=["rebase", "approver"], name="uniq_rebase_approver"),
+            models.CheckConstraint(condition=_in("slot", APPROVAL_SLOTS), name="rebase_slot_valid"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.rebase_id}:{self.slot}"
+
+
+class HoldRebaseActivation(models.Model):
+    """Inserted ONLY by the final rebase-approval trigger (ops_app has no INSERT). One activation per base."""
+
+    hold = models.ForeignKey(Hold, on_delete=models.PROTECT, related_name="rebase_activations")
+    rebase = models.OneToOneField(HoldRebase, on_delete=models.PROTECT, related_name="activation")
+    based_on_rebase = models.ForeignKey(
+        HoldRebase, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    activated_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["hold", "based_on_rebase"], nulls_distinct=False, name="uniq_rebase_activation_base"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"activation {self.rebase_id}"
+
+
 class InspectionTemplate(models.Model):
     """items = [{"id": "I1", "label": "...", "robot_condition": true}, ...]. SYNTHETIC until engineering
     supplies the real checklist for the pattern."""
@@ -288,13 +403,111 @@ class InspectionTemplate(models.Model):
     pattern = models.ForeignKey(ManifestPattern, on_delete=models.PROTECT, related_name="templates")
     version = models.CharField(max_length=20)
     items = models.JSONField()
-    source = models.CharField(max_length=30, default="synthetic_demo")
+    source = models.CharField(max_length=30, choices=TEMPLATE_SOURCES, default="synthetic_demo")
+    # Slice 7 (X-1): NULL only for rows created before Slice 7 (never approvable); required for new rows.
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    procedure_ref = models.TextField(blank=True, default="", db_default="")  # a reference, never content
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["pattern", "version"], name="uniq_template_version")]
+        constraints = [
+            models.UniqueConstraint(fields=["pattern", "version"], name="uniq_template_version"),
+            models.CheckConstraint(condition=_in("source", TEMPLATE_SOURCES), name="template_source_valid"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.pattern_id}:{self.version}"
+
+
+class InspectionTemplateApproval(models.Model):
+    """Slice 7 (X-1): per purpose, engineering + safety, distinct people, never the author."""
+
+    template = models.ForeignKey(InspectionTemplate, on_delete=models.PROTECT, related_name="approvals")
+    purpose = models.CharField(max_length=20, choices=TEMPLATE_PURPOSES)
+    slot = models.CharField(max_length=20, choices=APPROVAL_SLOTS)
+    approver = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    approved_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["template", "purpose", "slot"], name="uniq_template_purpose_slot"
+            ),
+            models.UniqueConstraint(
+                fields=["template", "purpose", "approver"], name="uniq_template_purpose_approver"
+            ),
+            models.CheckConstraint(
+                condition=_in("purpose", TEMPLATE_PURPOSES), name="template_purpose_valid"
+            ),
+            models.CheckConstraint(condition=_in("slot", APPROVAL_SLOTS), name="template_slot_valid"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.template_id}:{self.purpose}:{self.slot}"
+
+
+class InspectionTemplateWithdrawal(models.Model):
+    template = models.OneToOneField(InspectionTemplate, on_delete=models.PROTECT, related_name="withdrawal")
+    withdrawn_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    reason = models.TextField()
+    withdrawn_at = models.DateTimeField(db_default=Now())
+
+    def __str__(self) -> str:
+        return f"withdrawn template {self.template_id}"
+
+
+class PeriodicInspectionRule(models.Model):
+    """Slice 7 (X-3): per pattern, versioned and approved. interval_min NULL = UNKNOWN (blocks in both
+    modes)."""
+
+    pattern = models.ForeignKey(ManifestPattern, on_delete=models.PROTECT, related_name="periodic_rules")
+    version_no = models.PositiveIntegerField()  # consecutive per pattern (trigger)
+    interval_min = models.PositiveIntegerField(null=True, blank=True)
+    source = models.CharField(max_length=30, choices=RULE_SOURCES)
+    procedure_ref = models.TextField(blank=True, default="", db_default="")
+    notes = models.TextField(blank=True, default="", db_default="")
+    created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["pattern", "version_no"], name="uniq_periodic_rule_version"),
+            models.CheckConstraint(
+                condition=Q(interval_min__isnull=True)
+                | Q(interval_min__gte=1, interval_min__lte=MAX_INTERVAL_MIN),
+                name="periodic_rule_interval_range",
+            ),
+            models.CheckConstraint(condition=_in("source", RULE_SOURCES), name="periodic_rule_source_valid"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.pattern_id} periodic v{self.version_no}"
+
+
+class PeriodicInspectionRuleApproval(models.Model):
+    rule = models.ForeignKey(PeriodicInspectionRule, on_delete=models.PROTECT, related_name="approvals")
+    slot = models.CharField(max_length=20, choices=APPROVAL_SLOTS)
+    approver = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    approved_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["rule", "slot"], name="uniq_periodic_rule_slot"),
+            models.UniqueConstraint(fields=["rule", "approver"], name="uniq_periodic_rule_approver"),
+            models.CheckConstraint(condition=_in("slot", APPROVAL_SLOTS), name="periodic_rule_slot_valid"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.rule_id}:{self.slot}"
+
+
+class PeriodicInspectionRuleWithdrawal(models.Model):
+    rule = models.OneToOneField(PeriodicInspectionRule, on_delete=models.PROTECT, related_name="withdrawal")
+    withdrawn_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    reason = models.TextField()
+    withdrawn_at = models.DateTimeField(db_default=Now())
+
+    def __str__(self) -> str:
+        return f"withdrawn periodic rule {self.rule_id}"
 
 
 class Inspection(models.Model):

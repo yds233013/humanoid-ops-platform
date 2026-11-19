@@ -536,3 +536,73 @@ class TripClosure(models.Model):
 
     def __str__(self) -> str:
         return f"closure of trip {self.trip_id}"
+
+
+# ---------------------------------------------------------------- Slice 7 (X-4): escalation deadline sets
+DEADLINE_SOURCES = [
+    ("synthetic_demo", "Synthetic demo (usable only in demo mode)"),
+    ("owner_approved", "Approved by the owners (founder and safety)"),
+]
+DEADLINE_SLOTS = [("safety", "Safety reviewer"), ("founder", "Founder")]
+
+
+class EscalationDeadlineSet(models.Model):
+    """Owner-approved escalation deadlines for ONE incident-policy version (contract 07a section 6).
+    deadlines = {level | "unclassified": [{"to_role": role, "within_min": 1..5256000}, ...]}; an empty list
+    is a stated "no
+    clocked notification at this level". Append-only; a change is a new version_no (consecutive per policy).
+    The platform never supplies the values: it records them and their approvers."""
+
+    incident_policy = models.ForeignKey(
+        IncidentPolicy, on_delete=models.PROTECT, related_name="deadline_sets"
+    )
+    version_no = models.PositiveIntegerField()
+    deadlines = models.JSONField()
+    source = models.CharField(max_length=30, choices=DEADLINE_SOURCES)
+    notes = models.TextField(blank=True, default="", db_default="")
+    created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["incident_policy", "version_no"], name="uniq_deadline_set_version"
+            ),
+            models.CheckConstraint(
+                condition=_in("source", DEADLINE_SOURCES), name="deadline_set_source_valid"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"deadline set {self.incident_policy_id} v{self.version_no}"
+
+
+class EscalationDeadlineSetApproval(models.Model):
+    deadline_set = models.ForeignKey(
+        EscalationDeadlineSet, on_delete=models.PROTECT, related_name="approvals"
+    )
+    slot = models.CharField(max_length=20, choices=DEADLINE_SLOTS)
+    approver = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    approved_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["deadline_set", "slot"], name="uniq_deadline_set_slot"),
+            models.UniqueConstraint(fields=["deadline_set", "approver"], name="uniq_deadline_set_approver"),
+            models.CheckConstraint(condition=_in("slot", DEADLINE_SLOTS), name="deadline_set_slot_valid"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.deadline_set_id}:{self.slot}"
+
+
+class EscalationDeadlineSetWithdrawal(models.Model):
+    deadline_set = models.OneToOneField(
+        EscalationDeadlineSet, on_delete=models.PROTECT, related_name="withdrawal"
+    )
+    withdrawn_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    reason = models.TextField()
+    withdrawn_at = models.DateTimeField(db_default=Now())
+
+    def __str__(self) -> str:
+        return f"withdrawn deadline set {self.deadline_set_id}"

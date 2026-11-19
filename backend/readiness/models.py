@@ -170,6 +170,12 @@ class DepartureAuthorization(models.Model):
     issued_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     issued_at = models.DateTimeField(db_default=Now())  # forced to clock_timestamp() by the trigger
     expires_at = models.DateTimeField()
+    # Slice 7 (X-3, P0-1): set by readiness_issue_authorization, never by the caller. NULL only before
+    # Slice 7.
+    periodic_inspection = models.ForeignKey(
+        "fleet.Inspection", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    planned_unload_end = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
