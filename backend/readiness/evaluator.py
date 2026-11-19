@@ -49,9 +49,9 @@ from typing import Any
 from django.db import connection
 
 from fleet import services as fleet_services
-from fleet.models import ConfigurationManifest, ManifestPattern, Robot
+from fleet.models import ConfigurationManifest, Inspection, ManifestPattern, Robot
 from planning.models import Person, Reservation, Resource, Visit, VisitRevision
-from planning.services import Plan, live_feasibility
+from planning.services import Plan, inspection_signer_problem, live_feasibility
 from readiness.evidence import current_policy, latest_ever_approved_policy, policy_status
 from readiness.models import DepartureEvent, ReadinessEvidence, ReadinessPolicy, RecoveryPlan
 
@@ -85,6 +85,13 @@ RECOVERY_PLAN_MISSING = "RECOVERY_PLAN_MISSING"
 RECOVERY_ONCALL_NOT_ENGINEER = "RECOVERY_ONCALL_NOT_ENGINEER"  # level "review"
 EXPIRY_NOT_POSITIVE = "EXPIRY_NOT_POSITIVE"
 ROBOT_NOT_AT_HUB = "ROBOT_NOT_AT_HUB"  # Slice 4 contract C3
+# Slice 7 (docs/07a_production_guardrails_contract.md)
+INSPECTION_TEMPLATE_NOT_APPROVED = "INSPECTION_TEMPLATE_NOT_APPROVED"  # X-1 R1-2 (production)
+POLICY_LACKS_INSPECTION = "POLICY_LACKS_INSPECTION"  # X-1 R1-6 (production)
+PERIODIC_INSPECTION_INTERVAL_UNKNOWN = "PERIODIC_INSPECTION_INTERVAL_UNKNOWN"  # X-3
+PERIODIC_INSPECTION_MISSING = "PERIODIC_INSPECTION_MISSING"  # X-3
+PERIODIC_INSPECTION_DUE_BEFORE_RETURN = "PERIODIC_INSPECTION_DUE_BEFORE_RETURN"  # X-3: due_at <= unload_end
+INSPECTOR_NOT_QUALIFIED = "INSPECTOR_NOT_QUALIFIED"  # X-8
 
 BLOCKER_CODES = (
     VISIT_NOT_CONFIRMED,
@@ -104,6 +111,12 @@ BLOCKER_CODES = (
     RECOVERY_ONCALL_NOT_ENGINEER,
     EXPIRY_NOT_POSITIVE,
     ROBOT_NOT_AT_HUB,
+    INSPECTION_TEMPLATE_NOT_APPROVED,
+    POLICY_LACKS_INSPECTION,
+    PERIODIC_INSPECTION_INTERVAL_UNKNOWN,
+    PERIODIC_INSPECTION_MISSING,
+    PERIODIC_INSPECTION_DUE_BEFORE_RETURN,
+    INSPECTOR_NOT_QUALIFIED,
 )
 
 
@@ -150,6 +163,9 @@ class _World:
     pattern: ManifestPattern | None
     recovery_plan: RecoveryPlan | None
     policy: ReadinessPolicy | None
+    production: bool = True
+    latest: dict[str, ReadinessEvidence | None] = field(default_factory=dict)
+    periodic: fleet_services.PeriodicStatus | None = None
     persons: dict[int, int] = field(default_factory=dict)  # person id -> version
 
 
@@ -167,7 +183,42 @@ def _select_recovery_plan(
     )
 
 
-def _read_world(visit: Visit) -> _World:
+def _latest_evidence_for(
+    visit: Visit, revision: VisitRevision | None, manifest_id: int | None
+) -> dict[str, ReadinessEvidence | None]:
+    """Latest non-voided evidence of each kind for the current revision AND the robot's current manifest
+    (same selection as SQL readiness_latest_evidence: observed_at, then id)."""
+    out: dict[str, ReadinessEvidence | None] = {k: None for k in EVIDENCE_KIND_LABELS}
+    if revision is None or manifest_id is None:
+        return out
+    qs = (
+        ReadinessEvidence.objects.filter(
+            visit=visit, revision=revision, manifest_id=manifest_id, void__isnull=True
+        )
+        .select_related("inspection", "inspection__template")
+        .order_by("kind", "-observed_at", "-pk")
+    )
+    for ev in qs:
+        if out.get(ev.kind) is None:
+            out[ev.kind] = ev
+    return out
+
+
+def _signer_person_ids(inspection_ids: list[int]) -> list[int]:
+    """Persons of the performers and verifiers of the given inspections (a signer without a Person cannot be
+    versioned: the INSPECTOR_NOT_QUALIFIED gate and the database both refuse that case)."""
+    users = [
+        u
+        for pair in Inspection.objects.filter(pk__in=inspection_ids).values_list(
+            "performer_id", "verifier_id"
+        )
+        for u in pair
+        if u is not None
+    ]
+    return list(Person.objects.filter(user_id__in=users).values_list("pk", flat=True))
+
+
+def _read_world(visit: Visit, at: datetime | None = None) -> _World:
     v = Visit.objects.select_related("site").get(pk=visit.pk)
     rev = (
         VisitRevision.objects.select_related("robot", "lead", "second", "vehicle").get(
@@ -182,35 +233,32 @@ def _read_world(visit: Visit) -> _World:
     if manifest_id is not None:
         pattern = ConfigurationManifest.objects.select_related("pattern").get(pk=manifest_id).pattern
     plan = _select_recovery_plan(v, rev, manifest_id)
+    production = not fleet_services.demo_mode()
+    latest = _latest_evidence_for(v, rev, manifest_id)
+    periodic = (
+        fleet_services.periodic_inspection_status(robot, at, production=production)
+        if robot is not None
+        else None
+    )
+    # Dependency persons (contract 07a section 7.2, P0-1), deduplicated: the revision's lead and second, the
+    # recovery plan's two people, and the signers of BOTH relied inspections (the latest pre-departure
+    # evidence's inspection and the periodic inspection the database will select).
     person_ids: list[int] = []
     if rev is not None:
         person_ids += [x for x in (rev.lead_id, rev.second_id) if x is not None]
     if plan is not None:
         person_ids += [plan.on_call_engineer_id, plan.escalation_contact_id]
-    if rev is not None and robot is not None and manifest_id is not None:
-        person_ids += _inspection_signer_person_ids(v.pk, rev.pk, robot.pk, manifest_id)
-    persons = dict(Person.objects.filter(pk__in=person_ids).values_list("pk", "version"))
-    return _World(v, rev, robot, manifest_id, pattern, plan, current_policy(), persons)
-
-
-def _inspection_signer_person_ids(
-    visit_id: int, revision_id: int, robot_id: int, manifest_id: int
-) -> list[int]:
-    """Slice 7 (contract 07a section 7.2, P0-1): the signer persons of the relied pre-departure inspection
-    (latest non-voided pre-departure evidence) and of the periodic inspection the database would rely on, so
-    they are locked and versioned in person_versions. MINIMAL Engineer A shim through the frozen SQL
-    functions (readiness_dependency_persons, readiness_periodic_inspection_status) so existing flows keep
-    authorizing; Engineer B owns the evaluator and replaces it with the Python implementation and the
-    INSPECTOR_NOT_QUALIFIED gate."""
-    with connection.cursor() as cur:
-        cur.execute(
-            "SELECT x FROM readiness_dependency_persons("
-            "  jsonb_build_array((readiness_latest_evidence(%s, %s, %s, 'pre_departure_inspection')).id),"
-            "  (SELECT s.inspection_id FROM readiness_periodic_inspection_status(%s, fleet_production_mode(),"
-            "   clock_timestamp()) s)) x WHERE x IS NOT NULL",
-            [visit_id, revision_id, manifest_id, robot_id],
-        )
-        return [int(r[0]) for r in cur.fetchall()]
+    relied_inspections: list[int] = []
+    pre = latest.get("pre_departure_inspection")
+    if pre is not None and pre.inspection_id is not None:
+        relied_inspections.append(pre.inspection_id)
+    if periodic is not None and periodic.inspection_id is not None:
+        relied_inspections.append(periodic.inspection_id)
+    person_ids += _signer_person_ids(relied_inspections)
+    persons = dict(Person.objects.filter(pk__in=set(person_ids)).values_list("pk", "version"))
+    return _World(
+        v, rev, robot, manifest_id, pattern, plan, current_policy(), production, latest, periodic, persons
+    )
 
 
 def _snapshot(w: _World) -> dict[str, Any]:
@@ -366,16 +414,7 @@ def _gate_policy(w: _World, b: _Blockers) -> None:
 
 def _latest_evidence(w: _World) -> dict[str, ReadinessEvidence | None]:
     """Latest non-voided evidence of each kind for the current revision AND the robot's current manifest."""
-    out: dict[str, ReadinessEvidence | None] = {k: None for k in EVIDENCE_KIND_LABELS}
-    if w.revision is None or w.manifest_id is None:
-        return out
-    qs = ReadinessEvidence.objects.filter(
-        visit=w.visit, revision=w.revision, manifest_id=w.manifest_id, void__isnull=True
-    ).order_by("kind", "-observed_at", "-pk")
-    for ev in qs:
-        if out.get(ev.kind) is None:
-            out[ev.kind] = ev
-    return out
+    return w.latest
 
 
 def _gate_evidence(
@@ -541,22 +580,111 @@ def _gate_recovery_plan(w: _World, b: _Blockers) -> None:
         )
 
 
+def _unload_end(plan: Plan | None) -> datetime | None:
+    """The planned unloading end of the live plan timeline (readiness/0006 unload_end), if computable."""
+    if plan is None:
+        return None
+    for purpose, _s0, s1 in plan.intervals.get("robot", []):
+        if purpose == "unloading":
+            return s1
+    return None
+
+
+def _gate_periodic_inspection(w: _World, plan: Plan | None, b: _Blockers) -> datetime | None:
+    """Gate 1c (X-3). Returns the due date that bounds the expiry, if the state is due. Overdue already
+    arrives through PLANNING_ROBOT_NOT_ELIGIBLE (eligibility) and is not repeated here."""
+    st = w.periodic
+    if st is None or w.robot is None:
+        return None
+    mode = "production" if w.production else "demo"
+    if st.state == "unknown_interval":
+        b.add(
+            PERIODIC_INSPECTION_INTERVAL_UNKNOWN,
+            f"Periodic inspection interval unknown for configuration {st.pattern_code} ({mode} mode): no "
+            "approved interval rule usable in this mode",
+            "Engineering supplies the interval with a procedure reference; engineering lead and safety "
+            "reviewer approve it",
+        )
+        return None
+    if st.state == "never_inspected":
+        b.add(
+            PERIODIC_INSPECTION_MISSING,
+            f"No qualifying periodic inspection of {w.robot.code} on the current configuration (complete "
+            "PASS, template approved for periodic use, both signers qualified readiness inspectors)",
+            "Record a periodic inspection on an approved template, signed by two qualified inspectors",
+        )
+        return None
+    if st.state != "due" or st.due_at is None:
+        return None
+    unload_end = _unload_end(plan)
+    # due_at <= unload_end blocks: the complement of the strict SQL rule due_at > unload_end (EM ruling 6).
+    if unload_end is not None and st.due_at <= unload_end:
+        due, end = fleet_services.format_db_time(st.due_at), fleet_services.format_db_time(unload_end)
+        b.add(
+            PERIODIC_INSPECTION_DUE_BEFORE_RETURN,
+            f"Periodic inspection of {w.robot.code} is due at {due}, "
+            f"not after the planned unloading end {end}",
+            "Record a new periodic inspection before the visit, or re-plan the visit",
+        )
+    return st.due_at
+
+
+def _gate_inspection_provenance(
+    w: _World, latest: dict[str, ReadinessEvidence | None], reported: set[str], b: _Blockers
+) -> None:
+    """Gate 5b (X-1 R1-2 / R1-6, X-8): the relied pre-departure inspection's template must be approved for
+    pre-departure use in production, and both its signers must be qualified readiness inspectors (both
+    modes). A production policy must require pre-departure inspection evidence."""
+    if w.policy is None:
+        return
+    kinds = {req["kind"] for req in w.policy.requirements.get("evidence", [])}
+    if w.production and "pre_departure_inspection" not in kinds:
+        b.add(
+            POLICY_LACKS_INSPECTION,
+            f"Readiness policy v{w.policy.version} does not require pre-departure inspection evidence "
+            "(required in production)",
+            "Approve a readiness policy that requires pre_departure_inspection evidence",
+        )
+    if "pre_departure_inspection" not in kinds or "pre_departure_inspection" in reported:
+        return
+    ev = latest.get("pre_departure_inspection")
+    if ev is None or ev.result != "pass" or ev.inspection is None:
+        return
+    insp = ev.inspection
+    if w.production and not fleet_services.template_usable(insp.template, "pre_departure", production=True):
+        b.add(
+            INSPECTION_TEMPLATE_NOT_APPROVED,
+            f"Pre-departure inspection {insp.code} uses template {insp.template.version}, which is not "
+            "approved for pre-departure use in production",
+            "Re-inspect on a template approved by engineering and safety for pre-departure use",
+        )
+    problem = inspection_signer_problem(insp)
+    if problem:
+        b.add(
+            INSPECTOR_NOT_QUALIFIED,
+            f"Pre-departure inspection {insp.code}: {problem}",
+            "Re-inspect with two qualified readiness inspectors",
+        )
+
+
 # ------------------------------------------------------------------ entry point
 def evaluate_readiness(visit: Visit, at: datetime | None = None) -> ReadinessResult:
     """Run gates 1-9 in order, never stopping early. Read-only (see the module docstring)."""
     if at is None:
         at = db_now()
-    w = _read_world(visit)
+    w = _read_world(visit, at)
     b = _Blockers()
     relied: dict[int, datetime | None] = {}  # evidence id -> its expiry bound (None: no age requirement)
 
     _gate_visit(w, b)  # 1
     _gate_custody(w, b)  # 1b (Slice 4, C3)
     plan = _gate_planning(w, b)  # 2
+    periodic_due = _gate_periodic_inspection(w, plan, b)  # 1c (Slice 7 X-3; needs the plan timeline)
     _gate_reservations(w, plan, b)  # 3
     _gate_policy(w, b)  # 4
     latest = _latest_evidence(w)
     reported = _gate_evidence(w, latest, at, b, relied)  # 5
+    _gate_inspection_provenance(w, latest, reported, b)  # 5b (Slice 7 X-1, X-8)
     _gate_battery(w, latest, reported, b, relied)  # 6
     _gate_equipment(w, latest, reported, b, relied)  # 7
     _gate_recovery_plan(w, b)  # 8
@@ -565,6 +693,8 @@ def evaluate_readiness(visit: Visit, at: datetime | None = None) -> ReadinessRes
     if w.policy is not None:  # 9
         bounds = [at + timedelta(minutes=int(w.policy.requirements["authorization_ttl_min"]))]
         bounds += [x for x in relied.values() if x is not None]
+        if periodic_due is not None:
+            bounds.append(periodic_due)  # X-3: expires_at <= due_at (defence in depth)
         expires_at = min(bounds)
         if expires_at <= at:
             b.add(

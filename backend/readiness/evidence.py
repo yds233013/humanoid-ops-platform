@@ -12,7 +12,9 @@ from typing import Any
 from django.db import connection
 from django.db.models import Count, Q
 
+from fleet import services as fleet_services
 from fleet.models import ConfigurationManifest, Inspection, Robot
+from planning import services as planning_services
 from planning.models import Person, Visit
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, RetryTransaction, run_command
 from platform_core.locks import lock_guards
@@ -261,15 +263,22 @@ def withdraw_readiness_policy(actor: Any, *, version: int, reason: str) -> dict[
 
 # ------------------------------------------------------------------ evidence
 def _lock_visit_and_robot(
-    visit_code: str, label: str, share_persons: list[int] | None = None
+    visit_code: str, label: str, share_persons: list[int] | None = None, *, share_settings: bool = False
 ) -> tuple[Visit, Robot, int]:
-    """Read the visit, lock robot S (+ persons S) then visit U, re-read; retry if the visit was re-planned."""
+    """Read the visit, lock [settings S] robot S (+ persons S) then visit U, re-read; retry if the visit was
+    re-planned."""
     v = _visit(visit_code)
     r = v.current_revision
     if r is None or r.robot_id is None:
         raise Conflict(f"Visit {visit_code} has no robot assigned")
     robot_id: int = r.robot_id
-    lock_guards(share_robots=[robot_id], share_persons=share_persons or [], update_visits=[v.pk], label=label)
+    lock_guards(
+        share_settings=share_settings,
+        share_robots=[robot_id],
+        share_persons=share_persons or [],
+        update_visits=[v.pk],
+        label=label,
+    )
     v.refresh_from_db()
     if v.current_revision_id != r.pk:
         raise RetryTransaction()  # re-planned between our read and our locks: we may hold the old robot
@@ -317,17 +326,25 @@ def record_evidence(
         if observed_at is not None and observed_at.tzinfo is None:
             raise Invalid("observed_at must be timezone-aware")
 
-        v, robot, manifest_id = _lock_visit_and_robot(visit_code, "readiness.record_evidence")
+        inspection = None
+        signer_persons: list[int] = []
+        if inspection_code:
+            try:
+                inspection = Inspection.objects.select_related("template").get(code=inspection_code)
+            except Inspection.DoesNotExist:
+                raise Invalid(f"No inspection {inspection_code}") from None
+            users = [x for x in (inspection.performer_id, inspection.verifier_id) if x is not None]
+            signer_persons = list(Person.objects.filter(user_id__in=users).values_list("pk", flat=True))
+        # Slice 7 (section 9.2): settings S FIRST (the X-1 refusal depends on the mode), robot S, the signer
+        # persons S (X-8: a revocation and this evidence are totally ordered), then the visit U.
+        v, robot, manifest_id = _lock_visit_and_robot(
+            visit_code, "readiness.record_evidence", share_persons=signer_persons, share_settings=True
+        )
         rev = v.current_revision
         assert rev is not None
         manifest = ConfigurationManifest.objects.get(pk=manifest_id)
-        inspection = None
         when = observed_at
-        if inspection_code:
-            try:
-                inspection = Inspection.objects.get(code=inspection_code)
-            except Inspection.DoesNotExist:
-                raise Invalid(f"No inspection {inspection_code}") from None
+        if inspection is not None:
             if inspection.robot_id != robot.pk or inspection.manifest_id != manifest.pk:
                 raise Conflict(
                     f"Inspection {inspection_code} is for a different robot or configuration than "
@@ -340,6 +357,21 @@ def record_evidence(
                     f"Inspection {inspection_code} is {inspection.result}; "
                     "only a complete PASS counts as passing"
                 )
+            if result == "pass":
+                # X-1 (R1-2): production pass evidence only on a template approved for pre-departure use.
+                # A fail is always recorded (principle 1).
+                if not fleet_services.demo_mode() and not fleet_services.template_usable(
+                    inspection.template, "pre_departure", production=True
+                ):
+                    raise Conflict(
+                        f"Passing pre-departure evidence refused: inspection {inspection.code} uses template "
+                        f"{inspection.template.version}, which is not approved for pre-departure use in "
+                        "production. Record it as a fail, or re-inspect on an approved template"
+                    )
+                # X-8 (both modes): both signers covered at the inspection time and unrevoked now.
+                problem = planning_services.inspection_signer_problem(inspection)
+                if problem:
+                    raise Conflict(f"Passing pre-departure evidence refused: {problem}")
         now = _db_now()
         if inspection is not None and when is None:
             # The app host clock may run a few ms ahead of PostgreSQL; never default into the future.

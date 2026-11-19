@@ -3,7 +3,8 @@ the global order -> domain checks with clear errors -> writes (the database re-c
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -13,6 +14,11 @@ from django.utils import timezone
 from accounts.permissions import active_roles
 from accounts.roles import INSPECTION_SIGNER_ROLES
 from fleet.models import (
+    HOLD_POLICY_SOURCES,
+    MAX_INTERVAL_MIN,
+    RULE_SOURCES,
+    TEMPLATE_PURPOSES,
+    TEMPLATE_SOURCES,
     BaseAuthorization,
     CapabilityApproval,
     CapabilityProfile,
@@ -21,10 +27,19 @@ from fleet.models import (
     Hold,
     HoldPolicy,
     HoldPolicyApproval,
+    HoldPolicyWithdrawal,
+    HoldRebase,
+    HoldRebaseActivation,
+    HoldRebaseApproval,
     Inspection,
     InspectionTemplate,
+    InspectionTemplateApproval,
+    InspectionTemplateWithdrawal,
     ManifestPattern,
     PatternApproval,
+    PeriodicInspectionRule,
+    PeriodicInspectionRuleApproval,
+    PeriodicInspectionRuleWithdrawal,
     ReleaseApproval,
     ReleaseApprovalWithdrawal,
     Robot,
@@ -83,16 +98,161 @@ def demo_mode() -> bool:
     return setting("demo_mode") == "true"
 
 
-def current_policy() -> HoldPolicy:
-    policy = HoldPolicy.objects.order_by("-version").first()
+def production_mode() -> bool:
+    """Contract 07a section 2.2: production unless demo_mode is exactly 'true' (a missing setting is
+    production). Read it only after taking the settings lock when the decision depends on it."""
+    return not demo_mode()
+
+
+def db_now() -> datetime:
+    with connection.cursor() as cur:
+        cur.execute("SELECT clock_timestamp()")
+        value: datetime = cur.fetchone()[0]
+        return value
+
+
+def _has_role_now(user_id: int | None, role: str) -> bool:
+    if user_id is None:
+        return False
+    with connection.cursor() as cur:
+        cur.execute("SELECT has_active_role(%s, %s)", [user_id, role])
+        return bool(cur.fetchone()[0])
+
+
+def _has_any_role_now(user_id: int | None, roles: tuple[str, ...]) -> bool:
+    return any(_has_role_now(user_id, r) for r in roles)
+
+
+# Slot -> role. Templates, periodic rules and rebases use fleet_slot_role (no founder); hold policies use
+# fleet_hold_policy_slot_role (adds founder, approved_procedure only).
+SLOT_ROLES = {"engineering": "engineering_lead", "safety": "safety_reviewer"}
+HOLD_POLICY_SLOT_ROLES = {**SLOT_ROLES, "founder": "founder"}
+AUTHOR_ROLES = ("engineer", "engineering_lead")
+WITHDRAW_ROLES = ("engineering_lead", "safety_reviewer")
+RELEASE_ROLES = {
+    "ops_lead",
+    "engineer",
+    "engineering_lead",
+    "safety_reviewer",
+    "founder",
+}  # fleet.approve_release
+
+
+# ---------------------------------------------------------------- hold policies (G-01 Python mirrors)
+def hold_policy_withdrawn(policy: HoldPolicy | None) -> bool:
+    return policy is not None and HoldPolicyWithdrawal.objects.filter(policy=policy).exists()
+
+
+def hold_policy_approved(policy: HoldPolicy | None) -> bool:
+    """Mirror of fleet_hold_policy_approved: engineering + safety (synthetic_demo), plus founder
+    (approved_procedure). Withdrawal is not considered here."""
     if policy is None:
-        raise Conflict("No hold policy exists yet; an engineering lead must create one")
+        return False
+    slots = set(
+        HoldPolicyApproval.objects.filter(policy=policy, slot__in=list(HOLD_POLICY_SLOT_ROLES)).values_list(
+            "slot", flat=True
+        )
+    )
+    return len(slots) == (3 if policy.source == "approved_procedure" else 2)
+
+
+def policy_production_usable(policy: HoldPolicy | None) -> bool:
+    """Mirror of fleet_policy_production_usable (mode-independent): approved_procedure, fully approved, not
+    withdrawn. Used by rebasing and the production-blocker panel."""
+    return (
+        policy is not None
+        and policy.source == "approved_procedure"
+        and not hold_policy_withdrawn(policy)
+        and hold_policy_approved(policy)
+    )
+
+
+def policy_usable(policy: HoldPolicy | None) -> bool:
+    """Mirror of fleet_policy_usable (mode-aware, reads settings: hold the settings lock when it decides).
+    allow_draft_policies has no effect outside demo mode (EM decision 14)."""
+    if policy is None or hold_policy_withdrawn(policy):
+        return False
+    demo = demo_mode()
+    if hold_policy_approved(policy) and (policy.source == "approved_procedure" or demo):
+        return True
+    return demo and setting("allow_draft_policies") == "true"
+
+
+def active_hold_policy() -> HoldPolicy | None:
+    """Mirror of fleet_active_hold_policy_id: the highest version ever fully approved; none if that one is
+    withdrawn (no fallback)."""
+    for policy in HoldPolicy.objects.order_by("-version"):
+        if hold_policy_approved(policy):
+            return None if hold_policy_withdrawn(policy) else policy
+    return None
+
+
+def binding_policy() -> HoldPolicy | None:
+    """Mirror of fleet_hold_binding_policy_id (mode-independent, reads no setting): the active policy, else
+    the newest, else none. Resolve it only while holding the hold-policy registry (S or U)."""
+    return active_hold_policy() or HoldPolicy.objects.order_by("-version").first()
+
+
+def current_policy() -> HoldPolicy:
+    """The policy a hold placed now would bind to (active, else newest). Kept for the fleet pages."""
+    policy = binding_policy()
+    if policy is None:
+        raise Conflict("No hold policy exists yet; an engineer or engineering lead must create one")
     return policy
 
 
 def policy_status(policy: HoldPolicy) -> str:
-    slots = set(policy.approvals.values_list("slot", flat=True))
-    return "approved" if slots == {"engineering", "safety"} else "draft"
+    """'withdrawn' | 'approved' (fully approved for its source) | 'draft'."""
+    if hold_policy_withdrawn(policy):
+        return "withdrawn"
+    return "approved" if hold_policy_approved(policy) else "draft"
+
+
+def policy_label(policy: HoldPolicy | None) -> str:
+    """Section 5.6 wording: synthetic draft | synthetic approved | approved procedure | withdrawn | none."""
+    if policy is None:
+        return "none"
+    status = policy_status(policy)
+    if status == "withdrawn":
+        return "withdrawn"
+    if policy.source == "approved_procedure":
+        return "approved procedure" if status == "approved" else "approved procedure (awaiting approval)"
+    return "synthetic approved" if status == "approved" else "synthetic draft"
+
+
+def hold_policy_floor_problem(rules: Any) -> str | None:
+    """Mirror of fleet_hold_policy_floor_problem (an approved_procedure policy's platform floor)."""
+    sources = [k for k, _ in Hold.SOURCES]
+    if not isinstance(rules, dict):
+        return "rules must be an object keyed by hold source"
+    for src in rules:
+        if src not in sources:
+            return f"unknown hold source {src}"
+    for src in sources:
+        rule = rules.get(src)
+        if not isinstance(rule, dict):
+            return f"an approved_procedure policy needs a rule for every hold source (missing {src})"
+        slots = rule.get("slots")
+        if not isinstance(slots, list) or not slots:
+            return f"rule {src} needs at least one slot"
+        names: list[str] = []
+        for x in slots:
+            name = x.get("slot") if isinstance(x, dict) else None
+            if not isinstance(name, str) or not name.strip():
+                return f"rule {src}: every slot needs a name"
+            if name in names:
+                return f"rule {src}: duplicate slot {name}"
+            names.append(name)
+            roles = x.get("roles")
+            if not isinstance(roles, list) or not roles:
+                return f"rule {src}: slot {name} needs roles"
+            for role in roles:
+                if role not in RELEASE_ROLES:
+                    return f"rule {src}: role {role} may not approve a release"
+    inc = rules["incident"]
+    if inc.get("distinct_approvers") is not True or inc.get("independent_of_placer") is not True:
+        return "the incident rule must require distinct approvers independent of the placer"
+    return None
 
 
 def pattern_status(pattern: ManifestPattern) -> str:
@@ -107,6 +267,188 @@ def approved_profile(pattern: ManifestPattern) -> CapabilityProfile | None:
     return None
 
 
+# ---------------------------------------------------------------- X-1 template usability (Python mirror)
+def template_withdrawn(template: InspectionTemplate) -> bool:
+    return InspectionTemplateWithdrawal.objects.filter(template=template).exists()
+
+
+def template_approved_for(template: InspectionTemplate, purpose: str) -> bool:
+    slots = set(
+        InspectionTemplateApproval.objects.filter(
+            template=template, purpose=purpose, slot__in=list(SLOT_ROLES)
+        ).values_list("slot", flat=True)
+    )
+    return slots == set(SLOT_ROLES)
+
+
+def template_usable(template: InspectionTemplate | None, purpose: str, *, production: bool) -> bool:
+    """R1-1, mirror of fleet_template_usable(p_template, p_purpose, p_production): not withdrawn AND (an
+    engineering + a safety approval for the purpose OR (demo AND source = 'synthetic_demo'))."""
+    if template is None or template_withdrawn(template):
+        return False
+    if template_approved_for(template, purpose):
+        return True
+    return (not production) and template.source == "synthetic_demo"
+
+
+def template_state(template: InspectionTemplate, purpose: str) -> str:
+    """UI wording (section 3.6): approved | synthetic, demo only | awaiting approval | withdrawn."""
+    if template_withdrawn(template):
+        return "withdrawn"
+    if template_approved_for(template, purpose):
+        return "approved"
+    if template.source == "synthetic_demo":
+        return "synthetic, demo only"
+    return "awaiting approval"
+
+
+def template_items_problem(items: Any) -> str | None:
+    """Mirror of fleet_template_items_problem."""
+    if not isinstance(items, list) or not items:
+        return "items must be a non-empty list"
+    ids: list[str] = []
+    for item in items:
+        iid = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(iid, str) or not iid.strip():
+            return "every item needs a non-blank id"
+        if iid in ids:
+            return f"duplicate item id {iid}"
+        ids.append(iid)
+        label = item.get("label")
+        if not isinstance(label, str) or not label.strip():
+            return f"item {iid} needs a non-blank label"
+        if not isinstance(item.get("robot_condition"), bool):
+            return f"item {iid} needs a boolean robot_condition"
+    return None
+
+
+# ---------------------------------------------------------------- X-3 periodic inspection (Python mirror)
+def periodic_rule_withdrawn(rule: PeriodicInspectionRule) -> bool:
+    return PeriodicInspectionRuleWithdrawal.objects.filter(rule=rule).exists()
+
+
+def periodic_rule_approved(rule: PeriodicInspectionRule) -> bool:
+    slots = set(
+        PeriodicInspectionRuleApproval.objects.filter(rule=rule, slot__in=list(SLOT_ROLES)).values_list(
+            "slot", flat=True
+        )
+    )
+    return slots == set(SLOT_ROLES)
+
+
+def active_periodic_rule(pattern_id: int | None) -> PeriodicInspectionRule | None:
+    """Mirror of fleet_active_periodic_rule_id: the highest version ever fully approved; none if it is
+    withdrawn (no fallback)."""
+    if pattern_id is None:
+        return None
+    for rule in PeriodicInspectionRule.objects.filter(pattern_id=pattern_id).order_by("-version_no"):
+        if periodic_rule_approved(rule):
+            return None if periodic_rule_withdrawn(rule) else rule
+    return None
+
+
+def usable_periodic_rule(pattern_id: int | None, *, production: bool) -> PeriodicInspectionRule | None:
+    """Mirror of fleet_usable_periodic_rule_id: the active rule with a known interval, and in production an
+    engineering_doc source."""
+    rule = active_periodic_rule(pattern_id)
+    if rule is None or rule.interval_min is None:
+        return None
+    if production and rule.source != "engineering_doc":
+        return None
+    return rule
+
+
+@dataclass
+class PeriodicStatus:
+    """state: unknown_interval | never_inspected | overdue | due (contract 07a section 4.2)."""
+
+    state: str
+    due_at: datetime | None
+    inspection_id: int | None
+    rule_id: int | None
+    pattern_code: str | None = None
+    rule_version: int | None = None
+    rule_source: str | None = None
+    interval_min: int | None = None
+
+
+def qualifying_periodic_inspection(robot: Robot, *, production: bool) -> Inspection | None:
+    """Section 4.2 qualifying inspection: this robot, its CURRENT manifest, complete PASS, template usable for
+    'periodic' in the mode, both signers covered (X-8). The latest by (submitted_at, id); no time filter."""
+    from planning.services import inspection_signer_problem  # planning imports fleet.services
+
+    if robot.current_manifest_id is None:
+        return None
+    candidates = (
+        Inspection.objects.filter(
+            robot_id=robot.pk, manifest_id=robot.current_manifest_id, result="PASS", complete=True
+        )
+        .select_related("template")
+        .order_by("-submitted_at", "-id")
+    )
+    for i in candidates:
+        if template_usable(i.template, "periodic", production=production) and (
+            inspection_signer_problem(i) is None
+        ):
+            return i
+    return None
+
+
+def periodic_inspection_status(
+    robot: Robot, at: datetime | None = None, *, production: bool
+) -> PeriodicStatus:
+    """Independent Python implementation of readiness_periodic_inspection_status(p_robot, p_production, p_at)
+    (oracle-tested). ``at`` None means database time. Reads fresh rows."""
+    robot = Robot.objects.get(pk=robot.pk)
+    if at is None:
+        at = db_now()
+    pattern = None
+    if robot.current_manifest_id is not None:
+        pattern = (
+            ConfigurationManifest.objects.select_related("pattern").get(pk=robot.current_manifest_id).pattern
+        )
+    pid = pattern.pk if pattern is not None else None
+    code = pattern.code if pattern is not None else None
+    rule = usable_periodic_rule(pid, production=production)
+    if rule is None:
+        active = active_periodic_rule(pid)
+        return PeriodicStatus(
+            "unknown_interval",
+            None,
+            None,
+            active.pk if active else None,
+            code,
+            active.version_no if active else None,
+            active.source if active else None,
+            active.interval_min if active else None,
+        )
+    info = (code, rule.version_no, rule.source, rule.interval_min)
+    insp = qualifying_periodic_inspection(robot, production=production)
+    if insp is None:
+        return PeriodicStatus("never_inspected", None, None, rule.pk, *info)
+    assert rule.interval_min is not None
+    due = insp.submitted_at + timedelta(minutes=rule.interval_min)
+    return PeriodicStatus("overdue" if at >= due else "due", due, insp.pk, rule.pk, *info)
+
+
+def format_db_time(value: datetime) -> str:
+    """UTC, to the second. SQL equivalent:
+    to_char(t AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') || ' UTC'."""
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def periodic_eligibility_reason(status: PeriodicStatus) -> str | None:
+    """EM decision 7 reasons, worded as contract 07a section 4.2."""
+    if status.state == "unknown_interval":
+        return f"Periodic inspection interval unknown for configuration {status.pattern_code}"
+    if status.state == "never_inspected":
+        return "No qualifying periodic inspection on the current configuration"
+    if status.state == "overdue":
+        assert status.due_at is not None
+        return f"Periodic inspection overdue since {format_db_time(status.due_at)}"
+    return None
+
+
 # ---------------------------------------------------------------- eligibility (read model)
 @dataclass
 class Eligibility:
@@ -115,13 +457,18 @@ class Eligibility:
     reasons: list[str]
     manifest_id: int | None
     pattern_code: str | None
+    periodic: PeriodicStatus | None = field(default=None)
 
 
-def evaluate_eligibility(robot: Robot) -> Eligibility:
+def evaluate_eligibility(robot: Robot, at: datetime | None = None) -> Eligibility:
     """Fleet eligibility only: may this robot be CONSIDERED when planning a visit? It never means the
-    robot may depart - that needs a visit-specific departure authorization (later slice)."""
+    robot may depart - that needs a visit-specific departure authorization (later slice).
+
+    Slice 7 (X-3, EM decision 7): time-dependent. The periodic inspection must be known, present and not
+    overdue at ``at`` (None = database time), in the current deployment mode."""
     reasons: list[str] = []
     pattern = None
+    periodic = None
     if robot.lifecycle != "in_service":
         reasons.append(f"Lifecycle is {robot.get_lifecycle_display()}, not In service")
     if robot.current_manifest_id is None:
@@ -148,6 +495,10 @@ def evaluate_eligibility(robot: Robot) -> Eligibility:
             scope="manifest_pattern", pattern=pattern, released_at__isnull=True, blocking=True
         ):
             reasons.append(f"Configuration hold {h.code}: {h.reason}")
+        periodic = periodic_inspection_status(robot, at, production=production_mode())
+        why = periodic_eligibility_reason(periodic)
+        if why:
+            reasons.append(why)
     for h in Hold.objects.filter(scope="robot", robot=robot, released_at__isnull=True, blocking=True):
         reasons.append(f"Robot hold {h.code} ({h.get_source_type_display()}): {h.reason}")
     ok = not reasons
@@ -157,6 +508,7 @@ def evaluate_eligibility(robot: Robot) -> Eligibility:
         reasons,
         robot.current_manifest_id,
         pattern.code if pattern else None,
+        periodic,
     )
 
 
@@ -448,43 +800,111 @@ def revoke_base_authorization(actor: Any, *, robot_code: str, reason: str) -> di
     )
 
 
-# ---------------------------------------------------------------- hold policy
-def create_hold_policy(actor: Any, *, rules: dict[str, Any]) -> dict[str, Any]:
+# ---------------------------------------------------------------- hold policy (G-01 lifecycle)
+def _hold_policy(version: int) -> HoldPolicy:
+    try:
+        return HoldPolicy.objects.get(version=version)
+    except HoldPolicy.DoesNotExist:
+        raise Invalid(f"No hold policy v{version}") from None
+
+
+def create_hold_policy(
+    actor: Any, *, rules: dict[str, Any], source: str = "synthetic_demo", procedure_ref: str = ""
+) -> dict[str, Any]:
+    """Create hold-policy version N+1 (engineer / engineering_lead). Locks: hold-policy registry U only
+    (creation changes the "newest" binding). An approved_procedure policy needs a procedure reference and the
+    platform floor (section 5.2); the database re-checks both."""
+
     def handler() -> Outcome:
-        for source, rule in rules.items():
-            if source not in dict(Hold.SOURCES):
-                raise Invalid(f"Unknown hold source {source}")
-            slots = rule.get("slots") or []
+        if source not in dict(HOLD_POLICY_SOURCES):
+            raise Invalid(f"source must be one of {[k for k, _ in HOLD_POLICY_SOURCES]}")
+        for src, rule in rules.items():
+            if src not in dict(Hold.SOURCES):
+                raise Invalid(f"Unknown hold source {src}")
+            slots = rule.get("slots") or [] if isinstance(rule, dict) else []
             if not slots or any(not s.get("slot") or not s.get("roles") for s in slots):
-                raise Invalid(f"Rule for {source} needs slots with names and roles")
+                raise Invalid(f"Rule for {src} needs slots with names and roles")
             if len({s["slot"] for s in slots}) != len(slots):
-                raise Invalid(f"Duplicate slot names in {source}")
+                raise Invalid(f"Duplicate slot names in {src}")
+        if source == "approved_procedure":
+            if not procedure_ref.strip():
+                raise Invalid("An approved_procedure hold policy needs a procedure reference")
+            problem = hold_policy_floor_problem(rules)
+            if problem:
+                raise Invalid(f"Hold policy floor: {problem}")
+        lock_guards(update_hold_policy_registry=True, label="fleet.create_hold_policy")
         version = (HoldPolicy.objects.order_by("-version").values_list("version", flat=True).first() or 0) + 1
-        p = HoldPolicy.objects.create(version=version, rules=rules, created_by=actor)
-        return Outcome("hold_policy", str(p.version), {"status": "draft"})
+        p = HoldPolicy.objects.create(
+            version=version, rules=rules, source=source, procedure_ref=procedure_ref, created_by=actor
+        )
+        return Outcome("hold_policy", str(p.version), {"status": "draft", "source": source})
 
     return run_command(
         actor,
         "fleet.create_hold_policy",
         permission="fleet.manage_hold_policy",
-        payload={"rules": rules},
+        payload={"rules": rules, "source": source, "procedure_ref": procedure_ref},
         handler=handler,
     )
 
 
 def approve_hold_policy(actor: Any, *, version: int, slot: str) -> dict[str, Any]:
+    """One approval slot (engineering / safety, plus founder on approved_procedure). Distinct people, not
+    the author, role held now. Locks: registry U only (an approval may change the active policy)."""
+
     def handler() -> Outcome:
-        p = HoldPolicy.objects.get(version=version)
+        if slot not in HOLD_POLICY_SLOT_ROLES:
+            raise Invalid(f"slot must be one of {sorted(HOLD_POLICY_SLOT_ROLES)}")
+        lock_guards(update_hold_policy_registry=True, label="fleet.approve_hold_policy")
+        p = _hold_policy(version)
+        if hold_policy_withdrawn(p):
+            raise Conflict(f"Hold policy v{version} is withdrawn and cannot be approved")
+        if slot == "founder" and p.source != "approved_procedure":
+            raise Conflict("The founder slot exists only on an approved_procedure hold policy")
+        if not _has_role_now(actor.pk, HOLD_POLICY_SLOT_ROLES[slot]):
+            raise PermissionDenied(f"Slot {slot} requires role {HOLD_POLICY_SLOT_ROLES[slot]}")
+        if p.created_by_id == actor.pk:
+            raise Conflict("The author of a hold policy cannot approve it")
         if HoldPolicyApproval.objects.filter(policy=p, approver=actor).exists():
             raise Conflict("You already approved this policy in another slot")
+        if HoldPolicyApproval.objects.filter(policy=p, slot=slot).exists():
+            raise Conflict(f"Slot {slot} is already approved")
         HoldPolicyApproval.objects.create(policy=p, slot=slot, approver=actor)
-        return Outcome("hold_policy", str(p.version), {"slot": slot, "status": policy_status(p)})
+        active = active_hold_policy()
+        return Outcome(
+            "hold_policy",
+            str(p.version),
+            {"slot": slot, "status": policy_status(p), "active": active is not None and active.pk == p.pk},
+        )
 
     return run_command(
         actor,
         "fleet.approve_hold_policy",
         permission="fleet.approve_hold_policy",
         payload={"version": version, "slot": slot},
+        handler=handler,
+    )
+
+
+def withdraw_hold_policy(actor: Any, *, version: int, reason: str) -> dict[str, Any]:
+    """Withdraw a policy version (engineering_lead / safety_reviewer). A withdrawn active policy leaves no
+    active policy (no fallback). Locks: registry U only."""
+
+    def handler() -> Outcome:
+        if not reason.strip():
+            raise Invalid("A reason is required")
+        lock_guards(update_hold_policy_registry=True, label="fleet.withdraw_hold_policy")
+        p = _hold_policy(version)
+        if hold_policy_withdrawn(p):
+            raise Conflict(f"Hold policy v{version} is already withdrawn")
+        HoldPolicyWithdrawal.objects.create(policy=p, withdrawn_by=actor, reason=reason)
+        return Outcome("hold_policy", str(p.version), {"status": "withdrawn"})
+
+    return run_command(
+        actor,
+        "fleet.withdraw_hold_policy",
+        permission="fleet.withdraw_hold_policy",
+        payload={"version": version, "reason": reason},
         handler=handler,
     )
 
@@ -501,16 +921,13 @@ def _create_hold(
     reason: str,
     blocking: bool = True,
 ) -> Hold:
-    """Placing a hold never depends on a policy being approved (fail closed). Without a release rule the
-    hold is created with no release slots and stays unreleasable until a policy provides one."""
-    # Slice 7 (G-01): bind to the active policy, else the newest, else none, resolved AFTER the hold-policy
-    # registry S lock (last in the global order; the caller already holds the robot / pattern rows). Minimal
-    # Engineer A change so placements satisfy fleet_hold_guard; Engineer B owns the Python mirror.
-    lock_guards(share_hold_policy_registry=True)
-    with connection.cursor() as cur:
-        cur.execute("SELECT fleet_hold_binding_policy_id()")
-        binding_id = cur.fetchone()[0]
-    policy = HoldPolicy.objects.filter(pk=binding_id).first() if binding_id is not None else None
+    """Placing a hold never depends on a policy being approved, on a setting or on the mode (section 0a): no
+    settings lock, no setting read, never refused for policy reasons. The caller already holds the robot U (or
+    pattern U + robots U). The hold-policy registry is taken S LAST, and only then is the binding resolved
+    (active, else newest, else none; section 5.2, P0-3), so it cannot change before this transaction commits.
+    Without a release rule the hold has no slots and stays unreleasable until a rebase gives it one."""
+    lock_guards(share_hold_policy_registry=True, label="fleet.hold_binding")
+    policy = binding_policy()
     rule = policy.rules.get(source_type) if policy else None
     return Hold.objects.create(
         code=_next_code("fleet_hold_code_seq", "HD"),
@@ -526,6 +943,38 @@ def _create_hold(
         manifest_at_placement_id=robot.current_manifest_id if robot else None,
         placed_by=actor,
     )
+
+
+def _pattern_robot_ids(pattern_id: int) -> list[int]:
+    return list(Robot.objects.filter(current_manifest__pattern_id=pattern_id).values_list("pk", flat=True))
+
+
+def _lock_hold_target(h: Hold, label: str, *, share_settings: bool = False, incident: bool = False) -> None:
+    """Global order: [settings S] -> robot U (or pattern U + its robots U) -> [incident S] -> registry S."""
+    incidents: list[int] = []
+    if incident:
+        from execution.models import Incident  # execution depends on fleet, not the reverse
+
+        incidents = list(Incident.objects.filter(hold_id=h.pk).values_list("pk", flat=True))
+    if h.scope == "robot":
+        assert h.robot_id is not None
+        lock_guards(
+            share_settings=share_settings,
+            update_robots=[h.robot_id],
+            share_incidents=incidents,
+            share_hold_policy_registry=True,
+            label=label,
+        )
+    else:
+        assert h.pattern_id is not None
+        lock_guards(
+            share_settings=share_settings,
+            update_patterns=[h.pattern_id],
+            update_robots=_pattern_robot_ids(h.pattern_id),
+            share_incidents=incidents,
+            share_hold_policy_registry=True,
+            label=label,
+        )
 
 
 def place_hold(
@@ -551,6 +1000,14 @@ def place_hold(
     def handler() -> Outcome:
         if not reason.strip():
             raise Invalid("A reason is required")
+        if source_type == "incident":
+            # Slice 7 (G-01): an incident hold comes only from execution.report_incident, which records the
+            # Incident its release depends on (EM decision 12).
+            raise Invalid(
+                "Incident holds are placed only by reporting the incident (execution.report_incident)"
+            )
+        if source_type not in dict(Hold.SOURCES):
+            raise Invalid(f"Unknown hold source {source_type}")
         if scope == "robot":
             robot = _robot(target)
             lock_guards(update_robots=[robot.pk], label="fleet.place_hold")
@@ -567,8 +1024,9 @@ def place_hold(
             )
         elif scope == "manifest_pattern":
             p = _pattern(target)
-            robot_ids = list(Robot.objects.filter(current_manifest__pattern=p).values_list("pk", flat=True))
-            lock_guards(update_patterns=[p.pk], update_robots=robot_ids, label="fleet.place_hold")
+            lock_guards(
+                update_patterns=[p.pk], update_robots=_pattern_robot_ids(p.pk), label="fleet.place_hold"
+            )
             h = _create_hold(
                 actor,
                 scope=scope,
@@ -581,7 +1039,17 @@ def place_hold(
             )
         else:
             raise Invalid("Slice 1 supports robot and manifest_pattern hold scopes only")
-        return Outcome("hold", h.code, {"scope": scope, "target": target})
+        h.refresh_from_db()
+        return Outcome(
+            "hold",
+            h.code,
+            {
+                "scope": scope,
+                "target": target,
+                "policy_version": h.policy.version if h.policy else None,
+                "required_slots": [x["slot"] for x in h.required_slots],
+            },
+        )
 
     return run_command(
         actor,
@@ -593,37 +1061,192 @@ def place_hold(
     )
 
 
+@dataclass
+class EffectiveRule:
+    """Mirror of fleet_hold_effective_rule(h): the latest effective rebase, else the placement values."""
+
+    policy: HoldPolicy | None
+    rebase: HoldRebase | None
+    slots: list[dict[str, Any]]
+    rule: dict[str, Any] | None
+
+    @property
+    def origin(self) -> str:
+        return "rebase" if self.rebase is not None else "placement"
+
+
+def hold_effective_rule(h: Hold) -> EffectiveRule:
+    act = (
+        HoldRebaseActivation.objects.filter(hold_id=h.pk)
+        .select_related("rebase", "rebase__to_policy")
+        .order_by("-id")
+        .first()
+    )
+    if act is not None:
+        b = act.rebase
+        return EffectiveRule(
+            b.to_policy, b, list(b.required_slots or []), b.to_policy.rules.get(h.source_type)
+        )
+    policy = HoldPolicy.objects.filter(pk=h.policy_id).first() if h.policy_id else None
+    return EffectiveRule(
+        policy, None, list(h.required_slots or []), policy.rules.get(h.source_type) if policy else None
+    )
+
+
+def _current_manifest_for(h: Hold) -> int | None:
+    if h.scope != "robot" or h.robot_id is None:
+        return None
+    return Robot.objects.only("current_manifest_id").get(pk=h.robot_id).current_manifest_id
+
+
+def _valid_release_approval(
+    h: Hold, a: ReleaseApproval, eff: EffectiveRule, cur_manifest: int | None
+) -> bool:
+    if hasattr(a, "withdrawal"):
+        return False
+    if a.rebase_id != (eff.rebase.pk if eff.rebase else None):
+        return False
+    return h.scope != "robot" or a.manifest_id == cur_manifest
+
+
+def _incident_of_hold(h: Hold) -> Any:
+    from execution.models import Incident  # execution depends on fleet, not the reverse
+
+    return Incident.objects.filter(hold_id=h.pk).first()
+
+
+def hold_source_problem(h: Hold, *, production: bool) -> str | None:
+    """Mirror of fleet_hold_source_problem (execution/0005, EM decision 12)."""
+    incident = _incident_of_hold(h)
+    if incident is not None:
+        from execution.incidents import incident_status
+
+        st = incident_status(incident)
+        if st not in ("resolved", "closed"):
+            return (
+                f"incident {incident.code} is {st}; its hold can be released only once the incident is "
+                "resolved or closed"
+            )
+    elif h.source_type == "incident" and production:
+        return "an incident hold with no incident record cannot be released in production"
+    return None
+
+
+def _newer_pass_exists(h: Hold, cur_manifest: int | None, *, production: bool) -> bool:
+    """R1-5: in production only a PASS on a template usable for pre_departure or periodic counts."""
+    if h.robot_id is None:
+        return False
+    for i in Inspection.objects.filter(
+        robot_id=h.robot_id, result="PASS", submitted_at__gt=h.placed_at, manifest_id=cur_manifest
+    ).select_related("template"):
+        if not production:
+            return True
+        if template_usable(i.template, "pre_departure", production=True) or template_usable(
+            i.template, "periodic", production=True
+        ):
+            return True
+    return False
+
+
+def hold_release_problem(h: Hold) -> str | None:
+    """Python mirror of fleet_hold_release_problem(h), same order and text (oracle-tested). Mode-aware: read
+    it under the settings lock when it decides."""
+    h = Hold.objects.get(pk=h.pk)
+    eff = hold_effective_rule(h)
+    if eff.policy is None or not eff.slots:
+        return "no release rule exists for this hold; an approved policy must provide one"
+    production = production_mode()
+    if not policy_usable(eff.policy):
+        if hold_policy_withdrawn(eff.policy):
+            return (
+                f"hold policy v{eff.policy.version} was withdrawn; a re-basing decision to the active "
+                "approved policy is needed"
+            )
+        if production:
+            return (
+                f"hold policy v{eff.policy.version} is not usable in production (it must be a fully approved "
+                "approved_procedure policy); a re-basing decision to the active approved policy is needed"
+            )
+        return "the hold policy is a draft and drafts are not allowed in this deployment"
+    cur_manifest = _current_manifest_for(h)
+    approvals = list(h.approvals.all())
+    for s in eff.slots:
+        if not any(
+            a.slot == s["slot"] and _valid_release_approval(h, a, eff, cur_manifest) for a in approvals
+        ):
+            return f"slot {s['slot']} has no valid approval on the current configuration"
+    rule = eff.rule or {}
+    if bool(rule.get("requires_newer_pass_inspection")) and h.scope == "robot":
+        if not _newer_pass_exists(h, cur_manifest, production=production):
+            if production:
+                return (
+                    "needs a newer PASS inspection on the current configuration, on a template approved for "
+                    "pre-departure or periodic use (production)"
+                )
+            return "needs a newer PASS inspection on the current configuration"
+    return hold_source_problem(h, production=production)
+
+
 def hold_release_status(h: Hold) -> dict[str, Any]:
-    """Which required slots are filled by valid approvals on the CURRENT configuration, which are stale."""
-    current_manifest = h.robot.current_manifest_id if h.robot_id and h.robot else None
+    """Explained release state (section 5.5): the effective rule and its origin (placement / rebase), which
+    effective slots are filled by valid approvals on the CURRENT configuration (approvals given before a
+    rebase do not count), production usability, the newer-PASS and incident conditions, and the exact database
+    problem (``problem``; None means releasable)."""
+    h = Hold.objects.select_related("robot").get(pk=h.pk)
+    eff = hold_effective_rule(h)
+    production = production_mode()
+    cur_manifest = _current_manifest_for(h)
+    rebase_id = eff.rebase.pk if eff.rebase else None
     slots = []
-    for s in h.required_slots:
-        approvals = [a for a in h.approvals.all() if a.slot == s["slot"]]
-        valid, stale, withdrawn = None, [], []
-        for a in approvals:
+    for s in eff.slots:
+        valid, stale, withdrawn, superseded = None, [], [], []
+        for a in h.approvals.all():
+            if a.slot != s["slot"]:
+                continue
             if hasattr(a, "withdrawal"):
                 withdrawn.append(a)
-            elif h.scope == "robot" and a.manifest_id != current_manifest:
+            elif a.rebase_id != rebase_id:
+                superseded.append(a)  # given under an earlier rule: never fills a slot
+            elif h.scope == "robot" and a.manifest_id != cur_manifest:
                 stale.append(a)
             else:
                 valid = a
         slots.append(
-            {"slot": s["slot"], "roles": s["roles"], "valid": valid, "stale": stale, "withdrawn": withdrawn}
+            {
+                "slot": s["slot"],
+                "roles": s["roles"],
+                "valid": valid,
+                "stale": stale,
+                "withdrawn": withdrawn,
+                "superseded": superseded,
+            }
         )
-    rule = h.policy.rules.get(h.source_type, {}) if h.policy else {}
-    needs_pass = bool(rule.get("requires_newer_pass_inspection")) and h.scope == "robot"
-    has_pass = (not needs_pass) or Inspection.objects.filter(
-        robot_id=h.robot_id or 0, result="PASS", submitted_at__gt=h.placed_at, manifest_id=current_manifest
-    ).exists()
     missing = [s["slot"] for s in slots if s["valid"] is None]
-    if not h.required_slots:
+    if eff.policy is None or not eff.slots:
         missing = ["(no release rule in an approved policy)"]
+    rule = eff.rule or {}
+    needs_pass = bool(rule.get("requires_newer_pass_inspection")) and h.scope == "robot"
+    has_pass = (not needs_pass) or _newer_pass_exists(h, cur_manifest, production=production)
+    problem = hold_release_problem(h)
+    incident = _incident_of_hold(h)
     return {
         "slots": slots,
         "missing": missing,
         "needs_newer_pass": needs_pass and not has_pass,
-        "policy_status": policy_status(h.policy) if h.policy else "none",
-        "releasable": not missing and has_pass,
+        "policy_status": policy_status(eff.policy) if eff.policy else "none",
+        "policy_label": policy_label(eff.policy),
+        "policy_version": eff.policy.version if eff.policy else None,
+        "placement_policy_version": h.policy.version if h.policy else None,
+        "origin": eff.origin,
+        "rebase": eff.rebase.code if eff.rebase else None,
+        "production_usable": policy_production_usable(eff.policy),
+        "usable_now": policy_usable(eff.policy),
+        "needs_rebase": not policy_production_usable(eff.policy),
+        "incident": incident.code if incident is not None else None,
+        "incident_problem": hold_source_problem(h, production=production),
+        "production": production,
+        "problem": problem,
+        "releasable": problem is None,
     }
 
 
@@ -648,14 +1271,8 @@ def approve_release(
         h = _hold(hold_code)
         if role_used not in active_roles(actor):
             raise PermissionDenied(f"You do not hold role {role_used}")
-        if h.scope == "robot":
-            assert h.robot_id is not None
-            lock_guards(update_robots=[h.robot_id], label="fleet.approve_release")
-            manifest_id = Robot.objects.get(pk=h.robot_id).current_manifest_id
-        else:
-            assert h.pattern_id is not None
-            lock_guards(update_patterns=[h.pattern_id], label="fleet.approve_release")
-            manifest_id = None
+        _lock_hold_target(h, "fleet.approve_release")  # robot U (or pattern U + robots U), registry S
+        manifest_id = _current_manifest_for(h)
         a = ReleaseApproval.objects.create(
             hold=h,
             slot=slot,
@@ -665,7 +1282,12 @@ def approve_release(
             evidence_refs=evidence_refs or [],
             note=note,
         )
-        return Outcome("hold", h.code, {"approval_id": a.pk, "slot": slot})
+        a.refresh_from_db()  # rebase_id is forced by the trigger
+        return Outcome(
+            "hold",
+            h.code,
+            {"approval_id": a.pk, "slot": slot, "rebase": a.rebase.code if a.rebase else None},
+        )
 
     return run_command(
         actor, "fleet.approve_release", permission="fleet.approve_release", payload=payload, handler=handler
@@ -677,6 +1299,8 @@ def withdraw_release_approval(actor: Any, *, approval_id: int, reason: str) -> d
         a = ReleaseApproval.objects.select_related("hold").get(pk=approval_id)
         if a.approver_id != actor.pk:
             raise PermissionDenied("Only the approver can withdraw their approval")
+        _lock_hold_target(a.hold, "fleet.withdraw_release_approval")
+        a.hold.refresh_from_db()
         if a.hold.released_at is not None:
             raise Conflict("Hold already released")
         ReleaseApprovalWithdrawal.objects.create(approval=a, withdrawn_by=actor, reason=reason)
@@ -692,34 +1316,22 @@ def withdraw_release_approval(actor: Any, *, approval_id: int, reason: str) -> d
 
 
 def release_hold(actor: Any, *, hold_code: str) -> dict[str, Any]:
+    """Release is mode-dependent (fleet_policy_usable, R1-5, incident hold without an Incident row), so it
+    takes the settings lock SHARED FIRST, then robot U (or pattern U + robots U), the referencing incident S
+    and the registry S (section 9.1). The database trigger asserts the settings lock and re-decides it all."""
+
     def handler() -> Outcome:
         h = _hold(hold_code)
-        # Slice 7 (section 9.1): release is mode-dependent, so the settings lock is taken SHARED first; the
-        # fleet_hold_guard UPDATE trigger refuses a release without it. Minimal Engineer A change (B owns it).
-        if h.scope == "robot":
-            assert h.robot_id is not None
-            lock_guards(share_settings=True, update_robots=[h.robot_id], label="fleet.release_hold")
-        else:
-            assert h.pattern_id is not None
-            robot_ids = list(
-                Robot.objects.filter(current_manifest__pattern_id=h.pattern_id).values_list("pk", flat=True)
-            )
-            lock_guards(
-                share_settings=True,
-                update_patterns=[h.pattern_id],
-                update_robots=robot_ids,
-                label="fleet.release_hold",
-            )
+        _lock_hold_target(h, "fleet.release_hold", share_settings=True, incident=True)
         h = Hold.objects.select_related("robot", "policy").get(pk=h.pk)
         if h.released_at is not None:
             raise Conflict("Hold already released")
-        status = hold_release_status(h)
-        if status["missing"]:
-            raise Conflict(f"Cannot release {h.code}: missing approvals for {', '.join(status['missing'])}")
-        if status["needs_newer_pass"]:
-            raise Conflict(
-                f"Cannot release {h.code}: needs a newer PASS inspection on the current configuration"
-            )
+        problem = hold_release_problem(h)
+        if problem is not None:
+            if problem.startswith("slot "):
+                missing = hold_release_status(h)["missing"]
+                raise Conflict(f"Cannot release {h.code}: missing approvals for {', '.join(missing)}")
+            raise Conflict(f"Cannot release {h.code}: {problem}")
         h.released_at = timezone.now()
         h.released_by = actor
         h.save(update_fields=["released_at", "released_by"])  # the database re-checks everything
@@ -730,6 +1342,397 @@ def release_hold(actor: Any, *, hold_code: str) -> dict[str, Any]:
         "fleet.release_hold",
         permission="fleet.release_hold",
         payload={"hold": hold_code},
+        handler=handler,
+    )
+
+
+# ---------------------------------------------------------------- hold re-basing (G-01, EM decision 11)
+def _rebase(rebase_id: int) -> HoldRebase:
+    try:
+        return HoldRebase.objects.select_related("hold", "to_policy").get(pk=rebase_id)
+    except HoldRebase.DoesNotExist:
+        raise Invalid(f"No rebase {rebase_id}") from None
+
+
+def rebase_state(b: HoldRebase) -> str:
+    """effective | superseded | destination no longer active | released | pending (section 5.2)."""
+    if HoldRebaseActivation.objects.filter(rebase=b).exists():
+        return "effective"
+    h = Hold.objects.get(pk=b.hold_id)
+    if h.released_at is not None:
+        return "released"
+    eff = hold_effective_rule(h)
+    if (eff.rebase.pk if eff.rebase else None) != b.based_on_rebase_id:
+        return "superseded"
+    active = active_hold_policy()
+    if active is None or active.pk != b.to_policy_id or not policy_production_usable(active):
+        return "destination no longer active"
+    return "pending"
+
+
+def request_hold_rebase(actor: Any, *, hold_code: str, reason: str) -> dict[str, Any]:
+    """Request re-basing an unreleased hold whose effective policy is not production-usable onto the ACTIVE
+    production-usable policy (slots copied exactly). Mode-independent (no settings lock). Locks: robot U (or
+    pattern U + robots U), then registry S."""
+
+    def handler() -> Outcome:
+        if not reason.strip():
+            raise Invalid("A re-basing request needs a reason")
+        h = _hold(hold_code)
+        _lock_hold_target(h, "fleet.request_hold_rebase")
+        h.refresh_from_db()
+        if h.released_at is not None:
+            raise Conflict(f"Hold {h.code} is already released")
+        eff = hold_effective_rule(h)
+        if policy_production_usable(eff.policy):
+            raise Conflict(
+                f"Hold {h.code} is already under a production-usable policy; "
+                "it is released under its own rules"
+            )
+        active = active_hold_policy()
+        if active is None or not policy_production_usable(active):
+            raise Conflict(
+                "There is no active production-usable (approved_procedure) hold policy to re-base onto"
+            )
+        rule = active.rules.get(h.source_type) or {}
+        slots = rule.get("slots") or []
+        if not slots:
+            raise Conflict(f"Hold policy v{active.version} has no release rule for {h.source_type} holds")
+        b = HoldRebase.objects.create(
+            code=_next_code("fleet_hold_rebase_code_seq", "RB"),
+            hold=h,
+            from_policy=eff.policy,
+            to_policy=active,
+            based_on_rebase=eff.rebase,
+            required_slots=slots,
+            reason=reason,
+            requested_by=actor,
+        )
+        return Outcome(
+            "hold_rebase",
+            b.code,
+            {
+                "id": b.pk,
+                "hold": h.code,
+                "from_policy": eff.policy.version if eff.policy else None,
+                "to_policy": active.version,
+                "based_on": eff.rebase.code if eff.rebase else None,
+            },
+        )
+
+    return run_command(
+        actor,
+        "fleet.request_hold_rebase",
+        permission="fleet.rebase_hold",
+        payload={"hold": hold_code, "reason": reason},
+        handler=handler,
+    )
+
+
+def approve_hold_rebase(actor: Any, *, rebase_id: int, slot: str) -> dict[str, Any]:
+    """One of two slots (engineering_lead, safety_reviewer), distinct people, neither the placer. The FINAL
+    approval makes the rebase effective only if, at that moment, the hold is unreleased, the destination is
+    still the active production policy, no other rebase became effective first, and the hold's effective
+    policy is still not production-usable (the trigger re-checks and inserts the activation). Locks: robot U
+    (or pattern U + robots U), registry S. Mode-independent."""
+
+    def handler() -> Outcome:
+        if slot not in SLOT_ROLES:
+            raise Invalid(f"slot must be one of {sorted(SLOT_ROLES)}")
+        b = _rebase(rebase_id)
+        h = b.hold
+        _lock_hold_target(h, "fleet.approve_hold_rebase")
+        h.refresh_from_db()
+        if not _has_role_now(actor.pk, SLOT_ROLES[slot]):
+            raise PermissionDenied(f"Slot {slot} requires role {SLOT_ROLES[slot]}")
+        if h.placed_by_id == actor.pk:
+            raise Conflict("The person who placed the hold cannot approve its re-basing")
+        if HoldRebaseApproval.objects.filter(rebase=b, approver=actor).exists():
+            raise Conflict("The same person cannot fill both approval slots of a re-basing")
+        if HoldRebaseApproval.objects.filter(rebase=b, slot=slot).exists():
+            raise Conflict(f"Slot {slot} of rebase {b.code} is already approved")
+        if HoldRebaseActivation.objects.filter(rebase=b).exists():
+            raise Conflict(f"Rebase {b.code} is already effective")
+        final = (
+            HoldRebaseApproval.objects.filter(rebase=b, slot__in=list(SLOT_ROLES)).exclude(slot=slot).exists()
+        )
+        if final:
+            if h.released_at is not None:
+                raise Conflict(f"Rebase {b.code} refused: hold {h.code} is already released")
+            active = active_hold_policy()
+            if active is None or active.pk != b.to_policy_id or not policy_production_usable(active):
+                shown = (
+                    f"v{active.version}"
+                    if active is not None and policy_production_usable(active)
+                    else "none"
+                )
+                raise Conflict(
+                    f"Rebase {b.code} refused: policy v{b.to_policy.version} is no longer the active "
+                    f"production policy (active: {shown})"
+                )
+            eff = hold_effective_rule(h)
+            if (eff.rebase.pk if eff.rebase else None) != b.based_on_rebase_id:
+                cur = eff.rebase.code if eff.rebase else "(none)"
+                raise Conflict(
+                    f"Rebase {b.code} refused: superseded by rebase {cur}, which became effective first"
+                )
+            if policy_production_usable(eff.policy):
+                raise Conflict(
+                    f"Rebase {b.code} refused: hold {h.code} is already under a production-usable policy"
+                )
+        HoldRebaseApproval.objects.create(rebase=b, slot=slot, approver=actor)
+        effective = HoldRebaseActivation.objects.filter(rebase=b).exists()
+        return Outcome("hold_rebase", b.code, {"hold": h.code, "slot": slot, "effective": effective})
+
+    return run_command(
+        actor,
+        "fleet.approve_hold_rebase",
+        permission="fleet.rebase_hold",
+        payload={"rebase_id": rebase_id, "slot": slot},
+        handler=handler,
+    )
+
+
+# ---------------------------------------------------------------- inspection templates (X-1)
+def _template(template_id: int) -> InspectionTemplate:
+    try:
+        return InspectionTemplate.objects.select_related("pattern").get(pk=template_id)
+    except InspectionTemplate.DoesNotExist:
+        raise Invalid(f"No inspection template {template_id}") from None
+
+
+def _lock_pattern_and_robots(pattern_id: int, label: str) -> None:
+    """pattern U + robots on it U, as decide_pattern: the approval / withdrawal trigger bumps them."""
+    lock_guards(update_patterns=[pattern_id], update_robots=_pattern_robot_ids(pattern_id), label=label)
+
+
+def create_inspection_template(
+    actor: Any,
+    *,
+    pattern_code: str,
+    version: str,
+    items: list[dict[str, Any]],
+    source: str,
+    procedure_ref: str = "",
+) -> dict[str, Any]:
+    """A new template (engineer / engineering_lead). Locks: pattern S. Content is never supplied by the
+    platform; an engineering_doc template carries a procedure reference, never the procedure."""
+
+    def handler() -> Outcome:
+        if source not in dict(TEMPLATE_SOURCES):
+            raise Invalid(f"source must be one of {[k for k, _ in TEMPLATE_SOURCES]}")
+        if not version.strip():
+            raise Invalid("A template version is required")
+        problem = template_items_problem(items)
+        if problem:
+            raise Invalid(f"Invalid inspection template: {problem}")
+        if source == "engineering_doc" and not procedure_ref.strip():
+            raise Invalid("An engineering_doc inspection template needs a procedure reference")
+        p = _pattern(pattern_code)
+        lock_guards(share_patterns=[p.pk], label="fleet.create_inspection_template")
+        if InspectionTemplate.objects.filter(pattern=p, version=version).exists():
+            raise Conflict(f"Template {version} already exists for {p.code}")
+        t = InspectionTemplate.objects.create(
+            pattern=p,
+            version=version,
+            items=items,
+            source=source,
+            procedure_ref=procedure_ref,
+            created_by=actor,
+        )
+        return Outcome("inspection_template", str(t.pk), {"pattern": p.code, "version": version})
+
+    return run_command(
+        actor,
+        "fleet.create_inspection_template",
+        permission="fleet.manage_inspection_template",
+        payload={
+            "pattern": pattern_code,
+            "version": version,
+            "items": items,
+            "source": source,
+            "procedure_ref": procedure_ref,
+        },
+        handler=handler,
+    )
+
+
+def approve_inspection_template(actor: Any, *, template_id: int, purpose: str, slot: str) -> dict[str, Any]:
+    """One slot for one purpose (pre_departure / periodic). Locks: pattern U + robots U (R1-4 bump)."""
+
+    def handler() -> Outcome:
+        if purpose not in dict(TEMPLATE_PURPOSES):
+            raise Invalid(f"purpose must be one of {[k for k, _ in TEMPLATE_PURPOSES]}")
+        if slot not in SLOT_ROLES:
+            raise Invalid(f"slot must be one of {sorted(SLOT_ROLES)}")
+        t = _template(template_id)
+        _lock_pattern_and_robots(t.pattern_id, "fleet.approve_inspection_template")
+        if t.source != "engineering_doc":
+            raise Conflict("A synthetic_demo inspection template can never be approved")
+        if t.created_by_id is None:
+            raise Conflict("A legacy inspection template (no author) can never be approved")
+        if template_withdrawn(t):
+            raise Conflict("A withdrawn inspection template cannot be approved")
+        if not _has_role_now(actor.pk, SLOT_ROLES[slot]):
+            raise PermissionDenied(f"Slot {slot} requires role {SLOT_ROLES[slot]}")
+        if t.created_by_id == actor.pk:
+            raise Conflict("The author of an inspection template cannot approve it")
+        if InspectionTemplateApproval.objects.filter(template=t, purpose=purpose, approver=actor).exists():
+            raise Conflict("The same person cannot fill two approval slots for one purpose")
+        if InspectionTemplateApproval.objects.filter(template=t, purpose=purpose, slot=slot).exists():
+            raise Conflict(f"Slot {slot} for {purpose} is already approved")
+        InspectionTemplateApproval.objects.create(template=t, purpose=purpose, slot=slot, approver=actor)
+        return Outcome(
+            "inspection_template",
+            str(t.pk),
+            {"purpose": purpose, "slot": slot, "state": template_state(t, purpose)},
+        )
+
+    return run_command(
+        actor,
+        "fleet.approve_inspection_template",
+        permission="fleet.approve_inspection_template",
+        payload={"template_id": template_id, "purpose": purpose, "slot": slot},
+        handler=handler,
+    )
+
+
+def withdraw_inspection_template(actor: Any, *, template_id: int, reason: str) -> dict[str, Any]:
+    """Withdraw for every purpose. Locks: pattern U + robots U (bump: authorizations relying on it fail)."""
+
+    def handler() -> Outcome:
+        if not reason.strip():
+            raise Invalid("A reason is required")
+        t = _template(template_id)
+        _lock_pattern_and_robots(t.pattern_id, "fleet.withdraw_inspection_template")
+        if template_withdrawn(t):
+            raise Conflict("The template is already withdrawn")
+        InspectionTemplateWithdrawal.objects.create(template=t, withdrawn_by=actor, reason=reason)
+        return Outcome("inspection_template", str(t.pk), {"state": "withdrawn"})
+
+    return run_command(
+        actor,
+        "fleet.withdraw_inspection_template",
+        permission="fleet.withdraw_inspection_template",
+        payload={"template_id": template_id, "reason": reason},
+        handler=handler,
+    )
+
+
+# ---------------------------------------------------------------- periodic inspection rules (X-3)
+def _periodic_rule(rule_id: int) -> PeriodicInspectionRule:
+    try:
+        return PeriodicInspectionRule.objects.get(pk=rule_id)
+    except PeriodicInspectionRule.DoesNotExist:
+        raise Invalid(f"No periodic inspection rule {rule_id}") from None
+
+
+def create_periodic_rule(
+    actor: Any,
+    *,
+    pattern_code: str,
+    interval_min: int | None,
+    source: str,
+    procedure_ref: str = "",
+    notes: str = "",
+) -> dict[str, Any]:
+    """Version N+1 of a pattern's periodic interval rule. ``interval_min`` None records "unknown"
+    (blocks). The value is the company's (E7 / B-08); the platform never supplies one.
+    Locks: pattern U + robots U."""
+
+    def handler() -> Outcome:
+        if source not in dict(RULE_SOURCES):
+            raise Invalid(f"source must be one of {[k for k, _ in RULE_SOURCES]}")
+        if interval_min is not None and (
+            not isinstance(interval_min, int)
+            or isinstance(interval_min, bool)
+            or not 1 <= interval_min <= MAX_INTERVAL_MIN
+        ):
+            raise Invalid(
+                f"interval_min must be empty (unknown) or a whole number from 1 to {MAX_INTERVAL_MIN}"
+            )
+        if source == "engineering_doc" and not procedure_ref.strip():
+            raise Invalid("An engineering_doc periodic inspection rule needs a procedure reference")
+        p = _pattern(pattern_code)
+        _lock_pattern_and_robots(p.pk, "fleet.create_periodic_rule")
+        last = PeriodicInspectionRule.objects.filter(pattern=p).order_by("-version_no").first()
+        rule = PeriodicInspectionRule.objects.create(
+            pattern=p,
+            version_no=(last.version_no if last else 0) + 1,
+            interval_min=interval_min,
+            source=source,
+            procedure_ref=procedure_ref,
+            notes=notes,
+            created_by=actor,
+        )
+        return Outcome(
+            "periodic_rule", str(rule.pk), {"pattern": p.code, "version": rule.version_no, "status": "draft"}
+        )
+
+    return run_command(
+        actor,
+        "fleet.create_periodic_rule",
+        permission="fleet.manage_periodic_rule",
+        payload={
+            "pattern": pattern_code,
+            "interval_min": interval_min,
+            "source": source,
+            "procedure_ref": procedure_ref,
+            "notes": notes,
+        },
+        handler=handler,
+    )
+
+
+def approve_periodic_rule(actor: Any, *, rule_id: int, slot: str) -> dict[str, Any]:
+    def handler() -> Outcome:
+        if slot not in SLOT_ROLES:
+            raise Invalid(f"slot must be one of {sorted(SLOT_ROLES)}")
+        rule = _periodic_rule(rule_id)
+        _lock_pattern_and_robots(rule.pattern_id, "fleet.approve_periodic_rule")
+        if periodic_rule_withdrawn(rule):
+            raise Conflict("A withdrawn periodic inspection rule cannot be approved")
+        if not _has_role_now(actor.pk, SLOT_ROLES[slot]):
+            raise PermissionDenied(f"Slot {slot} requires role {SLOT_ROLES[slot]}")
+        if rule.created_by_id == actor.pk:
+            raise Conflict("The author of a periodic inspection rule cannot approve it")
+        if PeriodicInspectionRuleApproval.objects.filter(rule=rule, approver=actor).exists():
+            raise Conflict("The same person cannot fill two approval slots on one periodic inspection rule")
+        if PeriodicInspectionRuleApproval.objects.filter(rule=rule, slot=slot).exists():
+            raise Conflict(f"Slot {slot} is already approved")
+        PeriodicInspectionRuleApproval.objects.create(rule=rule, slot=slot, approver=actor)
+        active = active_periodic_rule(rule.pattern_id)
+        return Outcome(
+            "periodic_rule",
+            str(rule.pk),
+            {"slot": slot, "active": active is not None and active.pk == rule.pk},
+        )
+
+    return run_command(
+        actor,
+        "fleet.approve_periodic_rule",
+        permission="fleet.approve_periodic_rule",
+        payload={"rule_id": rule_id, "slot": slot},
+        handler=handler,
+    )
+
+
+def withdraw_periodic_rule(actor: Any, *, rule_id: int, reason: str) -> dict[str, Any]:
+    def handler() -> Outcome:
+        if not reason.strip():
+            raise Invalid("A reason is required")
+        rule = _periodic_rule(rule_id)
+        _lock_pattern_and_robots(rule.pattern_id, "fleet.withdraw_periodic_rule")
+        if periodic_rule_withdrawn(rule):
+            raise Conflict("The rule is already withdrawn")
+        PeriodicInspectionRuleWithdrawal.objects.create(rule=rule, withdrawn_by=actor, reason=reason)
+        return Outcome("periodic_rule", str(rule.pk), {"status": "withdrawn"})
+
+    return run_command(
+        actor,
+        "fleet.withdraw_periodic_rule",
+        permission="fleet.withdraw_periodic_rule",
+        payload={"rule_id": rule_id, "reason": reason},
         handler=handler,
     )
 

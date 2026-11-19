@@ -632,35 +632,99 @@ def register_person(actor: Any, *, username: str, code: str) -> dict[str, Any]:
     )
 
 
+INSPECTOR_KIND = "readiness_inspector"
+
+
+def _qualification_permission(kind: str, *, revoke: bool) -> str:
+    """readiness_inspector has its own grant / revoke permissions (07a section 7.2, EM decision 18)."""
+    if kind == INSPECTOR_KIND:
+        return (
+            "planning.revoke_inspector_qualification" if revoke else "planning.grant_inspector_qualification"
+        )
+    return "planning.manage_people"
+
+
 def grant_qualification(
-    actor: Any, *, person_code: str, kind: str, valid_from: datetime, valid_to: datetime
+    actor: Any,
+    *,
+    person_code: str,
+    kind: str,
+    valid_from: datetime | None,
+    valid_to: datetime,
+    basis_ref: str = "",
 ) -> dict[str, Any]:
+    """Grant a qualification (person U). For readiness_inspector (X-8): safety_reviewer only, never to
+    oneself, a non-blank training-record reference, and no backdating. ``valid_from=None`` means "effective
+    now": the command sends NULL and the database sets valid_from = granted_at = one clock_timestamp()
+    (P1-6), so the app clock never decides the start. Other kinds keep an explicit window."""
+
     def handler() -> Outcome:
         if kind not in dict(Qualification.KINDS):
             raise Invalid(f"Unknown qualification {kind}")
+        if valid_from is None and kind != INSPECTOR_KIND:
+            raise Invalid("valid_from is required for this qualification")
+        for name, value in (("valid_from", valid_from), ("valid_to", valid_to)):
+            if value is not None and value.tzinfo is None:
+                raise Invalid(f"{name} must be timezone-aware")
         p = _person(person_code)
         assert p is not None
         lock_guards(update_persons=[p.pk], label="planning.grant_qualification")
+        if kind == INSPECTOR_KIND:
+            if p.user_id == actor.pk:
+                raise Conflict("A readiness_inspector qualification cannot be granted to oneself")
+            if not basis_ref.strip():
+                raise Invalid(
+                    "A readiness_inspector qualification needs a training record reference (basis_ref)"
+                )
+            now = _db_now()
+            if valid_from is not None and valid_from < now:
+                raise Invalid(
+                    "A readiness_inspector qualification cannot be backdated; "
+                    "leave valid_from empty for an immediate grant"
+                )
+            if valid_to <= (valid_from or now):
+                raise Invalid("valid_to must be after valid_from")
         q = Qualification.objects.create(
-            person=p, kind=kind, valid_from=valid_from, valid_to=valid_to, granted_by=actor
+            person=p,
+            kind=kind,
+            valid_from=valid_from,  # type: ignore[misc]  # None: the insert trigger sets it to granted_at
+            valid_to=valid_to,
+            granted_by=actor,
+            basis_ref=basis_ref,
         )
-        return Outcome("qualification", str(q.pk), {"person": p.code, "kind": kind})
+        q.refresh_from_db()  # granted_at (and an immediate valid_from) are database values
+        return Outcome(
+            "qualification",
+            str(q.pk),
+            {
+                "person": p.code,
+                "kind": kind,
+                "valid_from": q.valid_from.isoformat(),
+                "granted_at": q.granted_at.isoformat(),
+            },
+        )
 
     return run_command(
         actor,
         "planning.grant_qualification",
-        permission="planning.manage_people",
+        permission=_qualification_permission(kind, revoke=False),
         payload={
             "person": person_code,
             "kind": kind,
-            "valid_from": valid_from.isoformat(),
+            "valid_from": valid_from.isoformat() if valid_from is not None else None,
             "valid_to": valid_to.isoformat(),
+            "basis_ref": basis_ref,
         },
         handler=handler,
     )
 
 
 def revoke_qualification(actor: Any, *, qualification_id: int, reason: str) -> dict[str, Any]:
+    try:
+        kind = Qualification.objects.values_list("kind", flat=True).get(pk=qualification_id)
+    except Qualification.DoesNotExist:
+        raise Invalid(f"No qualification {qualification_id}") from None
+
     def handler() -> Outcome:
         q = Qualification.objects.get(pk=qualification_id)
         lock_guards(update_persons=[q.person_id], label="planning.revoke_qualification")
@@ -674,10 +738,58 @@ def revoke_qualification(actor: Any, *, qualification_id: int, reason: str) -> d
     return run_command(
         actor,
         "planning.revoke_qualification",
-        permission="planning.manage_people",
+        permission=_qualification_permission(kind, revoke=True),
         payload={"qualification_id": qualification_id, "reason": reason},
         handler=handler,
     )
+
+
+# ------------------------------------------------------------------ X-8 covered-signer rule (Python mirror)
+def _db_now() -> datetime:
+    with connection.cursor() as cur:
+        cur.execute("SELECT clock_timestamp()")
+        value: datetime = cur.fetchone()[0]
+        return value
+
+
+def inspector_covered(user_id: int | None, at: datetime | None) -> bool:
+    """Mirror of planning_inspector_covered(p_user, p_at): an unrevoked readiness_inspector grant of the
+    user's Person with valid_from <= at <= valid_to. Expiry after `at` does not matter; revocation does."""
+    if user_id is None or at is None:
+        return False
+    return Qualification.objects.filter(
+        person__user_id=user_id,
+        kind=INSPECTOR_KIND,
+        revoked_at__isnull=True,
+        valid_from__lte=at,
+        valid_to__gte=at,
+    ).exists()
+
+
+def signer_label(user_id: int) -> str:
+    """Person code, else username (the label planning_inspection_signer_problem uses)."""
+    code = Person.objects.filter(user_id=user_id).values_list("code", flat=True).first()
+    if code:
+        return str(code)
+    name = User.objects.filter(pk=user_id).values_list("username", flat=True).first()
+    return str(name) if name else str(user_id)
+
+
+def inspection_signer_problem(inspection: Any) -> str | None:
+    """Mirror of planning_inspection_signer_problem(p_inspection), same text: both signers covered at the
+    inspection's (database) submitted_at. ``inspection`` is a fleet Inspection (re-read for DB values)."""
+    from fleet.models import Inspection
+
+    i = Inspection.objects.filter(pk=inspection.pk if hasattr(inspection, "pk") else inspection).first()
+    if i is None:
+        return f"inspection {inspection} does not exist"
+    for uid in (i.performer_id, i.verifier_id):
+        if uid is None:
+            return f"inspection {i.code} is missing a signer"
+        if not inspector_covered(uid, i.submitted_at):
+            who = signer_label(uid)
+            return f"inspector {who} is not a qualified readiness inspector for inspection {i.code}"
+    return None
 
 
 def register_vehicle(
