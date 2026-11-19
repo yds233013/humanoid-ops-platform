@@ -236,7 +236,7 @@ def _read_world(visit: Visit, at: datetime | None = None) -> _World:
     production = not fleet_services.demo_mode()
     latest = _latest_evidence_for(v, rev, manifest_id)
     periodic = (
-        fleet_services.periodic_inspection_status(robot, at, production=production)
+        fleet_services.periodic_inspection_status(robot, at, production=production, fresh=(robot, pattern))
         if robot is not None
         else None
     )
@@ -405,7 +405,7 @@ def _gate_policy(w: _World, b: _Blockers) -> None:
             "Engineering lead and safety reviewer approve a NEWER readiness policy version",
         )
         return
-    if not fleet_services.demo_mode() and w.policy.source != "approved_procedure":
+    if w.production and w.policy.source != "approved_procedure":
         b.add(
             POLICY_NOT_APPROVED_PROCEDURE,
             f"Readiness policy v{w.policy.version} is {w.policy.source}; "
