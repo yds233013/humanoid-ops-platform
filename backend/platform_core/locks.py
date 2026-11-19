@@ -5,8 +5,9 @@
       -> departure authorizations -> incident policies -> execution runs -> incidents   (Slice 4)
       -> hold-policy registry (fleet_holdpolicyregistry, singleton id 1)                  (Slice 7)
 
-The hold-policy registry is LAST: its FOR UPDATE holders (hold-policy create / approve / withdraw) hold no other
-guard row, so a trigger may take it FOR SHARE after its statement's row locks (fleet/0008) without a cycle.
+The hold-policy registry is LAST: its FOR UPDATE holders (hold-policy create / approve / withdraw) hold no
+other guard row, so a trigger may take it FOR SHARE after its statement's row locks (fleet/0008) without a
+cycle.
 
 Deployment settings (fleet_deploymentsetting) are writable only by the schema owner, and the runtime role has
 SELECT only, so it cannot row-lock them. Instead every change to that table takes the transaction-level
