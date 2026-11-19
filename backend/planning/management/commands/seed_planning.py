@@ -4,6 +4,7 @@ Durations marked here are demo placeholders, never company data. Run after seed_
 from datetime import date, datetime, time, timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
@@ -39,6 +40,11 @@ class Command(BaseCommand):
             p.register_person(ops, username=username, code=code)
             for k in kinds:
                 p.grant_qualification(ops, person_code=code, kind=k, valid_from=start, valid_to=end)
+        # Slice 7 (X-3, EM decision 7): a robot without a qualifying periodic inspection is not eligible, so
+        # the visits below cannot be planned until the SYNTHETIC inspector grants, periodic rules and periodic
+        # inspections exist. seed_guardrails creates them (demo only, idempotent) and needs the two persons
+        # registered above; `make seed` still runs it again afterwards for the steps that need later seeds.
+        call_command("seed_guardrails", stdout=self.stdout)
         p.register_vehicle(ops, code="VAN-1", robot_capacity=1, restraint_kit="SYNTHETIC restraint kit A")
         p.register_vehicle(ops, code="VAN-2")  # capacity and restraint unknown
 
