@@ -35,6 +35,7 @@ urlpatterns = [
     path("planning/", planning_views.week, name="planning-week"),
     path("readiness/", include("readiness.urls")),
     path("execution/", include("execution.urls")),
+    path("ops/capacity/", include("capacity.urls")),
     path("ops/", include("operations.urls")),
     path("api/ops/", include("operations.api")),
     path("planning/sites/", planning_views.sites),
