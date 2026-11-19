@@ -1,5 +1,5 @@
 # ruff: noqa: E501  (spreadsheet formula templates and sheet text read best on one line)
-"""Slice 6 capacity workbook (frozen contract docs/06_scaling_capacity_contract.md rev 4, section 9).
+"""Slice 6 capacity workbook (frozen contract docs/06_scaling_capacity_contract.md rev 5, section 9).
 
 Generates `build/capacity_model.xlsx`: a validated PROJECTION of the authoritative Python model
 (`capacity.model`). Everything is SYNTHETIC: a forecast built on explicit assumptions, never an operating plan.
@@ -625,10 +625,17 @@ def _engine(ws: Worksheet, input_rows: Mapping[str, int], n_weeks: int) -> list[
                 "any resource infeasible",
             )
             put(
+                "backlog_prev",
+                "backlog at week H-1",
+                f"=IF({c['h_row']}>1,{at('backlog', '-1')},0)",
+                "0 when H = 1",
+            )
+            put(
                 "unstable",
                 "RECOVERY_UNSTABLE",
-                f"=IF({c['h_row']}>1,{at('backlog')}>{at('backlog', '-1')}+{TOL},{at('backlog')}>0+{TOL})",
-                "backlog still growing at week H",
+                f"=IF({c['infeasible']},FALSE,OR({c['backlog_h']}>{c['backlog_prev']}+{TOL},"
+                f"AND({c['backlog_h']}>{TOL},{c['backlog_h']}>={c['backlog_prev']}-{TOL},{c['robot_h']}=0)))",
+                "rev 5: backlog growing, or positive, not shrinking and robot capacity 0",
             )
             put(
                 "not_converged",

@@ -1,5 +1,5 @@
 """Slice 6 Engineer D: founder report, management command and the read-only /ops/capacity/ page.
-Contract docs/06_scaling_capacity_contract.md rev 4, sections 0, 5-7 and 9. SYNTHETIC data only.
+Contract docs/06_scaling_capacity_contract.md rev 5, sections 0, 5-7 and 9. SYNTHETIC data only.
 
 Report tests are pure Python; the page and command tests use the database (the page runs inside the operations
 snapshot, which must be the outermost transaction, so those tests are transactional). Baseline tests skip until
@@ -206,6 +206,22 @@ def test_next_constraint_recovery_relieved_by_engineers():
     nc = R.next_constraint(v, 5, T(6, 5, 0, 1, 1), staffing="recommended")
     assert nc.constraint == "recovery" and "recovery engineers" in nc.relieved_by
     assert nc.next_constraint == "robot" and nc.done_after > nc.done_before
+
+
+def test_report_reflects_rev5_recovery_classification():
+    v = base(configured_engineers=0)
+    rows = {r.fleet_size: r for r in R.comparison(v)}
+    expected = {e["fleet_size"]: e for e in M.compare(v)}
+    for n in (5, 10):
+        cur, rec = rows[n].current, rows[n].recommended
+        assert cur.binding == expected[n]["current"]["binding"] == "recovery"
+        assert "RECOVERY_UNSTABLE" in cur.flags
+        assert rec.status == "MET" and rec.engineers >= 1 and "RECOVERY_UNSTABLE" not in rec.flags
+        nc = R.next_constraint(v, n, M.configured_team(v))
+        assert nc.constraint == "recovery" and "recovery engineers" in nc.relieved_by
+    infeasible = {r.fleet_size: r for r in R.comparison(base(on_site_min=500, configured_engineers=0))}[5]
+    assert "INFEASIBLE" in infeasible.current.flags and "RECOVERY_UNSTABLE" not in infeasible.current.flags
+    assert infeasible.recommended.status == "UNATTAINABLE" and infeasible.recommended.engineers == 0
 
 
 def test_next_constraint_when_demand_is_met():
