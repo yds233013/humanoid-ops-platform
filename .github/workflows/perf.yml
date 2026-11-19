@@ -1,0 +1,64 @@
+name: perf
+# Slice 5 performance gate (EM): controlled benchmark on a dedicated runner, run on demand.
+on:
+  workflow_dispatch:
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci
+        ports: ["5440:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5440"
+      DB_NAME: humanoid_ops
+      DB_OWNER_USER: ops_owner
+      DB_OWNER_PASSWORD: ops_owner_ci
+      DB_APP_USER: ops_app
+      DB_APP_PASSWORD: ops_app_ci
+      DJANGO_DB_IDENTITY: owner
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.11"
+      - name: Create database roles (same as docker/postgres/init/01-roles.sh)
+        env:
+          PGPASSWORD: postgres_ci
+        run: |
+          psql -h localhost -p 5440 -U postgres -v ON_ERROR_STOP=1 <<SQL
+          CREATE ROLE ops_owner LOGIN CREATEDB PASSWORD 'ops_owner_ci';
+          CREATE ROLE ops_app LOGIN PASSWORD 'ops_app_ci' NOCREATEDB NOCREATEROLE;
+          CREATE DATABASE humanoid_ops OWNER ops_owner;
+          SQL
+      - run: uv sync --frozen
+      - run: uv run python manage.py migrate --noinput
+      - name: Record the environment
+        env:
+          PGPASSWORD: postgres_ci
+        run: |
+          echo "nproc=$(nproc)"; cat /proc/loadavg; free -m
+          psql -h localhost -p 5440 -U postgres -Atc "SELECT version()" -c "SHOW shared_buffers" -c "SHOW work_mem" -c "SHOW jit" -c "SHOW random_page_cost"
+      - name: p95 benchmark (read models + 10 HTTP endpoints, 20 samples each, scale fixture)
+        run: |
+          set -o pipefail
+          uv run pytest -m perf -s -q tests/test_operations_perf.py 2>&1 | tee perf.log
+      - name: Load after the run
+        if: always()
+        run: cat /proc/loadavg
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-log
+          path: backend/perf.log
