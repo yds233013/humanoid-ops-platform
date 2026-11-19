@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | DRAFT for EM review |
+| **Status** | APPROVED by the EM as the working audit (2026-11-19, with the clarifications and decisions in section 9) |
 | **Date** | 2026-11-19 |
 | **Platform baseline** | `slice-6-closed` (`cfb8d69`, branch `s7/matrix`) |
 | **Source playbook** | `~/humanoid-fleet-ops/source/02_playbook.md` v1.0 (sections 1-19), read with `01_data_model.md` (wins on conflicts) and `03_forms.md` (F1-F5) |
@@ -349,9 +349,9 @@ the existing procedure relies on a control that the platform does not have.
 
 | # | Pri | Gap | Why it matters | Suggested owner |
 |---|---|---|---|---|
-| G-01 | **P0** | No approved release path for incident holds | The seed HoldPolicy is a DRAFT, usable only while `allow_draft_policies=true`. In production every incident hold is unreleasable. In demo the rule ignores severity (4 approvals for every incident) and disagrees with the playbook G5 | ENG + SAFETY + FOUNDER (B-07); EM for D-07 |
-| G-02 | **P0** | Periodic inspection interval not enforced | The playbook says the tracker marks overdue robots NOT AUTHORIZED (F10). The platform has no interval or due date, so an overdue robot can be authorized | ENG (B-08), EM (scope) |
-| G-03 | **P0** | Synthetic inspection checklist accepted in production | `InspectionTemplate.source` is never checked. A PASS on the synthetic 12-item template can back a production authorization, even though the readiness policy itself must be `approved_procedure` | ENG (platform, proposal X-1) |
+| G-01 | **P0** | No approved release path for incident holds | The seed HoldPolicy is a DRAFT, usable only while `allow_draft_policies=true`. In production every incident hold is unreleasable. This is a recoverability and operational-continuity blocker, not an unsafe-release risk: the platform fails closed by refusing release. In demo the rule ignores severity (4 approvals for every incident) and disagrees with the playbook G5 | ENG + SAFETY + FOUNDER (B-07); EM for D-07 |
+| G-02 | **P0** | Periodic inspection interval not enforced | The playbook says the tracker marks overdue robots NOT AUTHORIZED (F10). The platform has no interval or due date, so an overdue robot can be authorized. Even once a due-date gate exists, passing it means an engineering procedure was followed, not that a physical robot is validated | ENG (B-08), EM (scope) |
+| G-03 | **P0** | Synthetic inspection checklist accepted in production | `InspectionTemplate.source` is never checked. A PASS on the synthetic 12-item template can back a production authorization, even though the readiness policy itself must be `approved_procedure`. Closing this gate stops a synthetic checklist being used; it does not make any checklist a validated safety procedure | ENG (platform, proposal X-1) |
 | G-04 | **P1** | Escalation deadlines are untracked and nobody is alerted | The S0 15-minute founder call depends on memory. The platform shows unacknowledged escalations but no lateness, and has no notifications | FOUNDER/SAFETY (deadlines), ENG (X-4) |
 | G-05 | **P1** | Customer commitments and complaints have no record | Post-incident "follow up by [time]", compensation talks and severity-C complaints have no owner, deadline or trace. A robot left in a home overnight (`robot_left_on_site`) has no customer-side procedure (who the custodian is, presence consent, insurance) | OPS + LEGAL |
 | G-06 | **P1** | No fleet-wide task approval or restriction | Tasks are free text. Only per-home exclusions block. The playbook F6 / §15.3 "Restricted row in Tasks" has no counterpart | ENG |
@@ -436,3 +436,45 @@ E1 (except the checklist content), parts of E2/E3/E7 and L1. For E4, E6, E8 and 
 
 Fleet-wide task approval (G-06) is larger: it needs the task hold scope that the README lists as "not built", so
 it belongs to a future slice, not a small change.
+
+
+## 9. EM decisions on this review (2026-11-19)
+
+The EM approved this matrix as the basis for the playbook revision and spot-checked the highest-risk paths
+(authorization, inspection and hold-policy code). Approval does not mean every one of the 114 mappings was
+independently verified; this file stays the working audit record.
+
+**Divergences**
+
+| Divergence | Decision | Reason |
+|---|---|---|
+| D-02/D-03 departure and robot-status labels | Change playbook | Keep explicit authorization and never-green language |
+| D-05 incident severity | Change playbook | Reporter describes; engineering/safety classify; complaints handled separately |
+| D-06 every incident holds | Change playbook | Keep the stronger fail-closed platform rule |
+| D-07 severity-based G5 approvals | Separate policy decision | Do not weaken fixed-at-placement approvals |
+| D-08 readiness-fail release | Change playbook | Keep engineering approval AND a newer PASS |
+| D-09 hold-release executor | Change playbook | Distinguish approving a release from recording it |
+| D-10 restricted homes | Change playbook | Restricted homes stay blocked until an explicit workflow exists |
+| D-14 readiness failure and incident | Change playbook | Avoid a duplicate incident hold |
+| D-15 scheduling buffer | Document as unenforced | Do not invent a 15-minute platform guarantee |
+| D-18 field lead recording No-Go disposition | Defer platform change | Ops lead keeps recording the disposition |
+| D-21 escalation deadlines | Both | Keep the human escalation procedure; add read-only overdue visibility |
+| D-23 inspection qualifications | Platform change | A role grant alone does not establish readiness-checker training |
+
+All other terminology and workflow divergences are resolved in playbook v1.1, without redesigning Slices 1-6.
+
+**Slice 7: Production Guardrail Hardening (authorized, contract first)**
+
+| Priority | Item | Decision |
+|---|---|---|
+| P0 | X-1 production inspection-template guard | Build: Python evaluator AND the SECURITY DEFINER issue function; explicit approved-template provenance, not a free-text source string |
+| P0 | X-3 periodic inspection expiry | Build, contract-first: unknown interval blocks production, overdue blocks; authoritative check in PostgreSQL; tied to the current configuration and a qualifying inspection; interval stays unknown until engineering approves it (never adopt the illustrative 14 days) |
+| P0 | G-01 incident hold release policy | Define how an approved production HoldPolicy is created, reviewed and activated, and how incident holds are released under it. Keep fixed-at-placement requirements. No demo bypass; until approved it stays a visible production blocker |
+| P1 | X-4 overdue escalation visibility | Build as a read-only exception; deadlines are owner-approved inputs; missing deadlines reported as unconfigured; no paging |
+| P1 | X-8 readiness-checker qualification | Build, contract-first: an expiring qualification checked when inspection evidence is created and when authorization is issued; revocation blocks departure |
+| P1 | X-10 daily close-out view | Build read-only, snapshot-based; never claims a sign-off that has no record |
+| Deferred | X-2, X-5, X-6, X-7, X-9 | Not now |
+
+**Order:** freeze this review, then the Slice 7 contract (`docs/07a_production_guardrails_contract.md`), then
+implement and close Slice 7, then playbook v1.1 (preserve procedures, fix divergent wording, add custody and
+recovery procedures, mark every unresolved legal/safety/engineering requirement), then the founder presentation.
