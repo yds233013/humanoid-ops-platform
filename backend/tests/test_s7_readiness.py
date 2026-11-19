@@ -370,6 +370,30 @@ def test_due_before_return_boundary_agrees_with_the_issue_function(w):
         assert sql_ok is ok, delta_us
 
 
+# ================================================================== X-3 eligibility (EM decision 7)
+def test_eligibility_periodic_reasons_and_time(w):
+    robot = Robot.objects.get(code="R-01")
+    st = fs.periodic_inspection_status(robot, production=False)
+    assert st.state == "due" and st.due_at is not None
+    assert fs.evaluate_eligibility(robot).eligible_for_planning
+    late = fs.evaluate_eligibility(robot, at=st.due_at)
+    assert f"Periodic inspection overdue since {fs.format_db_time(st.due_at)}" in late.reasons
+    assert fs.evaluate_eligibility(robot, at=st.due_at - timedelta(microseconds=1)).eligible_for_planning
+    set_setting("demo_mode", "false")
+    assert (
+        "Periodic inspection interval unknown for configuration P-A" in fs.evaluate_eligibility(robot).reasons
+    )
+    set_setting("demo_mode", "true")
+    fs.record_manifest(
+        w.eng, robot_code="R-01", pattern_code="P-A", autonomy_version="a7", safety_config_hash="z" * 64
+    )
+    robot.refresh_from_db()
+    assert (
+        "No qualifying periodic inspection on the current configuration"
+        in fs.evaluate_eligibility(robot).reasons
+    )
+
+
 # ================================================================== X-4 escalation deadline sets
 def _deadlines(policy: IncidentPolicy, minutes: int = 600) -> dict[str, Any]:
     out: dict[str, Any] = {

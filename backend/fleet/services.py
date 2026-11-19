@@ -503,6 +503,9 @@ def evaluate_eligibility(robot: Robot, at: datetime | None = None) -> Eligibilit
         ):
             reasons.append(f"Configuration hold {h.code}: {h.reason}")
         periodic = periodic_inspection_status(robot, at, production=production_mode())
+        why = periodic_eligibility_reason(periodic)
+        if why:
+            reasons.append(why)
     for h in Hold.objects.filter(scope="robot", robot=robot, released_at__isnull=True, blocking=True):
         reasons.append(f"Robot hold {h.code} ({h.get_source_type_display()}): {h.reason}")
     ok = not reasons
