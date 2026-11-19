@@ -435,7 +435,9 @@ def test_timeline_readiness_cap_partial_coverage_and_statement_budget():
             evaluate_readiness(visit, at=at)
         es.append(one.n)
     e = max(es)
-    assert e <= 72  # E pinned at 72: measured worst after EM Option B (2026-11-19; was 70, contract 6.4)
+    from operations.exceptions import READINESS_EVALUATOR_STATEMENTS
+
+    assert e <= READINESS_EVALUATOR_STATEMENTS == 72  # EM Option B, 2026-11-19 (was 70; contract 6.4)
     assert c.n == 4 + sum(es), (c.n, es)  # nothing per visit or per run besides the capped evaluator
     assert c.n <= 12 + 10 * e
     print(f"\ntimeline statements {c.n}, E = {e}")

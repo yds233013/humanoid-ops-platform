@@ -155,18 +155,19 @@ def capture() -> tuple[list[str], Any]:
 def test_periodic_overdue_due_soon_and_boundaries():
     w = ow.ops_world("s7p_", robots=2, incident_policy=False)
     configure()
+    ow.add_robot(w, "R-09", periodic=False)  # the shared worlds inspect every robot (X-3); this one never
     state, due = periodic("R-01")  # R-01 has the world's PASS inspection on T1 (synthetic, usable in demo)
     assert state == "due" and due is not None
-    assert periodic("R-02") == ("never_inspected", None)
+    assert periodic("R-09") == ("never_inspected", None)
     # never inspected: overdue since the snapshot time, owner engineering_lead, priority 2
     at = db_now()
-    (x,) = find(at, "PERIODIC_INSPECTION_OVERDUE", "R-02")
+    (x,) = find(at, "PERIODIC_INSPECTION_OVERDUE", "R-09")
     assert (x.since, x.owner_role, x.priority, x.action_url, x.robot) == (
         at,
         "engineering_lead",
         2,
-        "/fleet/R-02/",
-        "R-02",
+        "/fleet/R-09/",
+        "R-09",
     )
     assert "no qualifying periodic inspection" in x.message
     # due soon: inclusive at due_at - lookahead; overdue from due_at (and due-soon stops there)
@@ -466,8 +467,9 @@ def test_production_blockers_panel_both_modes_and_inbox_in_production_only():
 
 @pytest.mark.django_db
 def test_fleet_overview_periodic_field():
-    ow.ops_world("s7f_", robots=2, incident_policy=False)
+    w = ow.ops_world("s7f_", robots=2, incident_policy=False)
     configure()
+    ow.add_robot(w, "R-09", periodic=False)  # the shared worlds inspect every robot (X-3); this one never
     with connection.cursor() as cur:
         cur.execute("SELECT now()")
         at = cur.fetchone()[0]
@@ -475,8 +477,8 @@ def test_fleet_overview_periodic_field():
     assert rows["R-01"].periodic_inspection.state == "due"
     assert rows["R-01"].periodic_inspection.due_at == periodic("R-01")[1]
     assert rows["R-01"].periodic_inspection.rule_source == "synthetic_demo"
-    assert rows["R-02"].periodic_inspection.state == "never_inspected"
-    assert rows["R-02"].periodic_inspection.due_at is None
+    assert rows["R-09"].periodic_inspection.state == "never_inspected"
+    assert rows["R-09"].periodic_inspection.due_at is None
 
 
 # ================================================================== time-zone setting
@@ -709,3 +711,39 @@ def test_closeout_wording_never_claims_a_sign_off():
     ow.depart_new(w, "R-02")
     for text in (c.summary, closeout().summary, co.NOT_A_SIGN_OFF, co.AS_OF_NOTE, co.UNDATED_HEADING):
         assert not FORBIDDEN_CLOSEOUT.search(text), text
+
+
+@pytest.mark.django_db
+def test_maximum_deadline_configuration_is_not_truncated():
+    """EM ruling on C's LIMIT 16 (defensive bound on the deadline entries per level): the largest configuration
+    the database accepts - every known role (the trigger allows each role once per level) at every level - yields
+    one exception per unacknowledged role, no duplicates, and equals the Python reference at every edge. Repeated
+    escalations to one role: the first one is reported and any acknowledgment clears the role."""
+    from execution.policy import KNOWN_ROLES
+
+    w = ow.ops_world("s7m_", robots=2)
+    configure()
+    code = ow.report(w, "R-01")
+    roles = sorted(KNOWN_ROLES)
+    assert len(roles) == 6 < 16  # the LIMIT can never cut a valid level
+    full = {
+        lvl: [{"to_role": r, "within_min": 5 * (i + 1)} for i, r in enumerate(roles)] for lvl in DEADLINES
+    }
+    make_deadline_set(w, deadlines=full)
+    esc.escalate_incident(w.ops, incident_code=code, to_role="founder", requested_action="SYNTHETIC")
+    esc.escalate_incident(w.ops, incident_code=code, to_role="founder", requested_action="SYNTHETIC")
+    esc.escalate_incident(w.ops, incident_code=code, to_role="safety_reviewer", requested_action="SYNTHETIC")
+    second = esc.escalate_incident(
+        w.ops, incident_code=code, to_role="safety_reviewer", requested_action="SYNTHETIC"
+    )
+    esc.acknowledge_escalation(w.safety, escalation_id=second["id"])  # only the later one is acknowledged
+    late = reported_at(code) + timedelta(days=1)
+    got = [x for x in find(late, "ESCALATION_OVERDUE") if x.entity_ref.startswith(f"{code}/")]
+    refs = [x.entity_ref for x in got]
+    assert sorted(refs) == sorted(f"{code}/{r}" for r in roles if r != "safety_reviewer")
+    assert len(refs) == len(set(refs))
+    (fx,) = [x for x in got if x.entity_ref == f"{code}/founder"]
+    assert fx.context["escalated"] is True and "not acknowledged" in fx.message
+    edges = [reported_at(code) + timedelta(minutes=5 * (i + 1)) for i in range(len(roles))]
+    for t in [*(e + off for e in edges for off in (-US, timedelta(0))), late]:
+        assert sql_escalation(t) == ox.reference_escalation_overdue(t), t

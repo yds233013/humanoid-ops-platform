@@ -32,6 +32,9 @@ GRACE = {
     "ops_return_grace_min": 60,
     "ops_inspection_grace_min": 120,
     "ops_readiness_lookahead_min": 1440,
+    # Slice 7 (C): the two new visibility settings, SYNTHETIC test values
+    "ops_periodic_due_lookahead_min": 1440,
+    "ops_closeout_timezone": "America/Los_Angeles",
 }
 FAR = datetime(2028, 1, 1, tzinfo=UTC)  # a snapshot time after every planned visit of the small worlds
 FORBIDDEN = re.compile(
@@ -148,6 +151,9 @@ def test_threshold_not_configured_one_per_missing_or_invalid_key_and_only_its_ru
     w = ow.ops_world("tn_", robots=3)
     run = ow.depart_new(w, "R-02")  # unverified departure (CUSTODY_UNVERIFIED input)
     at = FAR
+    set_setting(
+        ox.CLOSEOUT_TIMEZONE_KEY, "America/Los_Angeles"
+    )  # Slice 7 X-10 zone: valid (not under test here)
     for key in ox.THRESHOLD_RULES:
         DeploymentSetting.objects.filter(key=key).delete()
     page = open_exceptions(at)
@@ -604,6 +610,9 @@ def test_ordering_ties_break_on_code_then_entity_ref_by_code_point():
     """Every time-free tie lands on (code, entity_ref): THRESHOLD_NOT_CONFIGURED items all have since = at, and
     escalation refs ESC-<id> sort as text by code point (ESC-10 before ESC-9), in SQL exactly as in Python."""
     w = ow.ops_world("ot_", robots=3)
+    set_setting(
+        ox.CLOSEOUT_TIMEZONE_KEY, "America/Los_Angeles"
+    )  # Slice 7 X-10 zone: valid (not under test here)
     for key in ox.THRESHOLD_RULES:
         DeploymentSetting.objects.filter(key=key).delete()
     icode = ow.report(w, "R-03")
@@ -614,8 +623,13 @@ def test_ordering_ties_break_on_code_then_entity_ref_by_code_point():
     at = db_clock()
     page = open_exceptions(at)
     check_page_invariants(page)
-    top = page.items[:4]
-    assert [x.entity_ref for x in top] == sorted(ox.THRESHOLD_RULES)  # priority 1, same since: by entity_ref
+    # priority 1, same since: by code, then entity_ref. Slice 7 X-4 adds ESCALATION_DEADLINE_NOT_CONFIGURED (no
+    # deadline set in this world), which sorts before THRESHOLD_NOT_CONFIGURED by code.
+    expected = [("ESCALATION_DEADLINE_NOT_CONFIGURED", "deadline-set")] + [
+        ("THRESHOLD_NOT_CONFIGURED", key) for key in sorted(ox.THRESHOLD_RULES)
+    ]
+    top = page.items[: len(expected)]
+    assert [(x.code, x.entity_ref) for x in top] == expected
     refs = [x.entity_ref for x in page.items if x.code == "ESCALATION_UNACKNOWLEDGED"]
     assert refs == [f"ESC-{i}" for i in ids]  # distinct escalation times order them first
 

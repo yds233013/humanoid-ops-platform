@@ -61,8 +61,9 @@ TIMEZONE_MAX_LEN = 64
 MAX_THRESHOLD_MIN = 10 * 525_600  # ten years; larger values are refused as not configured (no date overflow)
 READINESS_CAP = 10  # contract 4a: at most 10 evaluator runs per snapshot
 # E: statements one evaluate_readiness call may run, pinned by tests on the scale fixture (measured 60-69 per
-# visit at e61ab31). Raise it only through the integration lead: it bounds the 12 + 10 x E budget (= 712).
-READINESS_EVALUATOR_STATEMENTS = 70
+# visit at e61ab31; Slice 7 Option B: 65-72, docs/07b section 13.1). Raise it only through the integration
+# lead and the EM: it bounds the 12 + 10 x E budget (= 732). 70 -> 72 approved by the EM on 2026-11-19.
+READINESS_EVALUATOR_STATEMENTS = 72
 
 PRIORITY: dict[str, int] = {
     "ROBOT_UNACCOUNTED": 1,
