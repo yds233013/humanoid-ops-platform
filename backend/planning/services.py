@@ -777,10 +777,11 @@ def signer_label(user_id: int) -> str:
 
 def inspection_signer_problem(inspection: Any) -> str | None:
     """Mirror of planning_inspection_signer_problem(p_inspection), same text: both signers covered at the
-    inspection's (database) submitted_at. ``inspection`` is a fleet Inspection (re-read for DB values)."""
+    inspection's (database) submitted_at. ``inspection`` is a fleet Inspection read from the database (its
+    submitted_at is the forced database time), or an inspection id."""
     from fleet.models import Inspection
 
-    i = Inspection.objects.filter(pk=inspection.pk if hasattr(inspection, "pk") else inspection).first()
+    i = inspection if isinstance(inspection, Inspection) else Inspection.objects.filter(pk=inspection).first()
     if i is None:
         return f"inspection {inspection} does not exist"
     for uid in (i.performer_id, i.verifier_id):

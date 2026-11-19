@@ -9,6 +9,7 @@ from typing import Any
 
 from django.contrib.auth import get_user_model
 from django.db import connection
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from accounts.permissions import active_roles
@@ -341,10 +342,16 @@ def active_periodic_rule(pattern_id: int | None) -> PeriodicInspectionRule | Non
     withdrawn (no fallback)."""
     if pattern_id is None:
         return None
-    for rule in PeriodicInspectionRule.objects.filter(pattern_id=pattern_id).order_by("-version_no"):
-        if periodic_rule_approved(rule):
-            return None if periodic_rule_withdrawn(rule) else rule
-    return None
+    rule = (
+        PeriodicInspectionRule.objects.filter(pattern_id=pattern_id)
+        .annotate(n=Count("approvals__slot", distinct=True, filter=Q(approvals__slot__in=list(SLOT_ROLES))))
+        .filter(n=len(SLOT_ROLES))
+        .order_by("-version_no")
+        .first()
+    )
+    if rule is None or periodic_rule_withdrawn(rule):
+        return None
+    return rule
 
 
 def usable_periodic_rule(pattern_id: int | None, *, production: bool) -> PeriodicInspectionRule | None:
@@ -496,9 +503,6 @@ def evaluate_eligibility(robot: Robot, at: datetime | None = None) -> Eligibilit
         ):
             reasons.append(f"Configuration hold {h.code}: {h.reason}")
         periodic = periodic_inspection_status(robot, at, production=production_mode())
-        why = periodic_eligibility_reason(periodic)
-        if why:
-            reasons.append(why)
     for h in Hold.objects.filter(scope="robot", robot=robot, released_at__isnull=True, blocking=True):
         reasons.append(f"Robot hold {h.code} ({h.get_source_type_display()}): {h.reason}")
     ok = not reasons
