@@ -311,7 +311,7 @@ stays blocked. That is correct.
   `evaluate_eligibility(robot, at=None)`, where None means database time. Planning, which calls eligibility,
   inherits the block.
 - **Evaluator.** Codes `PERIODIC_INSPECTION_INTERVAL_UNKNOWN`, `PERIODIC_INSPECTION_MISSING` and
-  `PERIODIC_INSPECTION_DUE_BEFORE_RETURN` (`due_at < unload_end`). The overdue state already arrives through
+  `PERIODIC_INSPECTION_DUE_BEFORE_RETURN` (`due_at <= unload_end`, the complement of the strict SQL rule `due_at > unload_end`). The overdue state already arrives through
   `PLANNING_*` from eligibility, and the gate does not repeat it.
 - **Departure.** Three layers. (a) Time: `expires_at <= due_at`, with the existing `clock_timestamp() >= a.expires_at`
   refusal. (b) Rule and template changes: their approvals and withdrawals bump the pattern version, so
@@ -988,7 +988,7 @@ No migration inserts an approval, a rule, a deadline set or a qualification.
 | G-01 | Every hold unreleasable; panel and inbox blockers | Draft policy unchanged; R-03 flow unchanged; blockers visible as "would block in production" |
 | X-4 | `ESCALATION_DEADLINE_NOT_CONFIGURED` | Synthetic deadline set |
 | X-8 | No qualified inspectors: no passing pre-departure evidence | Synthetic grants for dev ops lead and field operator; V-0001 evidence re-recorded |
-| X-10 | Time zone not configured: carried-over section only | `ops_closeout_timezone` synthetic demo value |
+| X-10 | Time zone not configured: one undated, date-unclassified list of every open run (no "departed on D" section, no "carried over" label, no local-day counts; section 8.2) | `ops_closeout_timezone` synthetic demo value |
 
 Every synthetic value is labelled "SYNTHETIC demo, not a company value" in the UI.
 

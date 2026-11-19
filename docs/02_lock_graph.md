@@ -15,6 +15,22 @@ Slice 4 (field execution, `docs/04_field_execution_contract.md` section 5) appen
 ```
 and `planning_vehicletrip` becomes an explicit `lock_guards` target at its existing position (after visits).
 
+Slice 7 (production guardrails, `docs/07a_production_guardrails_contract.md` section 9) appends exactly one row:
+
+```
+  ->  fleet_holdpolicyregistry   (singleton, id = 1; lock_guards(update_hold_policy_registry= / share_hold_policy_registry=))
+```
+- Every read or change of hold-policy state is serialized by this row: policy create / approve / withdraw take it
+  U (and hold nothing else); hold placement, release, release approval, rebase request / approval take it S, after
+  their robot (or pattern + robots) locks. No command locks `fleet_holdpolicy` rows any more.
+- Because the registry is last and its U holders hold no other guard row, a trigger (`fleet_hold_guard`, the
+  policy and rebase guards) may take it after its statement's row locks without a deadlock cycle.
+- The settings lock stays FIRST. A mode-dependent decision takes it SHARED before any guard row; triggers never
+  request it late, they only assert it with `platform_settings_lock_held()` (fleet/0008) and refuse
+  `'<decision> depends on the deployment mode: take pg_advisory_xact_lock_shared(64942988919) first'`.
+  Asserted by: `fleet_hold_guard` on UPDATE (release), `readiness_departure_guard` (departure),
+  the escalation deadline-set approval trigger.
+
 ## Deployment settings lock (Slice 3, Engineer F)
 
 `fleet_deploymentsetting` is writable only by the schema owner; the runtime role has SELECT only, so it cannot
@@ -66,6 +82,21 @@ Within a table, ids are locked in ascending order (`platform_core.locks.lock_gua
 | readiness.record_departure | settings S (advisory), same rows as authorize, then authorization U |
 | readiness.revoke_authorization | visit U, authorization U (no settings lock) |
 | deployment setting change (owner DML) | settings X (advisory, statement trigger) only |
+| **Slice 7** | |
+| fleet.create_inspection_template | pattern S |
+| fleet.approve / withdraw inspection template; create / approve / withdraw periodic rule | pattern U, robots on the pattern U (the trigger bumps the pattern and robots) |
+| fleet.submit_inspection | robot U, then registry S (only when a hold is placed) |
+| fleet.place_hold (robot) / (pattern) | robot U / pattern U + robots U, then registry S (binding resolved after it) |
+| execution.report_incident | robot U, visit S, run U (unchanged), then registry S inside `_create_hold`; no settings lock |
+| fleet.approve_release / withdraw_release_approval | robot U (or pattern U + robots U), registry S |
+| fleet.release_hold | settings S, robot U (or pattern U + robots U), incident S (incident holds), registry S |
+| fleet.request / approve hold rebase | robot U (or pattern U + robots U), registry S |
+| fleet.create / approve / withdraw hold policy | registry U only |
+| planning.grant / revoke qualification (incl. readiness_inspector) | person U (unchanged) |
+| readiness.record_evidence | settings S, robot S, signer persons S, visit U (the trigger locks persons before the visit) |
+| readiness.authorize_departure / record_departure | unchanged list; `person_versions` also holds the signers of both relied inspections, locked S in the persons position |
+| execution escalation deadline set create / approve / withdraw | settings S only (uniqueness constraints serialize) |
+| close-out, production blockers, new exceptions | none (snapshot read) |
 
 ## Triggers that write to other rows
 
@@ -84,6 +115,14 @@ Within a table, ids are locked in ascending order (`platform_core.locks.lock_gua
 | authorization revocation insert | authorization U | Yes: visit U, authorization U |
 | departure event insert | robot S, visit S, policy S, authorization S | Yes: command holds them |
 | trip cargo insert | locks `planning_vehicletrip` U | The trip was created in the same transaction; last in the order |
+| hold insert (Slice 7) | registry S, then robot / pattern version bumps | Robot U / pattern U + robots U held; registry is last |
+| hold release (Slice 7) | asserts settings S held; registry S | Yes: release_hold takes settings S first, registry last |
+| hold policy insert / approval / withdrawal (Slice 7) | registry U | Yes: the command holds the registry U, nothing else |
+| template / periodic-rule approval or withdrawal (Slice 7) | pattern + its robots (`fleet_bump_pattern`) | Yes: pattern U + robots U |
+| release approval insert (Slice 7) | registry S | Robot U (or pattern U + robots U) held; registry is last |
+| rebase request / approval insert (Slice 7) | robot U (or pattern U + robots U), registry S; the final approval inserts the activation row | Yes: the command holds them |
+| evidence insert (Slice 7) | robot S, signer persons S, then visit version | Yes: record_evidence holds settings S, robot S, persons S, visit U |
+| qualification insert (Slice 7) | forces `granted_at` (and `valid_from` for an immediate grant), then person version (unchanged) | Yes: person U |
 
 ## Tests that prove it
 

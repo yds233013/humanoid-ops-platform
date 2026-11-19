@@ -26,8 +26,20 @@ PERMISSIONS: dict[str, set[str]] = {
     "fleet.publish_capability": {ENGINEER, ENGINEERING_LEAD},
     "fleet.approve_capability": {ENGINEERING_LEAD, SAFETY_REVIEWER},
     "fleet.base_authorization": {ENGINEERING_LEAD},
-    "fleet.manage_hold_policy": {ENGINEERING_LEAD},
-    "fleet.approve_hold_policy": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    # Slice 7 (G-01, EM decision 10): engineers may author hold-policy versions; the founder fills the third
+    # slot of an approved_procedure policy.
+    "fleet.manage_hold_policy": {ENGINEER, ENGINEERING_LEAD},
+    "fleet.approve_hold_policy": {ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
+    "fleet.withdraw_hold_policy": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "fleet.rebase_hold": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    # Slice 7 (X-1): inspection templates
+    "fleet.manage_inspection_template": {ENGINEER, ENGINEERING_LEAD},
+    "fleet.approve_inspection_template": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "fleet.withdraw_inspection_template": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    # Slice 7 (X-3): periodic inspection interval rules
+    "fleet.manage_periodic_rule": {ENGINEER, ENGINEERING_LEAD},
+    "fleet.approve_periodic_rule": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "fleet.withdraw_periodic_rule": {ENGINEERING_LEAD, SAFETY_REVIEWER},
     "fleet.place_hold": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "fleet.approve_release": {OPS_LEAD, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "fleet.release_hold": {OPS_LEAD, ENGINEERING_LEAD},
@@ -40,6 +52,10 @@ PERMISSIONS: dict[str, set[str]] = {
     "planning.approve_assessment": {OPS_LEAD, ENGINEERING_LEAD},
     "planning.consent": {OPS_LEAD, FIELD_OPERATOR},
     "planning.manage_people": {OPS_LEAD},
+    # Slice 7 (X-8, EM decision 18): readiness_inspector is granted by a safety reviewer only (never to
+    # themselves, enforced in the database); revoking it (the safe direction) is open to three roles.
+    "planning.grant_inspector_qualification": {SAFETY_REVIEWER},
+    "planning.revoke_inspector_qualification": {OPS_LEAD, SAFETY_REVIEWER, ENGINEERING_LEAD},
     "planning.manage_vehicles": {OPS_LEAD},
     "planning.plan": {OPS_LEAD},
     "planning.confirm": {OPS_LEAD},
@@ -72,6 +88,10 @@ PERMISSIONS: dict[str, set[str]] = {
     "execution.close_trip": {OPS_LEAD},
     "execution.manage_incident_policy": {ENGINEERING_LEAD},
     "execution.approve_incident_policy": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    # Slice 7 (X-4, EM decision 16): owner-approved escalation deadline sets
+    "execution.manage_escalation_deadlines": {OPS_LEAD, SAFETY_REVIEWER},
+    "execution.approve_escalation_deadlines": {SAFETY_REVIEWER, FOUNDER},
+    "execution.withdraw_escalation_deadlines": {SAFETY_REVIEWER, FOUNDER},
     # Slice 5: operations command center (read-only)
     "operations.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "operations.metrics": {OPS_LEAD, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},

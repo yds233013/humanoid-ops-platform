@@ -3,6 +3,10 @@
     role grants (run_command) -> deployment settings (advisory, shared) -> sites -> manifest patterns
       -> robots -> persons -> vehicles -> visits -> vehicle trips -> readiness policies
       -> departure authorizations -> incident policies -> execution runs -> incidents   (Slice 4)
+      -> hold-policy registry (fleet_holdpolicyregistry, singleton id 1)                  (Slice 7)
+
+The hold-policy registry is LAST: its FOR UPDATE holders (hold-policy create / approve / withdraw) hold no other
+guard row, so a trigger may take it FOR SHARE after its statement's row locks (fleet/0008) without a cycle.
 
 Deployment settings (fleet_deploymentsetting) are writable only by the schema owner, and the runtime role has
 SELECT only, so it cannot row-lock them. Instead every change to that table takes the transaction-level
@@ -41,7 +45,9 @@ ORDER = [
     ("execution_incidentpolicy", "incident_policies"),
     ("execution_executionrun", "runs"),
     ("execution_incident", "incidents"),
+    ("fleet_holdpolicyregistry", "hold_policy_registry"),  # Slice 7: singleton row id 1, always last
 ]
+HOLD_POLICY_REGISTRY_ID = 1
 
 
 def lock_settings_shared() -> None:
@@ -77,6 +83,8 @@ def lock_guards(
     share_runs: Iterable[int] = (),
     update_incidents: Iterable[int] = (),
     share_incidents: Iterable[int] = (),
+    update_hold_policy_registry: bool = False,
+    share_hold_policy_registry: bool = False,
     label: str = "",
 ) -> None:
     requested = {
@@ -92,6 +100,10 @@ def lock_guards(
         "incident_policies": (update_incident_policies, share_incident_policies),
         "runs": (update_runs, share_runs),
         "incidents": (update_incidents, share_incidents),
+        "hold_policy_registry": (
+            [HOLD_POLICY_REGISTRY_ID] if update_hold_policy_registry else [],
+            [HOLD_POLICY_REGISTRY_ID] if share_hold_policy_registry else [],
+        ),
     }
     if share_settings:  # first: right after run_command's role grants, before every guard row
         lock_settings_shared()
