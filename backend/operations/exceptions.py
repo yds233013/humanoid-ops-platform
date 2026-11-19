@@ -344,6 +344,16 @@ qlev AS MATERIALIZED (
                    AND d.deadlines ? q.severity_level THEN q.severity_level END AS level_key
   FROM q CROSS JOIN dset d
 ),
+-- per (incident, role): the first escalation and whether any escalation to that role is acknowledged (one
+-- hash-joinable relation instead of two subqueries per deadline entry)
+erole AS MATERIALIZED (
+  SELECT x.incident_id, x.to_role::text AS to_role, min(x.recorded_at) AS first_at,
+         bool_or(k.id IS NOT NULL) AS acked
+  FROM execution_incidentescalation x
+  LEFT JOIN execution_escalationack k ON k.escalation_id = x.id
+  WHERE EXISTS (SELECT 1 FROM dset)
+  GROUP BY x.incident_id, x.to_role
+),
 ex AS (
   -- ROBOT_UNACCOUNTED: custody unaccounted; since = that custody event
   SELECT 'ROBOT_UNACCOUNTED' AS code, 'robot' AS entity_type, rs.robot_code AS entity_ref,
@@ -567,17 +577,14 @@ ex AS (
                             'within_min', (e.value ->> 'within_min')::int, 'level', ql.level_key,
                             'deadline_set_version', ql.version_no, 'escalated', fe.first_at IS NOT NULL)
   FROM qlev ql
-  CROSS JOIN LATERAL jsonb_array_elements(ql.deadlines -> ql.level_key) e
+  -- LIMIT 16 keeps the row estimate honest (the default SRF estimate of 100 rows per call inflates the plan cost
+  -- past jit_above_cost); the trigger allows only distinct known roles per level, fewer than 16.
+  CROSS JOIN LATERAL (SELECT x.value FROM jsonb_array_elements(ql.deadlines -> ql.level_key) x LIMIT 16) e
   LEFT JOIN planning_visit v ON v.id = ql.visit_id
-  LEFT JOIN LATERAL (
-    SELECT min(x.recorded_at) AS first_at FROM execution_incidentescalation x
-    WHERE x.incident_id = ql.incident_id AND x.to_role = e.value ->> 'to_role'
-  ) fe ON true
+  LEFT JOIN erole fe ON fe.incident_id = ql.incident_id AND fe.to_role = e.value ->> 'to_role'
   WHERE ql.level_key IS NOT NULL
     AND ql.reported_at + make_interval(mins => (e.value ->> 'within_min')::int) <= %(at)s
-    AND NOT EXISTS (SELECT 1 FROM execution_incidentescalation x
-                    JOIN execution_escalationack k ON k.escalation_id = x.id
-                    WHERE x.incident_id = ql.incident_id AND x.to_role = e.value ->> 'to_role')
+    AND NOT coalesce(fe.acked, false)
 
   UNION ALL
   -- Production blockers (G-01, X-1, X-3, X-4; operations_production_blockers): inbox items in PRODUCTION
