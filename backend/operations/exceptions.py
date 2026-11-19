@@ -17,6 +17,8 @@ STATEMENTS (contract 6.4). Constant in fleet size:
     1  the evaluated Visit rows, only when at least one visit qualifies
   + at most READINESS_CAP x E for ``readiness.evaluator.evaluate_readiness``
     (E = READINESS_EVALUATOR_STATEMENTS, pinned by a test), so the total stays within 12 + 10 x E.
+``count_operational_exceptions(at)`` (metrics page): 1 thresholds + 1 ``SELECT count(*)`` over the same rule
+relation (RULES_RELATION_SQL); no ordering, pagination, unknown-basis query or evaluator.
 
 ORDERING (identical in SQL and Python): ``(priority, since, code, entity_ref)`` ascending; text compared by
 code point (SQL ``COLLATE "C"`` = Python ``str`` order for UTF-8; the database collation is NOT used).
@@ -150,12 +152,29 @@ def read_thresholds() -> tuple[dict[str, int | None], set[str]]:
 
 
 # ------------------------------------------------------------------ the SQL-derived rules
-# One statement. Every branch yields (code, entity_type, entity_ref, robot, visit, since, owner_role, message,
-# action_url); priority comes from PRIORITY; NULL thresholds switch their branch off. Time uses %(at)s only.
-RULES_SQL = r"""
-WITH rs AS MATERIALIZED (SELECT * FROM operations_robot_status),
-ors AS MATERIALIZED (SELECT * FROM operations_open_run_stage),
-q AS MATERIALIZED (SELECT * FROM operations_incident_queue),
+# The ONE definition of every SQL-derived rule: a WITH clause ending in the relation ``ex``. Every branch
+# yields (code, entity_type, entity_ref, robot, visit, since, owner_role, message, action_url, context);
+# priority comes from PRIORITY; NULL thresholds switch their branch off. Time uses %(at)s only. Two
+# projections read it: RULES_SQL (inbox rows, ordered and keyset-paginated) and COUNT_SQL
+# (``count_operational_exceptions``).
+RULES_RELATION_SQL = r"""
+-- Each view is read once, projecting only the columns the rules below use: the planner then drops the unused
+-- view outputs (eligibility reasons, next visit, status label, session state, severity rank, ...) instead of
+-- computing them for every robot / run / incident (Slice 5 perf, EXPLAIN on the scale fixture).
+WITH rs AS MATERIALIZED (
+  SELECT robot_id, robot_code, custody_kind, custody_event_id, custody_since, open_run_code,
+         open_run_visit_code, hold_codes, holds_since
+  FROM operations_robot_status
+),
+ors AS MATERIALIZED (
+  SELECT run_id, run_code, robot_code, visit_code, departed_at, planned_unloading_end, arrived_hub_at,
+         latest_reconciliation_outcome, latest_reconciliation_at, custody_event_id, awaiting
+  FROM operations_open_run_stage
+),
+q AS MATERIALIZED (
+  SELECT incident_code, robot_code, visit_id, event_type, reported_at, status, unclassified
+  FROM operations_incident_queue
+),
 ex AS (
   -- ROBOT_UNACCOUNTED: custody unaccounted; since = that custody event
   SELECT 'ROBOT_UNACCOUNTED' AS code, 'robot' AS entity_type, rs.robot_code AS entity_ref,
@@ -303,6 +322,12 @@ ex AS (
   ) uv ON true
   WHERE cardinality(rs.hold_codes) > 0
 )
+"""
+
+# Projection (i): inbox rows in the total order, keyset-filtered and limited in SQL.
+RULES_SQL = (
+    RULES_RELATION_SQL
+    + r"""
 SELECT code, priority, entity_type, entity_ref, robot, visit, since, owner_role, message, action_url, context
 FROM (
   SELECT ex.code COLLATE "C" AS code, ex.entity_type,
@@ -316,6 +341,10 @@ WHERE %(a_prio)s::int IS NULL
 ORDER BY priority, since, code, entity_ref
 LIMIT %(limit)s
 """
+)
+
+# Projection (ii): how many rows the same relation holds; no ordering, pagination or row materialization.
+COUNT_SQL = RULES_RELATION_SQL + "SELECT count(*) FROM ex\n"
 
 # EM B2: open runs not yet at the hub whose RETURN_OVERDUE basis (planned unloading end) is unknown. The
 # exception stays suppressed; the missing basis is listed instead. Independent of the threshold value.
@@ -341,14 +370,21 @@ LIMIT %(cap)s
 """
 
 
-def _sql_rules(
-    at: datetime, thresholds: dict[str, int | None], limit: int | None, after: SortKey | None
-) -> list[OpsException]:
-    params = {
+def _relation_params(at: datetime, thresholds: dict[str, int | None]) -> dict[str, Any]:
+    """The parameters of RULES_RELATION_SQL (shared by both projections)."""
+    return {
         "at": at,
         "g_verify": thresholds["ops_custody_verify_grace_min"],
         "g_return": thresholds["ops_return_grace_min"],
         "g_inspect": thresholds["ops_inspection_grace_min"],
+    }
+
+
+def _sql_rules(
+    at: datetime, thresholds: dict[str, int | None], limit: int | None, after: SortKey | None
+) -> list[OpsException]:
+    params = {
+        **_relation_params(at, thresholds),
         "prio": json.dumps(PRIORITY),
         "a_prio": after[0] if after else None,
         "a_since": after[1] if after else None,
@@ -500,3 +536,17 @@ def open_exceptions(
     return ExceptionPage(
         items=items, readiness_coverage=coverage, next_cursor=next_cursor, unknown_basis=unknown
     )
+
+
+def count_operational_exceptions(at: datetime) -> int:
+    """How many items ``open_exceptions(at, include_readiness=False)`` would return in total (all pages):
+    every SQL-derived rule (counted over the same RULES_RELATION_SQL, no ordering, pagination or row
+    materialization) plus THRESHOLD_NOT_CONFIGURED (the same ``_threshold_items``). READINESS_INCOMPLETE_SOON
+    is excluded and the evaluator never runs; unknown_basis is not part of the inbox items and is not read.
+    Two statements (thresholds, count). Call inside ``read_snapshot()`` with its time as ``at``."""
+    thresholds, missing = read_thresholds()
+    with connection.cursor() as cur:
+        cur.execute(COUNT_SQL, _relation_params(at, thresholds))
+        row = cur.fetchone()
+    assert row is not None
+    return int(row[0]) + len(_threshold_items(at, thresholds, missing))

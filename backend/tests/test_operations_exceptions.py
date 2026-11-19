@@ -9,7 +9,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from django.db import connection
+from django.db import connection, transaction
 
 from execution import escalation as esc
 from execution import incidents as inc
@@ -867,3 +867,103 @@ def test_include_readiness_false_runs_no_evaluator():
         "skipped": True,
     }
     assert page.items == [x for x in full.items if x.code != "READINESS_INCOMPLETE_SOON"]
+
+
+# ------------------------------------------------------------------ EM perf instruction 1: the metrics count path
+THRESHOLD_VARIANTS: list[dict[str, int | str | None]] = [
+    {},  # all four valid
+    {"ops_return_grace_min": "x", "ops_custody_verify_grace_min": None},  # invalid + missing
+    {"ops_inspection_grace_min": "0", "ops_readiness_lookahead_min": str(ox.MAX_THRESHOLD_MIN + 1)},
+    {key: None for key in ox.THRESHOLD_RULES},  # every key missing: four THRESHOLD_NOT_CONFIGURED
+    {"ops_return_grace_min": "1", "ops_custody_verify_grace_min": "1", "ops_inspection_grace_min": "1"},
+]
+
+
+def _unknown_deadline_and_escalations(w) -> None:
+    """Add an open run whose planned unloading end is unknown (when a robot can still depart) and an incident
+    with three escalations, one of them acknowledged."""
+    for code in w.robots:
+        try:
+            with transaction.atomic():
+                ow.depart_new(w, code)
+            break
+        except Exception:
+            continue  # held / already on a run in this random world
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT r.revision_id FROM operations_open_run_stage s JOIN execution_executionrun r ON r.id = s.run_id"
+            " WHERE s.arrived_hub_at IS NULL AND s.planned_unloading_end IS NOT NULL ORDER BY s.run_code LIMIT 1"
+        )
+        row = cur.fetchone()
+        if row:
+            cur.execute("SET CONSTRAINTS ALL IMMEDIATE")  # fire pending deferred triggers before the ALTER
+            cur.execute("ALTER TABLE planning_reservation DISABLE TRIGGER USER")
+            cur.execute(
+                "DELETE FROM planning_reservation WHERE purpose = 'unloading' AND revision_id = %s", [row[0]]
+            )
+            cur.execute("ALTER TABLE planning_reservation ENABLE TRIGGER USER")
+    icode = ow.report(w, w.robots[-1])
+    ids = [
+        esc.escalate_incident(w.ops, incident_code=icode, to_role=role, requested_action="SYN")["id"]
+        for role in ("engineering_lead", "founder", "engineering_lead")
+    ]
+    esc.acknowledge_escalation(w.lead2, escalation_id=ids[0])
+
+
+def assert_count_equals_inbox(at) -> int:
+    seen, wrapper = capture()
+    with connection.execute_wrapper(wrapper):
+        n = ox.count_operational_exceptions(at)
+    assert len(seen) == 2, seen  # thresholds + one count; no ordering/pagination/unknown-basis/evaluator
+    assert re.search(r"SELECT count\(\*\) FROM ex\s*$", seen[1]) and "ORDER BY priority" not in seen[1]
+    page = open_exceptions(at, include_readiness=False)  # every item, no limit
+    assert page.next_cursor is None
+    assert n == len(page.items), (at, n, len(page.items))
+    return n
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("seed", [*SEEDS, 7, 8, 9, 10])
+def test_count_operational_exceptions_equals_the_inbox_without_readiness(seed, monkeypatch):
+    """Oracle: count_operational_exceptions(at) == len(open_exceptions(at, include_readiness=False).items) on the
+    seeded random worlds, for valid / invalid / missing thresholds, unknown return deadlines and repeated
+    escalations, at several snapshot times; the evaluator never runs."""
+    import readiness.evaluator as rev
+
+    w = ow.random_world(seed)
+    _unknown_deadline_and_escalations(w)
+
+    def boom(*a, **k):
+        raise AssertionError("the count path must not run the readiness evaluator")
+
+    monkeypatch.setattr(rev, "evaluate_readiness", boom)
+    monkeypatch.setattr(ox, "evaluate_readiness", boom)
+    now = db_clock()
+    codes: set[str] = set()
+    for variant in THRESHOLD_VARIANTS:
+        configure(**variant)
+        for at in (now, now + timedelta(days=1), FAR):
+            assert_count_equals_inbox(at)
+            codes.update(x.code for x in open_exceptions(at, include_readiness=False).items)
+    assert "THRESHOLD_NOT_CONFIGURED" in codes and "ESCALATION_UNACKNOWLEDGED" in codes, w.story
+    assert "READINESS_INCOMPLETE_SOON" not in codes
+
+
+@pytest.mark.django_db
+def test_count_operational_exceptions_hand_built_unknown_deadline_and_escalations():
+    """The same oracle on a world that certainly has an unknown return deadline, several unacknowledged
+    escalations of one incident (one acknowledged) and a closed incident's escalation."""
+    w = ow.ops_world("cc_", robots=3)
+    ow.depart_new(w, "R-02")
+    ow.depart_new(w, "R-03")
+    _unknown_deadline_and_escalations(w)  # departs R-01 too, then removes one run's unloading reservation
+    configure(ops_return_grace_min="1")
+    page = open_exceptions(FAR, include_readiness=False)
+    assert len(page.unknown_basis) == 1
+    overdue = {x.entity_ref for x in page.items if x.code == "RETURN_OVERDUE"}
+    assert len(overdue) == 2 and page.unknown_basis[0]["run"] not in overdue
+    assert sum(x.code == "ESCALATION_UNACKNOWLEDGED" for x in page.items) == 2
+    for variant in THRESHOLD_VARIANTS:
+        configure(**variant)
+        for at in (db_clock(), FAR):
+            assert_count_equals_inbox(at)

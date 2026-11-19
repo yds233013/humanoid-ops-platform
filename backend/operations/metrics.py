@@ -6,18 +6,19 @@ value is derived from immutable rows recorded no later than ``at``; numerator an
 returned, and a zero denominator gives ``value=None`` / ``display="N/A"``, never 0. All values are
 SYNTHETIC-demo measures, not targets.
 
-Statements: one for every metric computed here, plus the exception inbox WITHOUT readiness
-(``operations.exceptions.open_exceptions(at, include_readiness=False)``, Engineer B) for the open operational
-exception count. The readiness evaluator never runs on this page (EM decision).
+Statements: one for every metric computed here, plus two for the open operational exception count
+(``operations.exceptions.count_operational_exceptions(at)``: thresholds + a count over the inbox's rule
+relation, equal to ``len(open_exceptions(at, include_readiness=False).items)``). The readiness evaluator
+never runs on this page (EM decision).
 """
 
-import importlib
-import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from django.db import connection
+
+from operations.exceptions import count_operational_exceptions
 
 SYNTHETIC_NOTE = "Synthetic-demo measures, not targets."
 CURRENT_FLEET_NOTE = "current fleet denominator: lifecycle history before `at` is not reconstructed"
@@ -141,33 +142,15 @@ OPEN_EXCEPTIONS_LABEL = "Open operational exceptions - readiness not evaluated"
 
 def _open_exceptions_metric(at: datetime) -> Metric:
     """EM decision: the metrics page never runs the readiness evaluator. It counts the inbox's exceptions
-    WITHOUT the readiness rule (``open_exceptions(at, include_readiness=False)``, Engineer B) and says so in
-    its label; it is never presented as the total. Unavailable (N/A) until B's inbox has that option."""
+    WITHOUT the readiness rule and says so in its label; it is never presented as the total. The count comes
+    from ``count_operational_exceptions(at)`` (Slice 5 perf, EM instruction 1): a ``SELECT count(*)`` over the
+    inbox's own rule relation plus THRESHOLD_NOT_CONFIGURED, equal to
+    ``len(open_exceptions(at, include_readiness=False).items)`` (oracle-tested) without building the rows."""
     definition = (
         "exceptions of the exception inbox (contract section 3) at `at`, excluding READINESS_INCOMPLETE_SOON "
         "(the readiness evaluator does not run on this page); not the total"
     )
-    try:  # Engineer B's module; imported lazily so the metrics page works on its own
-        ex: Any = importlib.import_module("operations.exceptions")
-    except ModuleNotFoundError as err:
-        if err.name != "operations.exceptions":
-            raise
-        ex = None
-    fn = getattr(ex, "open_exceptions", None)
-    if fn is None or "include_readiness" not in inspect.signature(fn).parameters:
-        return Metric(
-            "open_exceptions",
-            OPEN_EXCEPTIONS_LABEL,
-            KIND_CURRENT,
-            definition,
-            None,
-            None,
-            None,
-            "count",
-            {"unavailable": "the exception inbox without readiness evaluation is not installed"},
-        )
-    page = fn(at, include_readiness=False)
-    n = len(page.items)
+    n = count_operational_exceptions(at)
     details = {"readiness": "not evaluated", "total": False}
     return Metric(
         "open_exceptions", OPEN_EXCEPTIONS_LABEL, KIND_CURRENT, definition, n, None, n, "count", details
