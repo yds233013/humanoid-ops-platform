@@ -103,7 +103,8 @@ class Command(BaseCommand):
         s.approve_capability_profile(u["safety_reviewer"], profile_id=prof.pk, slot="safety")
         s.publish_capability_profile(eng, pattern_code="P-B")  # everything unknown
         for code in ("P-A", "P-B"):
-            # Slice 7: a new template needs an author (fleet/0008). Synthetic, so it can never be approved and is
+            # Slice 7: a new template needs an author (fleet/0008). Synthetic, so it can never be approved and
+            # is
             # usable in demo mode only.
             InspectionTemplate.objects.create(
                 pattern=ManifestPattern.objects.get(code=code),

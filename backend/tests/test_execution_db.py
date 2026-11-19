@@ -519,8 +519,10 @@ def test_session_start_refused_while_the_pattern_is_held(w, app_role_conn):
         cur.execute(
             "INSERT INTO fleet_hold (code, scope, robot_id, pattern_id, blocking, source_type, source_ref, "
             "reason, policy_id, required_slots, manifest_at_placement_id, placed_by_id, placed_at) "
-            "VALUES ('HD-PAT', 'manifest_pattern', NULL, %s, true, 'manual', '', 'SYN', NULL, '[]', NULL, "
-            "%s, now())",
+            # Slice 7 (G-01 binding): bound to fleet_hold_binding_policy_id() with its slots copied
+            "SELECT 'HD-PAT', 'manifest_pattern', NULL, %s, true, 'manual', '', 'SYN', p.id, "
+            "coalesce(p.rules -> 'manual' -> 'slots', '[]'), NULL, %s, now() "
+            "FROM (SELECT fleet_hold_binding_policy_id() AS id) b LEFT JOIN fleet_holdpolicy p ON p.id = b.id",
             [w.robot.current_manifest.pattern_id, w.ops.pk],
         )
         with refused("blocking hold"):
@@ -1042,8 +1044,12 @@ def _raw_authorization_sql(w, visit_code: str) -> tuple[str, list]:
     plan_id = v.recovery_plans.order_by("-pk").first().pk
     sql = (
         "INSERT INTO readiness_departureauthorization (code, visit_id, revision_id, robot_id, manifest_id, "
-        "policy_id, mode, guard_snapshot, evidence_ids, recovery_plan_id, issued_by_id, issued_at, expires_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, 'demo', %s, %s, %s, %s, now(), clock_timestamp() + interval '30 minutes') "
+        "policy_id, mode, guard_snapshot, evidence_ids, recovery_plan_id, issued_by_id, issued_at, expires_at, "
+        "periodic_inspection_id, planned_unload_end) "
+        "VALUES (%s, %s, %s, %s, %s, %s, 'demo', %s, %s, %s, %s, now(), clock_timestamp() + interval '30 minutes', "
+        # Slice 7 (07a 4.4): a new row records the relied periodic inspection and the planned unloading end
+        "(SELECT s.inspection_id FROM readiness_periodic_inspection_status(%s, false, clock_timestamp()) s), "
+        "(SELECT max(x.ends_at) FROM planning_reservation x WHERE x.revision_id = %s AND x.purpose = 'unloading')) "
         "RETURNING id"
     )
     return sql, [
@@ -1057,6 +1063,8 @@ def _raw_authorization_sql(w, visit_code: str) -> tuple[str, list]:
         Jsonb(ev_ids),
         plan_id,
         w.ops.pk,
+        robot.pk,
+        rev.pk,
     ]
 
 

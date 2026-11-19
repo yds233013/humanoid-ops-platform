@@ -53,7 +53,10 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' AND c.relkind = 'r' "
             f"AND c.relname NOT IN ('{AUDIT}', 'django_migrations', 'fleet_deploymentsetting', "
-            "'readiness_departureauthorization', 'execution_executionrun') "
+            "'readiness_departureauthorization', 'execution_executionrun', "
+            # Slice 7 (07a 5.3): the registry is a lock-only row; activations are written only by the final
+            # rebase-approval trigger (SECURITY DEFINER). Both asserted below.
+            "'fleet_holdpolicyregistry', 'fleet_holdrebaseactivation') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
@@ -73,6 +76,14 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "has_table_privilege(current_user, 'execution_executionrun', 'UPDATE')"
         )
         assert cur.fetchone() == (False, True, True)
+        cur.execute(
+            "SELECT has_table_privilege(current_user, 'fleet_holdpolicyregistry', 'INSERT'), "
+            "has_table_privilege(current_user, 'fleet_holdpolicyregistry', 'SELECT'), "
+            "has_table_privilege(current_user, 'fleet_holdpolicyregistry', 'UPDATE'), "
+            "has_table_privilege(current_user, 'fleet_holdrebaseactivation', 'INSERT'), "
+            "has_table_privilege(current_user, 'fleet_holdrebaseactivation', 'SELECT')"
+        )
+        assert cur.fetchone() == (False, True, True, False, True)
 
 
 def test_runtime_role_is_not_superuser_and_owns_nothing(app_role_conn):

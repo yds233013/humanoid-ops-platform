@@ -193,13 +193,15 @@ def _read_world(visit: Visit) -> _World:
     return _World(v, rev, robot, manifest_id, pattern, plan, current_policy(), persons)
 
 
-def _inspection_signer_person_ids(visit_id: int, revision_id: int, robot_id: int, manifest_id: int) -> list[int]:
-    """Slice 7 (contract 07a section 7.2, P0-1): the signer persons of the relied pre-departure inspection (latest
-    non-voided pre-departure evidence) and of the periodic inspection the database would rely on, so they are
-    locked and versioned in person_versions. MINIMAL Engineer A shim through the frozen SQL functions
-    (readiness_dependency_persons, readiness_periodic_inspection_status) so existing flows keep authorizing;
-    Engineer B owns the evaluator and replaces it with the Python implementation and the INSPECTOR_NOT_QUALIFIED
-    gate."""
+def _inspection_signer_person_ids(
+    visit_id: int, revision_id: int, robot_id: int, manifest_id: int
+) -> list[int]:
+    """Slice 7 (contract 07a section 7.2, P0-1): the signer persons of the relied pre-departure inspection
+    (latest non-voided pre-departure evidence) and of the periodic inspection the database would rely on, so
+    they are locked and versioned in person_versions. MINIMAL Engineer A shim through the frozen SQL
+    functions (readiness_dependency_persons, readiness_periodic_inspection_status) so existing flows keep
+    authorizing; Engineer B owns the evaluator and replaces it with the Python implementation and the
+    INSPECTOR_NOT_QUALIFIED gate."""
     with connection.cursor() as cur:
         cur.execute(
             "SELECT x FROM readiness_dependency_persons("

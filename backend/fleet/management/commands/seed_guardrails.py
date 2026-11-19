@@ -1,21 +1,20 @@
-"""SYNTHETIC Slice 7 guardrail demo inputs (docs/07a_production_guardrails_contract.md sections 0a, 4.8, 6.5, 7.5,
-8.3, 10). Demo mode ONLY: it refuses to run unless demo_mode = 'true'.
+"""SYNTHETIC Slice 7 guardrail demo inputs (docs/07a_production_guardrails_contract.md sections 0a,
+4.8, 6.5, 7.5, 8.3, 10). Demo mode ONLY: it refuses to run unless demo_mode = 'true'.
 
 It never writes approved_procedure, engineering_doc or owner_approved, so every production gate keeps refusing
-what it creates by source. Every value is clearly labelled SYNTHETIC and is not a company value. Idempotent: each
-step runs only when its prerequisites exist and its own rows do not, so `make seed` runs it twice:
+what it creates by source. Every value is clearly labelled SYNTHETIC and is not a company value. Idempotent:
+each step runs only when its prerequisites exist and its own rows do not, so `make seed` runs it twice:
 
-  after seed_planning   readiness_inspector grants for dev_ops_lead and dev_field_operator (granted by
-                        dev_safety_reviewer, effective now, basis_ref SYNTHETIC-TRAINING); one synthetic_demo
-                        periodic rule per pattern (4,320 min, author dev_engineer, approved by
-                        dev_engineering_lead + dev_safety_reviewer); one fresh synthetic periodic inspection per
-                        in-service robot (signed by the two qualified dev users, nothing backdated).
-                        This must precede seed_readiness: since Slice 7 the database refuses passing
-                        pre-departure evidence signed by people who are not qualified readiness inspectors.
-  at the end            a synthetic_demo escalation deadline set for the active (synthetic) incident policy,
-                        approved by dev_safety_reviewer + dev_founder; the confirmed demo visit's pre-departure
-                        inspection and evidence are re-recorded when their signers are not covered and it has not
-                        departed; the synthetic close-out time zone and periodic due-soon lookahead settings.
+- after seed_planning: readiness_inspector grants for dev_ops_lead and dev_field_operator (granted by
+  dev_safety_reviewer, effective now, basis_ref SYNTHETIC-TRAINING); one synthetic_demo periodic rule per
+  pattern (4,320 min, author dev_engineer, approved by dev_engineering_lead + dev_safety_reviewer); one fresh
+  synthetic periodic inspection per in-service robot (signed by the two qualified dev users, nothing
+  backdated). This must precede seed_readiness: since Slice 7 the database refuses passing pre-departure
+  evidence signed by people who are not qualified readiness inspectors.
+- at the end: a synthetic_demo escalation deadline set for the active (synthetic) incident policy, approved
+  by dev_safety_reviewer + dev_founder; the confirmed demo visit's pre-departure inspection and evidence are
+  re-recorded when their signers are not covered and it has not departed; the synthetic close-out time zone
+  and periodic due-soon lookahead settings.
 """
 
 from datetime import timedelta
@@ -67,7 +66,9 @@ class Command(BaseCommand):
 
     def handle(self, *args: object, **opts: object) -> None:
         if not _demo_mode():
-            raise CommandError("seed_guardrails runs only in demo mode (demo_mode = 'true'); nothing was written")
+            raise CommandError(
+                "seed_guardrails runs only in demo mode (demo_mode = 'true'); nothing was written"
+            )
         users = {u.username: u for u in User.objects.filter(username__startswith="dev_")}
         if "dev_safety_reviewer" not in users:
             raise CommandError("run seed_dev first")
@@ -86,7 +87,10 @@ class Command(BaseCommand):
             if person is None:
                 continue  # seed_planning not run yet
             if Qualification.objects.filter(
-                person=person, kind="readiness_inspector", revoked_at__isnull=True, valid_to__gt=timezone.now()
+                person=person,
+                kind="readiness_inspector",
+                revoked_at__isnull=True,
+                valid_to__gt=timezone.now(),
             ).exists():
                 continue
             with transaction.atomic():
@@ -94,7 +98,7 @@ class Command(BaseCommand):
                 Qualification.objects.create(
                     person=person,
                     kind="readiness_inspector",
-                    valid_from=None,  # effective now: the database sets valid_from = granted_at
+                    valid_from=None,  # type: ignore[misc]  # effective now: DB sets valid_from = granted_at
                     valid_to=timezone.now() + timedelta(days=365),
                     granted_by=safety,
                     basis_ref=SYNTHETIC_TRAINING,
@@ -106,7 +110,9 @@ class Command(BaseCommand):
         for pattern in ManifestPattern.objects.order_by("code"):
             if PeriodicInspectionRule.objects.filter(pattern=pattern).exists():
                 continue
-            robot_ids = list(Robot.objects.filter(current_manifest__pattern=pattern).values_list("pk", flat=True))
+            robot_ids = list(
+                Robot.objects.filter(current_manifest__pattern=pattern).values_list("pk", flat=True)
+            )
             with transaction.atomic():
                 lock_guards(update_patterns=[pattern.pk], update_robots=robot_ids)
                 rule = PeriodicInspectionRule.objects.create(
@@ -140,9 +146,12 @@ class Command(BaseCommand):
         for robot in Robot.objects.filter(lifecycle="in_service").order_by("code"):
             if self._periodic_status(robot) in ("due", "unknown_interval"):
                 continue
-            if robot.current_manifest is None or not InspectionTemplate.objects.filter(
-                pattern_id=robot.current_manifest.pattern_id, version="T1"
-            ).exists():
+            if (
+                robot.current_manifest is None
+                or not InspectionTemplate.objects.filter(
+                    pattern_id=robot.current_manifest.pattern_id, version="T1"
+                ).exists()
+            ):
                 continue
             out = fs.submit_inspection(
                 users["dev_ops_lead"],
@@ -165,7 +174,9 @@ class Command(BaseCommand):
         if EscalationDeadlineSet.objects.filter(incident_policy=policy).exists():
             return
         levels = [*policy.rules["severity_scale"], "unclassified"]
-        deadlines = {lvl: [{"to_role": "safety_reviewer", "within_min": SYNTHETIC_DEADLINE_MIN}] for lvl in levels}
+        deadlines = {
+            lvl: [{"to_role": "safety_reviewer", "within_min": SYNTHETIC_DEADLINE_MIN}] for lvl in levels
+        }
         with transaction.atomic():
             lock_guards(share_settings=True)  # the approval trigger asserts it (production source check)
             ds = EscalationDeadlineSet.objects.create(
@@ -179,7 +190,9 @@ class Command(BaseCommand):
             EscalationDeadlineSetApproval.objects.create(
                 deadline_set=ds, slot="safety", approver=users["dev_safety_reviewer"]
             )
-            EscalationDeadlineSetApproval.objects.create(deadline_set=ds, slot="founder", approver=users["dev_founder"])
+            EscalationDeadlineSetApproval.objects.create(
+                deadline_set=ds, slot="founder", approver=users["dev_founder"]
+            )
         self.stdout.write(f"escalation deadline set v1 (SYNTHETIC) for incident policy v{policy.version}")
 
     # ------------------------------------------------------------------ X-8: demo visit evidence
@@ -191,7 +204,10 @@ class Command(BaseCommand):
             return
         latest = (
             ReadinessEvidence.objects.filter(
-                visit=visit, revision=visit.current_revision, kind="pre_departure_inspection", void__isnull=True
+                visit=visit,
+                revision=visit.current_revision,
+                kind="pre_departure_inspection",
+                void__isnull=True,
             )
             .order_by("-observed_at", "-id")
             .first()

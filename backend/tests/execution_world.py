@@ -304,9 +304,28 @@ def raw_hold(cur, w: SimpleNamespace, *, source_ref: str, robot_id: int | None =
     return int(cur.fetchone()[0])
 
 
+def resolve_incident_of_hold(w: SimpleNamespace, h: Hold) -> None:
+    """Walk the incident that references hold `h` (if any) forward to `resolved` (Slice 7, EM decision 12)."""
+    from execution import incidents  # noqa: PLC0415
+    from execution.models import Incident  # noqa: PLC0415
+
+    i = Incident.objects.filter(hold=h).first()
+    if i is None:
+        return
+    steps = ["reported", "triaged", "response_in_progress", "resolved"]
+    current = incidents.incident_status(i)
+    if current not in steps:
+        return
+    for to in steps[steps.index(current) + 1 :]:
+        incidents.change_incident_status(w.safety, incident_code=i.code, to_status=to)
+
+
 def release_hold(w: SimpleNamespace, hold_id: int) -> None:
-    """Fill every slot of an incident hold (DRAFT_POLICY_RULES) and release it through the fleet commands."""
+    """Fill every slot of an incident hold (DRAFT_POLICY_RULES) and release it through the fleet commands.
+    Slice 7 (EM decision 12): an incident hold is released only once its incident is resolved or closed, so the
+    incident is first walked to `resolved` through the commands."""
     h = Hold.objects.get(pk=hold_id)
+    resolve_incident_of_hold(w, h)
     signers = {
         "eng_review_1": (w.eng, "engineer"),
         "eng_review_2": (w.eng2, "engineer"),
