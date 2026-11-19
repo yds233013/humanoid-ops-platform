@@ -1,6 +1,6 @@
 # Slice 6 Contract: Scaling and Capacity Model
 
-Status: DRAFT rev 4 for engineering review · 2026-11-19 · baseline `slice-5-closed` (`de21a1d`). Planning only;
+Status: rev 5 (EM-approved amendment: recovery classification, section 4) · 2026-11-19 · baseline `slice-5-closed` (`de21a1d`). Planning only;
 no implementation until the EM freezes this document. Rev 2 applied the EM review of rev 1 (`6d96302`); rev 3 applies
 the review of rev 2 (`316aebc`); rev 4 makes the recovery cohorts explicit (review of `0b1845b`); section 10 maps
 every item. Companion: `docs/06a_workbook_inventory.md` (read-only inventory of `~/humanoid-fleet-ops`).
@@ -147,9 +147,12 @@ inside one step. Golden cases (with `f_min = 0.4`):
 still unavailable for the policy minimum `f_min` of next week, because recovery finishing early does not shorten
 the minimum hold. Older backlog robots are past the minimum already. A robot is never counted in both (a) and (b),
 so recovery backlog and minimum hold latency cannot double-count.
-Reported result = week `horizon_weeks`. Flags: `RECOVERY_UNSTABLE` if `B_H > B_{H−1} + 1e-9` (backlog still
-growing), `NOT_CONVERGED` if `|done_H − done_{H−1}| ≥ 1`. When the backlog is growing, the binding constraint
-reported is `recovery`. Floors use a 1e-9 tolerance so exact integers are not lost to float error.
+Reported result = week `horizon_weeks`. Flags: `INFEASIBLE` first (an impossible runtime, transport configuration
+or cycle completes nothing and is never classified as a recovery problem); otherwise (rev 5) `RECOVERY_UNSTABLE` if
+`B_H > B_{H−1} + ε` (backlog still growing) or `B_H > ε and B_H ≥ B_{H−1} − ε and R_H = 0` (a positive backlog
+that is not shrinking while robot capacity in week H is 0: the backlog has absorbed the fleet), with ε = 1e-9;
+`NOT_CONVERGED` if `|done_H − done_{H−1}| ≥ 1`. When `RECOVERY_UNSTABLE` is set, the binding constraint reported
+is `recovery` and staffing rule 2 adds an engineer. The weekly equations and FIFO cohorts are unchanged. Floors use a 1e-9 tolerance so exact integers are not lost to float error.
 
 ## 5. Current capacity vs recommended staffing (P0-3)
 
@@ -284,6 +287,7 @@ an operating plan" and synthetic labels, no forbidden wording; full suite and CI
 | Rev 3 P1-3 staffing | ordered rules with recovery first; the target < demand + unstable case specified (5) |
 | Rev 3 P1-4 ops leads | configured leads for current cost, span-based for recommended, supervisor shortfall reported (6) |
 | Rev 4 recovery cohorts | explicit older/new cohort accounting with FIFO, minimum hold applied only to new holds recovered in their own week, approximation stated, four golden cohort cases (4) |
+| Rev 5 recovery classification | `RECOVERY_UNSTABLE` also when a positive backlog is not shrinking and `R_H = 0` (saturated fleet), checked after `INFEASIBLE`; binding `recovery`, rule 2 adds an engineer; mirrored in the workbook Engine flags; EM-approved after implementation review (4, 5, 9) |
 | Rev 3 P1-5 baseline | exact source fields per metric; unavailable-data behaviour; `hold_min_days` is a policy assumption, observed hold duration informational only (2, 8) |
 
 ## 11. Ownership (unchanged)

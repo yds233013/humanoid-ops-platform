@@ -27,7 +27,7 @@ INT_OUTPUTS = {"demand", "done", "unmet", "robot", "crew", "vehicle", "inspectio
 TEXT_OUTPUTS = {"case", "assumption", "binding", "flags", "depends_on_unknown"}
 STRESS = {  # exercises the branches the registry values do not: unstable recovery, infeasible vehicle, k = 2
     "conservative": {"configured_engineers": 0},
-    "base": {"robots_per_visit": 2, "vehicle_robot_capacity": 1},
+    "base": {"robots_per_visit": 2, "vehicle_robot_capacity": 1, "configured_engineers": 0},
     "optimistic": {"working_day_min": 600, "charge_between_visits_min": 30, "runtime_limit_min": 200},
 }
 
@@ -459,10 +459,16 @@ def test_worked_example_cells(recalculated):
 @pytest.mark.xlsx
 @needs_soffice
 def test_stress_overrides_reconcile_with_python(tmp_path):
-    """Branches the registry does not reach: unstable recovery (engineers 0), INFEASIBLE vehicle with r = 2 and
-    N/A costs, two robot visits per day with a runtime limit set."""
+    """Branches the registry does not reach: unstable recovery (engineers 0, rev 5 saturated at 5 and 10 robots),
+    INFEASIBLE vehicle with r = 2, no engineers and N/A costs, two robot visits per day with a runtime limit set."""
     resolved = _resolved(STRESS)
     assert any(M.RECOVERY_UNSTABLE in M.current(resolved["conservative"], n).flags for n in FLEET_SIZES)
+    # rev 5 saturated cases (backlog flat, robot capacity 0) at 5 and 10 robots
+    for n in (5, 10):
+        sat = M.current(resolved["conservative"], n)
+        assert sat.caps["robot"] == 0 and M.RECOVERY_UNSTABLE in sat.flags
+    infeasible = M.current(resolved["base"], 5)  # no engineers, but INFEASIBLE wins: no recovery flag
+    assert M.INFEASIBLE in infeasible.flags and M.RECOVERY_UNSTABLE not in infeasible.flags
     assert M.current(resolved["base"], 5).costs.per_deployment is None
     assert M.cycles(resolved["optimistic"]).v_robot == 2
     src = W.build_workbook(tmp_path / "stress.xlsx", values_by_assumption=STRESS)
@@ -481,5 +487,8 @@ def test_stress_overrides_reconcile_with_python(tmp_path):
         assert scen[W.case_id(n, "conservative")]["binding"] == "recovery"
         assert "RECOVERY_UNSTABLE" in scen[W.case_id(n, "conservative")]["flags"]
     assert scen["5-base"]["per_deployment"] == W.NA and scen["5-base"]["util_vehicle"] == W.NA
-    assert "INFEASIBLE" in scen["5-base"]["flags"]
+    assert "INFEASIBLE" in scen["5-base"]["flags"] and "RECOVERY_UNSTABLE" not in scen["5-base"]["flags"]
+    assert scen["5-base"]["binding"] != "recovery"
+    for n in (5, 10):
+        assert scen[W.case_id(n, "conservative")]["binding"] == "recovery"
     assert "runtime_limit_min" in scen["5-optimistic"]["depends_on_unknown"]

@@ -1,4 +1,4 @@
-"""Slice 6 capacity model (contract docs/06_scaling_capacity_contract.md rev 4, sections 3-7 and 9).
+"""Slice 6 capacity model (contract docs/06_scaling_capacity_contract.md rev 5, sections 3-7 and 9).
 
 Pure Python: no database. Everything is SYNTHETIC.
 """
@@ -195,16 +195,55 @@ def test_recovery_first_even_when_target_already_delivered():
     )
 
 
-def test_saturated_backlog_is_not_flagged_unstable_contract_literal():
-    """Contract-literal edge (reported to the lead): with no engineers at base the backlog grows until robot
-    capacity floors to 0 (backlog 4.75 of 5 robots), done falls to 0 and the backlog stops growing, so B_H == B_{H-1} and
-    RECOVERY_UNSTABLE is not raised; rule 3 then sees robot binding and stops UNATTAINABLE (robot capacity)."""
+@pytest.mark.parametrize("fleet", [5, 10])
+def test_zero_engineers_flag_recovery_unstable_and_add_an_engineer_first(fleet):
+    """Rev 5: with no engineers at base the backlog absorbs the fleet; at 5 robots robot capacity floors to 0 and
+    the backlog stops growing (B_H == B_{H-1}), which is still RECOVERY_UNSTABLE (positive, not shrinking, R_H = 0).
+    The search adds an engineer first instead of stopping UNATTAINABLE on robot capacity."""
+    v = base(configured_engineers=0)
+    cur = M.current(v, fleet)
+    assert cur.weeks[-1].backlog > 4
+    assert M.RECOVERY_UNSTABLE in cur.flags and cur.binding == "recovery" and M.INFEASIBLE not in cur.flags
+    plan = M.recommend(v, fleet)
+    assert plan.steps[0] == "rule 2: recovery backlog growing -> engineers 1"
+    assert plan.status == "MET" and plan.team.engineers >= 1
+    assert M.RECOVERY_UNSTABLE not in plan.result.flags
+
+
+def test_saturated_backlog_is_flagged_unstable_rev5():
     v = base(configured_engineers=0)
     cur = M.current(v, 5)
-    assert cur.done == 0 and cur.weeks[-1].backlog == cur.weeks[-2].backlog > 4
-    assert M.RECOVERY_UNSTABLE not in cur.flags and cur.binding == "robot"
+    assert cur.done == 0 and cur.caps["robot"] == 0
+    assert cur.weeks[-1].backlog == cur.weeks[-2].backlog > 4  # not growing: only the rev 5 clause fires
+    assert M.RECOVERY_UNSTABLE in cur.flags and cur.binding == "recovery"
+
+
+def test_recovery_unstable_classification():
+    eps = M.EPS
+    assert M.recovery_unstable(1.0, 0.5, 10)  # growing
+    assert M.recovery_unstable(4.75, 4.75, 0)  # saturated: positive, flat, no robot capacity
+    assert M.recovery_unstable(4.75, 4.75 + eps / 2, 0)  # flat within tolerance
+    assert not M.recovery_unstable(4.75, 4.75, 3)  # flat but robots still working
+    assert not M.recovery_unstable(4.0, 4.75, 0)  # shrinking
+    assert not M.recovery_unstable(0.0, 0.0, 0)  # no backlog
+    assert not M.recovery_unstable(eps / 2, 0.0, 0)  # within tolerance of zero
+
+
+def test_recovered_once_engineering_clears_the_backlog():
+    v = base(configured_engineers=0)
+    assert M.RECOVERY_UNSTABLE in M.current(v, 5).flags
+    res = M.simulate(v, 5, team(engineers=1), leads_mode="configured")
+    assert res.weeks[-1].backlog <= res.weeks[-2].backlog + M.EPS
+    assert M.RECOVERY_UNSTABLE not in res.flags and res.binding != "recovery"
+
+
+def test_infeasible_with_no_engineers_is_not_recovery_hiring():
+    v = base(on_site_min=500, configured_engineers=0)
+    cur = M.current(v, 5)
+    assert M.INFEASIBLE in cur.flags and M.RECOVERY_UNSTABLE not in cur.flags and cur.binding != "recovery"
     plan = M.recommend(v, 5)
-    assert plan.status == "UNATTAINABLE" and plan.reason.startswith("robot capacity")
+    assert plan.status == "UNATTAINABLE" and "infeasible" in plan.reason
+    assert plan.steps == [] and plan.team.engineers == 0
 
 
 def test_supervisor_shortfall():

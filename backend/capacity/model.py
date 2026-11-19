@@ -1,4 +1,4 @@
-"""Slice 6 capacity model (frozen contract docs/06_scaling_capacity_contract.md rev 4, sections 3-7 and 9).
+"""Slice 6 capacity model (frozen contract docs/06_scaling_capacity_contract.md rev 5, sections 3-7 and 9).
 
 Pure Python, authoritative. Everything is SYNTHETIC: a forecast built on explicit assumptions from the
 registry (`capacity.inputs`), never a validated operating plan. Imports nothing from Django.
@@ -194,6 +194,18 @@ def recovery_step(
     return rec_old, rec_new, backlog, unavailable
 
 
+def recovery_unstable(backlog_h: float, backlog_prev: float, robot_cap_h: int) -> bool:
+    """Rev 5 classification at the horizon week H.
+
+    Unstable when the backlog is still growing, or when a positive backlog is not shrinking while robot
+    capacity has collapsed to zero (the backlog has absorbed the whole fleet, so it can no longer grow even
+    though nothing is being recovered).
+    """
+    growing = backlog_h > backlog_prev + EPS
+    saturated = backlog_h > EPS and backlog_h >= backlog_prev - EPS and robot_cap_h == 0
+    return growing or saturated
+
+
 def maintenance_fraction(values: Values) -> float:
     hours_month = _f(values, "working_day_min") / 60 * _f(values, "working_days_week") * WEEKS_PER_MONTH
     if hours_month <= 0:
@@ -273,7 +285,8 @@ def simulate(
     flags: list[str] = []
     if cyc.infeasible:
         flags.append(INFEASIBLE)
-    if last.backlog > prev_backlog + EPS:
+    # Rev 5: checked after INFEASIBLE (an infeasible cycle completes nothing, so it never owes recovery)
+    if not cyc.infeasible and recovery_unstable(last.backlog, prev_backlog, last.caps["robot"]):
         flags.append(RECOVERY_UNSTABLE)
     if len(weeks) > 1 and abs(last.done - weeks[-2].done) >= 1:
         flags.append(NOT_CONVERGED)

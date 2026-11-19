@@ -1,4 +1,4 @@
-"""Slice 6 founder report (frozen contract docs/06_scaling_capacity_contract.md rev 4, sections 0, 5-7 and 9).
+"""Slice 6 founder report (frozen contract docs/06_scaling_capacity_contract.md rev 5, sections 0, 5-7 and 9).
 
 Everything is SYNTHETIC: a forecast from stated assumptions, never a company operating plan. Every number here
 comes from `capacity.model` (authoritative); this module only selects, orders and words them. Takeaways are
@@ -48,7 +48,7 @@ CONSTRAINT_WORDS = {
     "crew": "field crews",
     "vehicle": "vehicles",
     "inspection": "inspection stations",
-    "recovery": "recovery engineers (backlog growing)",
+    "recovery": "recovery engineers (backlog not clearing)",
     "demand": "customer demand (every demanded visit completed)",
 }
 # The resource that relieves each staffing constraint (robot cannot be relieved by staffing).
