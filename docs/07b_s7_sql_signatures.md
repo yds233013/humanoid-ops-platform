@@ -294,3 +294,31 @@ in demo mode only. Constants: `fleet.management.commands.seed_guardrails.CLOSEOU
   "after the existing seeds"; the end state is the same.
 - **`fleet.place_hold` refusing `incident` (5.2)** is B's Python change; the seeded R-03 hold uses that path today,
   so `seed_fleet` must move to a non-`place_hold` path (or `report_incident`) when B lands it.
+
+## 13. Integration change log (lead, branch `s7/int`)
+
+Signatures and refusal prefixes in sections 1-11 are unchanged. Two new migrations, both body-only changes:
+
+| Migration | Change | EM ruling |
+|---|---|---|
+| `operations/0004_s7_eligibility_periodic` | **CR-1 shipped.** `CREATE OR REPLACE VIEW operations_robot_eligibility`: same columns (names, order, types), still `security_invoker = true`, owner-owned, ops_app SELECT only (re-asserted). New element in the "has a manifest" branch, after the configuration holds and before the robot holds (the Python order): `readiness_periodic_inspection_status(r.id, fleet_production_mode(), transaction_timestamp())` -> `Periodic inspection interval unknown for configuration <P>` / `No qualifying periodic inspection on the current configuration` / `Periodic inspection overdue since <YYYY-MM-DD HH24:MI:SS> UTC` / nothing for `due`. `at` = `transaction_timestamp()` (the page snapshot time). Dependent `operations_robot_status` is not re-created. Reverse restores the Slice 5 body | CR-1 approved as operations/0004; operations/0003 untouched |
+| `readiness/0008_s7_evidence_time_source` | `readiness_evidence_guard()` body: one time bound, `now_ts := greatest(clock_timestamp(), statement_timestamp())`, for both `observed_at cannot be in the future` and `observed_at is more than 24 hours ago` (texts unchanged). Root cause of the random-world-29 failure: the DEFAULT (`statement_timestamp()`) was compared with a second, later `clock_timestamp()` read, which is lower than the first after a backward step of the database wall clock. `readiness.evidence.record_evidence` stamps the inspection-derived default as `LEAST(submitted_at, statement_timestamp())` inside the INSERT | Release blocker: deterministic time source + explicit boundary test |
+
+Test evidence (real PostgreSQL):
+
+- CR-1 oracle: `tests/test_operations_sql.py::test_edge_case_eligibility` (view == Python `evaluate_eligibility(robot, now())`
+  row by row) with new cases `periodic_never_inspected`, `periodic_signer_revoked`, `periodic_no_rule`,
+  `periodic_interval_null`, `periodic_rule_withdrawn`, `periodic_synthetic_rule_production`,
+  `periodic_synthetic_template_production`, `periodic_overdue`, `engineering_profile_production_with_production_periodic`
+  and the production variants of the synthetic-profile cases; `eligible_baseline` is the normal `due` case;
+  `combined_order` pins the position. `test_views_equal_python_on_random_world[0..49]` (random worlds now include
+  robots without a periodic inspection and production endings), `test_random_worlds_cover_the_variety` requires
+  the interval-unknown and never-inspected reasons. B's `test_s7_oracles::test_periodic_eligibility_reason_matches_a_sql_expression` uses the same SQL expression.
+- Migrations: fresh database (`migrate` from zero, `makemigrations --check`: no changes; full `make seed` order) and an
+  upgraded Slice 6 database (`0a8bdab` tree migrated and seeded, then migrated forward to `s7/int`): after the
+  upgrade every robot reads `interval unknown` (fail-closed, section 4.8); after `seed_guardrails` the view equals
+  Python for every robot in demo and in production; `operations 0003` / `readiness 0007` reverse and re-apply cleanly.
+- Evidence time: `tests/test_s7_integration.py` steps the database clock 1 us behind the statement start (session-local
+  `public.clock_timestamp()` in the test transaction): the 0007 guard body refuses the equipment check exactly as in
+  the failure; the 0008 body accepts it; boundary `statement_timestamp()` -1 us / = accepted, +1 us refused; a
+  caller-supplied future `observed_at` is still refused.
