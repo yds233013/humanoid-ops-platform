@@ -1,8 +1,8 @@
 # Slice 6 Contract: Scaling and Capacity Model
 
-Status: DRAFT rev 2 for engineering review · 2026-11-19 · baseline `slice-5-closed` (`de21a1d`). Planning only;
-no implementation until the EM freezes this document. Rev 2 applies the EM review of rev 1 (`6d96302`); section 10
-maps every item. Companion: `docs/06a_workbook_inventory.md` (read-only inventory of `~/humanoid-fleet-ops`).
+Status: DRAFT rev 3 for engineering review · 2026-11-19 · baseline `slice-5-closed` (`de21a1d`). Planning only;
+no implementation until the EM freezes this document. Rev 2 applied the EM review of rev 1 (`6d96302`); rev 3 applies
+the review of rev 2 (`316aebc`); section 10 maps every item. Companion: `docs/06a_workbook_inventory.md` (read-only inventory of `~/humanoid-fleet-ops`).
 
 Everything is SYNTHETIC. The model is a **forecast built on explicit assumptions**, never a validated company
 operating plan. Unknown robot specifications, deployment economics and customer demand stay visible as unresolved
@@ -55,7 +55,7 @@ engineer and maintenance work, km/h for speed, synthetic currency units (SCU) fo
 | 14 | `crew_size` | people per visit | platform_measured (lead + second) | 2 / 2 / 2 | none |
 | 15 | `incidents_per_visit` | probability a completed visit has ≥ 1 incident (counted once per visit) | platform_measured* | 0.10 / 0.05 / 0.02 | lower |
 | 16 | `holds_per_incident` | holds per incident | platform rule (Slice 4: every incident holds) | 1 / 1 / 1 | none |
-| 17 | `hold_min_days` | working days a held robot is out regardless of engineers (approvals, inspection) | platform_measured* | 3 / 2 / 1 | lower |
+| 17 | `hold_min_days` | policy minimum working days a held robot is out regardless of engineers (approvals, re-inspection); must be ≤ `working_days_week` | synthetic_assumption (a policy minimum, not calibrated from observed durations) | 3 / 2 / 1 | lower |
 | 18 | `recovery_hours_per_hold` | engineer hours per hold | synthetic_assumption | 8 / 5 / 3 | lower |
 | 19 | `engineer_hours_per_week` | recovery hours per engineer per week | synthetic_assumption | 30 / 32 / 35 | higher |
 | 20 | `maintenance_hours_per_robot_month` | planned maintenance hours | unknown_company_data (B-08) | 8 / 6 / 4 | lower |
@@ -91,11 +91,14 @@ conservative approximation; no partial visits, no overlap of two visits for one 
 | robot | `Tr = inspect + load + 2·travel + on_site + unload + post_inspect` | `charge_between_visits_min` (robot only; the crew is free) | largest k with `k·Tr + (k−1)·charge ≤ W` (0 if `Tr > W`) |
 | crew | `Tc = Tr` (the crew inspects, loads, travels, supervises, unloads and inspects after; it does **not** supervise charging or maintenance) | none | `floor(W / Tc)` |
 | vehicle | `Tv = load + 2·travel + on_site + unload` | none | `floor(W / Tv)` |
-| inspection station | `Ti = inspect + post_inspect` | none | `floor(W / Ti)` |
+| inspection station | `Ti = inspect + post_inspect` **per robot** (each robot is inspected) | none | `floor(W / Ti)` robot-inspections |
 
 The robot starts each day charged (overnight charging is assumed and labelled as an assumption). **Transport mode:
 one vehicle trip serves one site**; it carries `robots_per_visit` robots and is INFEASIBLE if
-`vehicle_robot_capacity < robots_per_visit`; multi-site batching is out of scope until modelled. If
+`vehicle_robot_capacity < robots_per_visit`; multi-site batching is out of scope until modelled. **Multi-robot visits
+(`robots_per_visit = r > 1`):** one customer visit consumes r robot-visit slots and r robot-inspections, but one crew
+slot and one vehicle trip; carrying r robots never creates r customer deployments (section 4 divides robot and
+inspection capacity by r). If
 `runtime_limit_min` is set and `< on_site_min`, the visit is INFEASIBLE for the robot. Any INFEASIBLE resource has
 capacity 0 and the reason is reported; nothing goes negative.
 
@@ -106,19 +109,25 @@ so there is no circularity. With `D = working_days_week`, `eff = scheduling_effi
 `m = maintenance_hours_per_robot_month / (W/60 · D · 52/12)` (fraction of robot time in planned maintenance):
 
 ```
-B_0 = 0, L_0 = 0                                    (recovery backlog in jobs; robots lost to minimum hold time)
-A_t  = max(0, (N − B_{t−1} − L_{t−1}) · (1 − m))    available robots (held robots do no planned maintenance: no double count)
-R_t  = floor(eff · A_t · v_robot · D)               robot capacity, visits/week
+B_0 = 0, U_0 = 0                                    (recovery backlog in jobs; unavailable robots for the next week)
+A_t  = max(0, (N − U_{t−1}) · (1 − m))              available robots (held robots do no planned maintenance: no double count)
+R_t  = floor(eff · A_t · v_robot · D / r)           robot capacity in customer visits/week (r = robots_per_visit)
 C    = floor(eff · crews · v_crew · D)
-V    = floor(eff · vehicles · v_vehicle · D)
-I    = stations · v_inspection · D                  (inspection is not bound by customer windows)
+V    = floor(eff · vehicles · v_vehicle · D)        (one trip per visit; 0 if vehicle_robot_capacity < r)
+I    = floor(stations · v_inspection · D / r)       (robot-inspections per week / r; not bound by customer windows)
 cap_t = min(R_t, C, V, I);  binding = argmin, ties in the order robot, crew, vehicle, inspection
 done_t = min(cap_t, demand),  demand = demand_visits_per_robot_week · N,  unmet_t = demand − done_t
 holds_t = done_t · incidents_per_visit · holds_per_incident
 jobs_capacity = engineers · engineer_hours_per_week / recovery_hours_per_hold
-B_t = max(0, B_{t−1} + holds_t − jobs_capacity)     recovery jobs not started -> robots out all next week
-L_t = holds_t · hold_min_days / D                   robot-weeks lost to minimum hold time
+B_t = max(0, B_{t−1} + holds_t − jobs_capacity)     recovery jobs still open at week end (FIFO: oldest first)
+new_in_backlog_t = min(holds_t, B_t)                this week's holds still waiting for recovery
+U_t = B_t + (holds_t − new_in_backlog_t) · f_min,   f_min = hold_min_days / D  (≤ 1, registry-validated)
 ```
+**One unavailability measure, mutually exclusive states.** Every held robot is in exactly one state at week end:
+(a) *in the recovery backlog* - unavailable all of next week (counted once, in `B_t`); or (b) *recovered this week* -
+still unavailable for the policy minimum `f_min` of next week, because recovery finishing early does not shorten
+the minimum hold. Older backlog robots are past the minimum already. A robot is never counted in both (a) and (b),
+so recovery backlog and minimum hold latency cannot double-count.
 Reported result = week `horizon_weeks`. Flags: `RECOVERY_UNSTABLE` if `B_H > B_{H−1} + 1e-9` (backlog still
 growing), `NOT_CONVERGED` if `|done_H − done_{H−1}| ≥ 1`. When the backlog is growing, the binding constraint
 reported is `recovery`. Floors use a 1e-9 tolerance so exact integers are not lost to float error.
@@ -128,25 +137,32 @@ reported is `recovery`. Floors use a 1e-9 tolerance so exact integers are not lo
 - **Current capacity** always uses the configured team (inputs 22-26), never the recommendation.
 - **Robot-limited target** = `done_H` of the simulation with crews, vehicles, engineers and stations at their search
   bound (`staffing_bound_per_robot · N`): the most the fleet itself can deliver at its own reliability.
-- **Recommended staffing** = deterministic greedy search starting from the configured team: repeat — run the
-  simulation; if `done_H ≥ min(demand, target)` and crew utilization `done_H / C ≤ crew_hire_trigger` and not
-  `RECOVERY_UNSTABLE`: stop; else add one unit of the binding resource (crew; or crew when only utilization fails;
-  vehicle; inspection station; engineer when recovery is unstable). Ops leads = `ceil(crews / ops_lead_span)`. The
-  search is bounded by `staffing_bound_per_robot · N` units per resource and returns `UNATTAINABLE` with the reason
-  (robot capacity, INFEASIBLE cycle, or bound reached) instead of looping. It is a heuristic, not a global optimum,
+- **Recommended staffing** = deterministic greedy search starting from the configured team, goal
+  `g = min(demand, target)`. Each iteration runs the simulation and applies the FIRST matching rule:
+  1. any resource INFEASIBLE, or `target = 0` ⇒ stop, `UNATTAINABLE` (reason named);
+  2. `RECOVERY_UNSTABLE` ⇒ add one engineer (recovery has priority over every other binding, so a robot-bound or
+     already-sufficient team is never "fixed" by adding crews while the queue grows);
+  3. `done_H < g` ⇒ add one unit of the binding resource among crew, vehicle, inspection station (robot cannot bind
+     here because `g ≤ target`; if it does, stop `UNATTAINABLE`, reason robot capacity);
+  4. crew utilization `done_H / C > crew_hire_trigger` ⇒ add one crew;
+  5. otherwise stop, `MET`.
+  Case "target < demand, the configured team already delivers the target, but recovery is unstable": rule 2 adds
+  engineers until stable, then rules 3-5 re-check. Bound: `staffing_bound_per_robot · N` units per resource; reaching
+  it on any rule ⇒ `UNATTAINABLE` (bound reached). It is a heuristic, not a global optimum,
   and the report says so. Hiring and vehicle triggers = the fleet step at which each count first increases.
 
 ## 6. Costs (per month, SCU)
 
 ```
-ops_leads = ceil(crews / ops_lead_span)
+ops_leads = configured_ops_leads (current team)  |  ceil(crews / ops_lead_span) (recommended staffing)
 labor     = crews · crew_size · field_operator_cost_month + engineers · engineer_cost_month + ops_leads · ops_lead_cost_month
 km_visit  = 2 · travel_one_way_min / 60 · avg_speed_kmh
 vehicles  = vehicles · vehicle_fixed_cost_month + done_H · 52/12 · km_visit · vehicle_cost_per_km
 total     = labor + vehicles + N · maintenance_allowance_robot_month + overhead_month
 cost per completed deployment = total / (done_H · 52/12), N/A when done_H = 0
 ```
-Utilizations: crew = `done_H / C`, vehicle = `done_H / V`, robot = `done_H / R_H`, each N/A when the denominator
+Current-team report adds a **supervisor shortfall** = `max(0, ceil(configured_crews / ops_lead_span) −
+configured_ops_leads)` when the configured leads are too few for the span. Utilizations: crew = `done_H / C`, vehicle = `done_H / V`, robot = `done_H / R_H`, each N/A when the denominator
 is 0. No cost-per-deployment ordering across scenarios is required (P1-5).
 
 ## 7. Worked example (5 robots, base, configured team; numbers the golden test will assert)
@@ -158,8 +174,8 @@ is 0. No cost-per-deployment ordering across scenarios is required (P1-5).
    `C = floor(0.8·2·1·5) = 8`; `V = 8`; `I = 1·7·5 = 35`; `cap = 8`, binding **crew** (tie with vehicle, crew first);
    demand `4·5 = 20` ⇒ `done = 8`, `unmet = 12`.
 4. Reliability: `holds = 8·0.05·1 = 0.4/week`; `jobs_capacity = 1·32/5 = 6.4 ≥ 0.4 ⇒ B = 0` (stable);
-   `L = 0.4·2/5 = 0.16` robot-weeks.
-5. Week 2 onward: `A = (5 − 0 − 0.16)·(1−m) = 4.661292`; `R = floor(18.645) = 18`; cap stays 8 (crew), steady through
+   `U = B + (holds − min(holds, B))·f_min = 0 + 0.4·(2/5) = 0.16` unavailable robots next week.
+5. Week 2 onward: `A = (5 − 0.16)·(1−m) = 4.661292`; `R = floor(18.645) = 18`; cap stays 8 (crew), steady through
    week 26: **current capacity 8 completed visits/week, binding crew, 12 unmet, recovery stable**.
 6. Costs: labor `2·2·6500 + 11000 + 1·9500 = 46,500`; `km_visit = 2·40/60·35 = 46.667`; vehicles
    `2·1300 + 8·52/12·46.667·0.7 = 3,732.44`; maintenance `5,000`; overhead `12,000`; **total 67,232.44 SCU/month**,
@@ -185,10 +201,21 @@ Inside `operations.snapshot.read_snapshot()`, over an explicit window `[start, e
 | on_site observed | median session start → stop (Slice 4 session events) | observed | n ≥ 10 sessions |
 | travel observed | median departure → `arrived_site` | observed | n ≥ 10 trips |
 | incidents_per_visit | runs with ≥ 1 incident / departures in the window | observed rate | n ≥ 30 departures |
-| hold_min_days | Kaplan-Meier median of incident-hold duration (placed → released); still-open holds are right-censored at `end` | observed, censored | ≥ 10 holds with ≥ 5 released |
+| observed_hold_duration_days (informational only) | Kaplan-Meier median of incident-hold duration; still-open holds right-censored at `end`. Reported next to the `hold_min_days` policy assumption, **never used to set it** | observed, censored | ≥ 10 holds with ≥ 5 released |
 
-The report states for each: value, n, window, planned vs observed, and "synthetic demo measurement, not real-world
-performance"; below the threshold the registry fallback is used and named.
+Source fields (all read-only, inside the snapshot):
+
+| metric | rows and fields |
+|---|---|
+| planned durations | `planning_reservation` (`purpose`, `starts_at`, `ends_at`, `released_at IS NULL`) joined to the `revision_id` of visits with a `readiness_departureevent` whose `departed_at` is in the window; robot-resource rows for inspect/load/unload/on_site |
+| on_site observed | `execution_sessionevent` per run: first `start` → last `stop` (`recorded_at`), runs whose departure is in the window; runs without both events are skipped |
+| travel observed | `execution_tripevent` `arrived_site.recorded_at` − `readiness_departureevent.departed_at` (aborted-outbound runs excluded) |
+| incidents_per_visit | numerator: distinct `execution_incident.run_id` among runs departed in the window; denominator: `readiness_departureevent` rows in the window |
+| observed hold duration | `fleet_hold` with `source_type='incident'`: `placed_at` → `released_at`, censored at `end` when `released_at IS NULL` |
+
+When the rows are unavailable or below the threshold the metric reports `n`, says "no/insufficient platform data",
+and the registry fallback is used and named. The report states for each: value, n, window, planned vs observed,
+and "synthetic demo measurement, not real-world performance".
 
 ## 9. Workbook and tests
 
@@ -206,9 +233,13 @@ in Python and written as values (labelled), because a loop is not expressible as
 preserved; ranked by **incremental completed deployments** at the configured team and at the recommended staffing,
 then by cost per deployment.
 
-**Tests (closure bar):** registry completeness and exact size (38); worked example (section 7) exact; ≥ 3 more
-golden cases (robot-bound, vehicle-bound with `Tv` short and crews plentiful, recovery-unstable with engineers 0 or
-long recovery, INFEASIBLE cycle, runtime-limited); conservation (`done ≤` every capacity and `≤ demand`; busy minutes ≤
+**Tests (closure bar):** registry completeness and exact size (38), incl. `hold_min_days ≤ working_days_week`;
+worked example (section 7) exact; more golden cases: robot-bound; vehicle-bound (`Tv` short, crews plentiful);
+**overlapping recovery and minimum hold** (a hold still in the backlog during its minimum-hold period is counted
+once; a hold recovered within the week is still out for `f_min`); **multi-robot visit** (`r = 2`: robot and
+inspection capacity halve, crew and vehicle do not; vehicle capacity 1 ⇒ INFEASIBLE); recovery-unstable
+(engineers 0) where the staffing search adds engineers first; supervisor shortfall; INFEASIBLE cycle;
+runtime-limited; conservation (`done ≤` every capacity and `≤ demand`; busy minutes ≤
 available minutes per resource); zero denominators ⇒ N/A; monotonicity where guaranteed (more robots never lower
 `R`; more crews/vehicles/stations/engineers never lower `done_H`; higher incident rate, longer hold or recovery,
 longer travel never raise `done_H`); scenario ordering of current `done_H` (cons ≤ base ≤ opt) only with demand held at
@@ -229,6 +260,11 @@ an operating plan" and synthetic labels, no forbidden wording; full suite and CI
 | P1-6 sensitivity and baseline | feasible perturbations; ranked by incremental completed deployments; planned vs observed; explicit windows; per-metric samples; right-censored holds (8, 9) |
 | P1-7 workbook | formulas preserved, cached values, no errors, relative tolerance, integers exact; Excel/Sheets as separate manual checks (9) |
 | worked example | section 7, from inputs to founder recommendation, computed and asserted by the golden test |
+| Rev 3 P0-1 double count | single unavailability `U_t` with mutually exclusive backlog / recovered-this-week states; early recovery does not shorten the minimum hold; golden case (4, 9) |
+| Rev 3 P0-2 multi-robot | robot and inspection capacity divided by `robots_per_visit`; inspection per robot; vehicle stays a feasibility constraint; golden case (3, 4, 9) |
+| Rev 3 P1-3 staffing | ordered rules with recovery first; the target < demand + unstable case specified (5) |
+| Rev 3 P1-4 ops leads | configured leads for current cost, span-based for recommended, supervisor shortfall reported (6) |
+| Rev 3 P1-5 baseline | exact source fields per metric; unavailable-data behaviour; `hold_min_days` is a policy assumption, observed hold duration informational only (2, 8) |
 
 ## 11. Ownership (unchanged)
 
