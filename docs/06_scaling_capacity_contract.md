@@ -1,8 +1,9 @@
 # Slice 6 Contract: Scaling and Capacity Model
 
-Status: DRAFT rev 3 for engineering review · 2026-11-19 · baseline `slice-5-closed` (`de21a1d`). Planning only;
+Status: DRAFT rev 4 for engineering review · 2026-11-19 · baseline `slice-5-closed` (`de21a1d`). Planning only;
 no implementation until the EM freezes this document. Rev 2 applied the EM review of rev 1 (`6d96302`); rev 3 applies
-the review of rev 2 (`316aebc`); section 10 maps every item. Companion: `docs/06a_workbook_inventory.md` (read-only inventory of `~/humanoid-fleet-ops`).
+the review of rev 2 (`316aebc`); rev 4 makes the recovery cohorts explicit (review of `0b1845b`); section 10 maps
+every item. Companion: `docs/06a_workbook_inventory.md` (read-only inventory of `~/humanoid-fleet-ops`).
 
 Everything is SYNTHETIC. The model is a **forecast built on explicit assumptions**, never a validated company
 operating plan. Unknown robot specifications, deployment economics and customer demand stay visible as unresolved
@@ -119,10 +120,28 @@ cap_t = min(R_t, C, V, I);  binding = argmin, ties in the order robot, crew, veh
 done_t = min(cap_t, demand),  demand = demand_visits_per_robot_week · N,  unmet_t = demand − done_t
 holds_t = done_t · incidents_per_visit · holds_per_incident
 jobs_capacity = engineers · engineer_hours_per_week / recovery_hours_per_hold
-B_t = max(0, B_{t−1} + holds_t − jobs_capacity)     recovery jobs still open at week end (FIFO: oldest first)
-new_in_backlog_t = min(holds_t, B_t)                this week's holds still waiting for recovery
-U_t = B_t + (holds_t − new_in_backlog_t) · f_min,   f_min = hold_min_days / D  (≤ 1, registry-validated)
+O_t = B_{t−1}                                        older cohort: holds carried from earlier weeks
+rec_old_t = min(O_t, jobs_capacity)                  FIFO: older holds are recovered first
+rec_new_t = min(holds_t, jobs_capacity − rec_old_t)  then this week's holds, with what capacity is left
+B_t = (O_t − rec_old_t) + (holds_t − rec_new_t)      backlog at week end (older remainder + new remainder)
+U_t = B_t + rec_new_t · f_min + rec_old_t · 0,       f_min = hold_min_days / D  (≤ 1, registry-validated)
 ```
+**Cohorts and the minimum hold.** Two cohorts each week: the *older* backlog `O_t` (every such hold was placed at least
+one week ago, so its policy minimum of at most one week has already elapsed) and the *new* holds of week t.
+Unavailability for next week, in mutually exclusive states: every hold still in the backlog (older or new remainder)
+is out the whole week (counted once, in `B_t`); a **new** hold recovered this week is still out for its minimum
+`f_min`, because recovering early does not shorten the minimum hold; an **older** hold recovered this week is out
+for nothing more (its minimum has passed). Approximation, stated in the report: weekly granularity with expected
+values; new holds are treated as if placed at the start of their week, so the remaining minimum falls into the next
+week as `f_min` (an upper bound on the true remainder), and `hold_min_days ≤ working_days_week` keeps every minimum
+inside one step. Golden cases (with `f_min = 0.4`):
+
+| case | O | holds | jobs_capacity | rec_old | rec_new | B | U |
+|---|---|---|---|---|---|---|---|
+| backlog carried, capacity below the older cohort | 4 | 2 | 3 | 3 | 0 | 3 (1 old + 2 new) | 3 |
+| capacity clears the older cohort and part of the new | 1 | 3 | 2 | 1 | 1 | 2 (0 old + 2 new) | 2.4 |
+| worked example (section 7), everything recovered | 0 | 0.4 | 6.4 | 0 | 0.4 | 0 | 0.16 |
+| no engineers: nothing recovered | 2 | 1 | 0 | 0 | 0 | 3 | 3 |
 **One unavailability measure, mutually exclusive states.** Every held robot is in exactly one state at week end:
 (a) *in the recovery backlog* - unavailable all of next week (counted once, in `B_t`); or (b) *recovered this week* -
 still unavailable for the policy minimum `f_min` of next week, because recovery finishing early does not shorten
@@ -264,6 +283,7 @@ an operating plan" and synthetic labels, no forbidden wording; full suite and CI
 | Rev 3 P0-2 multi-robot | robot and inspection capacity divided by `robots_per_visit`; inspection per robot; vehicle stays a feasibility constraint; golden case (3, 4, 9) |
 | Rev 3 P1-3 staffing | ordered rules with recovery first; the target < demand + unstable case specified (5) |
 | Rev 3 P1-4 ops leads | configured leads for current cost, span-based for recommended, supervisor shortfall reported (6) |
+| Rev 4 recovery cohorts | explicit older/new cohort accounting with FIFO, minimum hold applied only to new holds recovered in their own week, approximation stated, four golden cohort cases (4) |
 | Rev 3 P1-5 baseline | exact source fields per metric; unavailable-data behaviour; `hold_min_days` is a policy assumption, observed hold duration informational only (2, 8) |
 
 ## 11. Ownership (unchanged)
