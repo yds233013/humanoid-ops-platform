@@ -22,11 +22,13 @@ evaluated in this snapshot.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
 from django.db import connection
+
+from operations.exceptions import PERIODIC_STATUS_CTES
 
 # ------------------------------------------------------------------ thresholds (fleet_deploymentsetting)
 CUSTODY_VERIFY_GRACE = "ops_custody_verify_grace_min"
@@ -152,7 +154,8 @@ class RobotStatus:
     url: str
     # Slice 7 (X-3, contract 07a 4.6): readiness_periodic_inspection_status in the current mode at the
     # snapshot
-    periodic_inspection: "PeriodicInspection | None" = None
+    # (compare=False: a Slice 7 addition that Slice 5 equality checks of the robot status do not cover)
+    periodic_inspection: "PeriodicInspection | None" = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -174,17 +177,25 @@ PERIODIC_LABELS = {
     "due": "Periodic inspection due",
 }
 
-FLEET_OVERVIEW_SQL = """
+# The periodic status comes from the set-based operations.exceptions.PERIODIC_STATUS_CTES (oracle-tested
+# against A's readiness_periodic_inspection_status), evaluated at %(at)s = the snapshot time.
+FLEET_OVERVIEW_SQL = (
+    """
+WITH mode AS MATERIALIZED (SELECT fleet_production_mode() AS production),
+"""
+    # now() = transaction_timestamp() = the snapshot time (checked below); the statement takes no parameters
+    + PERIODIC_STATUS_CTES.replace("%(at)s", "now()").rstrip().rstrip(",")
+    + """
 SELECT n.snapshot_now, s.*, ps.state AS periodic_state, ps.due_at AS periodic_due_at,
        pr.version_no AS periodic_rule_version, pr.source AS periodic_rule_source,
        pr.interval_min AS periodic_rule_interval_min
-FROM (SELECT now() AS snapshot_now, fleet_production_mode() AS production) n
+FROM (SELECT now() AS snapshot_now) n
 LEFT JOIN operations_robot_status s ON true
-LEFT JOIN LATERAL readiness_periodic_inspection_status(s.robot_id, n.production, n.snapshot_now) ps
-  ON s.robot_id IS NOT NULL
+LEFT JOIN pstat ps ON ps.robot_id = s.robot_id
 LEFT JOIN fleet_periodicinspectionrule pr ON pr.id = ps.rule_id
 ORDER BY s.robot_code
 """
+)
 
 
 def fleet_overview(at: datetime) -> list[RobotStatus]:

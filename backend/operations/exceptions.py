@@ -248,7 +248,64 @@ def read_thresholds() -> tuple[dict[str, int | None], set[str]]:
 # priority comes from PRIORITY; NULL thresholds switch their branch off. Time uses %(at)s only. Two
 # projections read it: RULES_SQL (inbox rows, ordered and keyset-paginated) and COUNT_SQL
 # (``count_operational_exceptions``).
-RULES_RELATION_SQL = r"""
+# Slice 7 X-3: the periodic inspection status of every non-retired robot, SET-BASED (contract 07a 4.2 and
+# A's readiness_periodic_inspection_status, docs/07b section 4). Calling that plpgsql function once per robot
+# costs one planning_inspection_signer_problem call per candidate inspection and broke the Slice 5 scale
+# budgets, so the same rule is evaluated here with the usable rule once per pattern, the usable periodic
+# templates once, and the covered-signer rule (planning_inspector_covered) as two EXISTS. An oracle proves
+# it equals the function for every robot. Needs a CTE ``mode`` (production flag) and the parameter %(at)s;
+# yields pstat(robot_id, robot_code, pattern_code, state, due_at, inspection_id, rule_id).
+PERIODIC_STATUS_CTES = r"""
+pused AS MATERIALIZED (
+  SELECT DISTINCT m.pattern_id
+  FROM fleet_robot r JOIN fleet_configurationmanifest m ON m.id = r.current_manifest_id
+  WHERE r.lifecycle <> 'retired'
+),
+prule AS MATERIALIZED (
+  SELECT pu.pattern_id, fleet_usable_periodic_rule_id(pu.pattern_id, mode.production) AS usable_id,
+         fleet_active_periodic_rule_id(pu.pattern_id) AS active_id
+  FROM pused pu CROSS JOIN mode
+),
+ptpl AS MATERIALIZED (
+  SELECT t.id FROM fleet_inspectiontemplate t CROSS JOIN mode
+  WHERE t.pattern_id IN (SELECT pattern_id FROM pused)
+    AND fleet_template_usable(t.id, 'periodic', mode.production)
+),
+pstat AS MATERIALIZED (
+  SELECT r.id AS robot_id, r.code AS robot_code, p.code AS pattern_code,
+         CASE WHEN ru.id IS NULL THEN 'unknown_interval'
+              WHEN qi.id IS NULL THEN 'never_inspected'
+              WHEN %(at)s >= qi.submitted_at + make_interval(mins => ru.interval_min) THEN 'overdue'
+              ELSE 'due' END AS state,
+         qi.submitted_at + make_interval(mins => ru.interval_min) AS due_at,
+         qi.id AS inspection_id,
+         CASE WHEN ru.id IS NULL THEN pr.active_id ELSE ru.id END AS rule_id
+  FROM fleet_robot r
+  LEFT JOIN fleet_configurationmanifest m ON m.id = r.current_manifest_id
+  LEFT JOIN fleet_manifestpattern p ON p.id = m.pattern_id
+  LEFT JOIN prule pr ON pr.pattern_id = m.pattern_id
+  LEFT JOIN fleet_periodicinspectionrule ru ON ru.id = pr.usable_id
+  LEFT JOIN LATERAL (
+    SELECT i.id, i.submitted_at FROM fleet_inspection i
+    WHERE ru.id IS NOT NULL AND i.robot_id = r.id AND i.manifest_id = r.current_manifest_id
+      AND i.result = 'PASS' AND i.complete AND i.template_id IN (SELECT id FROM ptpl)
+      AND i.performer_id IS NOT NULL AND i.verifier_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM planning_qualification q JOIN planning_person pp ON pp.id = q.person_id
+                  WHERE pp.user_id = i.performer_id AND q.kind = 'readiness_inspector'
+                    AND q.revoked_at IS NULL
+                    AND q.valid_from <= i.submitted_at AND i.submitted_at <= q.valid_to)
+      AND EXISTS (SELECT 1 FROM planning_qualification q JOIN planning_person pp ON pp.id = q.person_id
+                  WHERE pp.user_id = i.verifier_id AND q.kind = 'readiness_inspector'
+                    AND q.revoked_at IS NULL
+                    AND q.valid_from <= i.submitted_at AND i.submitted_at <= q.valid_to)
+    ORDER BY i.submitted_at DESC, i.id DESC LIMIT 1
+  ) qi ON true
+  WHERE r.lifecycle <> 'retired'
+),
+"""
+
+RULES_RELATION_SQL = (
+    r"""
 -- Each view is read once, projecting only the columns the rules below use: the planner then drops the unused
 -- view outputs (eligibility reasons, next visit, status label, session state, severity rank, ...) instead of
 -- computing them for every robot / run / incident (Slice 5 perf, EXPLAIN on the scale fixture).
@@ -269,17 +326,9 @@ q AS MATERIALIZED (
 ),
 -- Slice 7 (contract 07a 2.2): the deployment mode as read in this snapshot (missing setting = production)
 mode AS MATERIALIZED (SELECT fleet_production_mode() AS production),
--- Slice 7 X-3: periodic status of every non-retired robot from A's authoritative SQL function (state,
--- due_at), in the current mode at the snapshot time
-pstat AS MATERIALIZED (
-  SELECT r.code AS robot_code, p.code AS pattern_code, st.state, st.due_at
-  FROM fleet_robot r
-  LEFT JOIN fleet_configurationmanifest m ON m.id = r.current_manifest_id
-  LEFT JOIN fleet_manifestpattern p ON p.id = m.pattern_id
-  CROSS JOIN mode
-  CROSS JOIN LATERAL readiness_periodic_inspection_status(r.id, mode.production, %(at)s) st
-  WHERE r.lifecycle <> 'retired'
-),
+"""
+    + PERIODIC_STATUS_CTES
+    + r"""
 -- Slice 7 X-4: the usable deadline set (active for the active incident policy; owner_approved in production)
 dset AS MATERIALIZED (
   SELECT d.id, d.incident_policy_id, d.deadlines, d.version_no
@@ -557,6 +606,7 @@ ex AS (
   WHERE (SELECT production FROM mode)
 )
 """
+)
 
 # Projection (i): inbox rows in the total order, keyset-filtered and limited in SQL.
 RULES_SQL = (

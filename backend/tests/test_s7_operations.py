@@ -226,6 +226,80 @@ def test_periodic_interval_unconfigured_withdrawn_rule_and_production():
     assert "production mode" in p.message
 
 
+def _set_based(production: bool, at: datetime) -> dict[int, tuple[Any, ...]]:
+    sql = (
+        "WITH mode AS MATERIALIZED (SELECT %(prod)s::boolean AS production),\n"
+        + ox.PERIODIC_STATUS_CTES.rstrip().rstrip(",")
+        + "\nSELECT robot_id, state, due_at, inspection_id, rule_id FROM pstat"
+    )
+    with connection.cursor() as cur:
+        cur.execute(sql, {"prod": production, "at": at})
+        return {r[0]: tuple(r[1:]) for r in cur.fetchall()}
+
+
+def _function(production: bool, at: datetime) -> dict[int, tuple[Any, ...]]:
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT r.id, f.state, f.due_at, f.inspection_id, f.rule_id FROM fleet_robot r "
+            "CROSS JOIN LATERAL readiness_periodic_inspection_status(r.id, %s, %s) f WHERE r.lifecycle <> 'retired'",
+            [production, at],
+        )
+        return {r[0]: tuple(r[1:]) for r in cur.fetchall()}
+
+
+def _assert_periodic_oracle(label: str) -> int:
+    n = 0
+    now = db_now()
+    _, due = periodic("R-01")
+    points = [now, now + timedelta(days=400)] + ([due - US, due, due + US] if due else [])
+    for production in (False, True):
+        for at in points:
+            assert _set_based(production, at) == _function(production, at), (label, production, at)
+            n += 1
+    return n
+
+
+@pytest.mark.django_db
+def test_set_based_periodic_status_equals_the_sql_function():
+    """Oracle: PERIODIC_STATUS_CTES (inbox + overview) == A's readiness_periodic_inspection_status for every
+    non-retired robot, both modes, at -1 us / = / +1 us of a due date, through every state change."""
+    from fleet.models import InspectionTemplate, InspectionTemplateWithdrawal
+    from planning import services as ps
+    from planning.models import Qualification
+    from tests.fleet_world import make_engineering_template, make_periodic_rule
+
+    w = ow.ops_world("s7q_", robots=4, incident_policy=False)
+    configure()
+    checks = _assert_periodic_oracle("world")  # due (R-01) and never inspected (others)
+    ow.depart_new(w, "R-02")  # a second robot with qualifying inspections
+    checks += _assert_periodic_oracle("second robot")
+    make_periodic_rule(w, "P-A", interval_min=60)  # a newer approved, shorter interval
+    checks += _assert_periodic_oracle("shorter interval")
+    # an engineering template approved for periodic use (production branch), and an inspection on it
+    make_engineering_template(w, "P-A", version="E1", purposes=("periodic",))
+    checks += _assert_periodic_oracle("engineering template")
+    make_periodic_rule(w, "P-A", source="engineering_doc")
+    checks += _assert_periodic_oracle("engineering rule")
+    # a signer revoked: the inspection stops qualifying
+    insp = (
+        __import__("fleet.models", fromlist=["Inspection"])
+        .Inspection.objects.filter(robot__code="R-01")
+        .first()
+    )
+    q = Qualification.objects.filter(person__user=insp.performer, kind="readiness_inspector").first()
+    ps.revoke_qualification(w.ops, qualification_id=q.pk, reason="SYNTHETIC")
+    checks += _assert_periodic_oracle("revoked signer")
+    # the synthetic template withdrawn
+    t1 = InspectionTemplate.objects.get(pattern__code="P-A", version="T1")
+    InspectionTemplateWithdrawal.objects.create(template=t1, withdrawn_by=w.lead, reason="SYNTHETIC")
+    checks += _assert_periodic_oracle("template withdrawn")
+    # the active rule withdrawn: unknown, no fallback
+    rule = PeriodicInspectionRule.objects.filter(pattern__code="P-A").order_by("-version_no").first()
+    PeriodicInspectionRuleWithdrawal.objects.create(rule=rule, withdrawn_by=w.lead, reason="SYNTHETIC")
+    checks += _assert_periodic_oracle("rule withdrawn")
+    assert checks >= 50
+
+
 # ================================================================== X-4 escalation deadlines
 @pytest.mark.django_db
 def test_deadline_not_configured_then_overdue_boundaries_and_clearing():
@@ -553,10 +627,12 @@ def test_closeout_without_a_valid_timezone_is_one_undated_list(value):
         assert not any(r.carried_over or r.local_day for r in c.undated_open)
         assert c.departed_count is None and c.departed_closed_count is None  # no local-day counts
         assert c.date_ignored == bool(day)
-        assert runs(c.post_visit_outstanding) == [r3.code] and runs(c.custody_unverified) == [
-            r2.code,
-            r3.code,
+        assert runs(c.post_visit_outstanding) == [r2.code, r3.code]
+        assert [r.post_visit for r in c.post_visit_outstanding] == [
+            "robot not back at hub (in the vehicle)",
+            "post-visit inspection outstanding",
         ]
+        assert runs(c.custody_unverified) == [r2.code]  # r3's assignment was verified on the way
         assert "not a sign-off" in c.summary and "UTC" in c.summary
 
 
