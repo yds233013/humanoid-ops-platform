@@ -10,7 +10,8 @@ from datetime import datetime
 from typing import Any
 
 from django.db import connection
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Value
+from django.db.models.functions import Least, Now
 
 from fleet import services as fleet_services
 from fleet.models import ConfigurationManifest, Inspection, Robot
@@ -373,17 +374,21 @@ def record_evidence(
                 if problem:
                     raise Conflict(f"Passing pre-departure evidence refused: {problem}")
         now = _db_now()
-        if inspection is not None and when is None:
-            # The app host clock may run a few ms ahead of PostgreSQL; never default into the future.
-            when = min(inspection.submitted_at, now)
-        if when is not None:
+        fields: dict[str, Any] = {}
+        if when is not None:  # a caller-supplied time, checked here and again by readiness_evidence_guard
             if when > now:
                 raise Invalid("observed_at cannot be in the future")
             if (now - when).total_seconds() > MAX_EVIDENCE_AGE_H * 3600:
                 raise Invalid(f"observed_at is more than {MAX_EVIDENCE_AGE_H} hours ago")
-        fields: dict[str, Any] = {}
-        if when is not None:
             fields["observed_at"] = when
+        elif inspection is not None:
+            # Default: the inspection's (database) submission time, never after this INSERT's own statement
+            # time, computed IN the INSERT (readiness/0008: the guard's bound includes statement_timestamp()).
+            # A value read in an earlier statement could be refused if the database clock stepped back since.
+            if (now - inspection.submitted_at).total_seconds() > MAX_EVIDENCE_AGE_H * 3600:
+                raise Invalid(f"observed_at is more than {MAX_EVIDENCE_AGE_H} hours ago")
+            fields["observed_at"] = Least(Value(inspection.submitted_at), Now())
+        # else: the column default, statement_timestamp() of the INSERT (readiness/0008)
         ev = ReadinessEvidence.objects.create(
             code=_next_code("readiness_evidence_code_seq", "EV"),
             visit=v,
