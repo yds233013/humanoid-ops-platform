@@ -402,28 +402,18 @@ def qualifying_periodic_inspection(robot: Robot, *, production: bool) -> Inspect
 
 
 def periodic_inspection_status(
-    robot: Robot,
-    at: datetime | None = None,
-    *,
-    production: bool,
-    fresh: tuple[Robot, ManifestPattern | None] | None = None,
+    robot: Robot, at: datetime | None = None, *, production: bool
 ) -> PeriodicStatus:
     """Independent Python implementation of readiness_periodic_inspection_status(p_robot, p_production, p_at)
-    (oracle-tested). ``at`` None means database time. Reads fresh rows, unless the caller passes ``fresh``:
-    the robot and its current manifest's pattern, already read in the same transaction."""
-    if fresh is not None:
-        robot, pattern = fresh
-    else:
-        robot = Robot.objects.get(pk=robot.pk)
-        pattern = None
-        if robot.current_manifest_id is not None:
-            pattern = (
-                ConfigurationManifest.objects.select_related("pattern")
-                .get(pk=robot.current_manifest_id)
-                .pattern
-            )
+    (oracle-tested). ``at`` None means database time. Reads fresh rows."""
+    robot = Robot.objects.get(pk=robot.pk)
     if at is None:
         at = db_now()
+    pattern = None
+    if robot.current_manifest_id is not None:
+        pattern = (
+            ConfigurationManifest.objects.select_related("pattern").get(pk=robot.current_manifest_id).pattern
+        )
     pid = pattern.pk if pattern is not None else None
     code = pattern.code if pattern is not None else None
     rule = usable_periodic_rule(pid, production=production)

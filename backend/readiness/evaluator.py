@@ -218,6 +218,25 @@ def _signer_person_ids(inspection_ids: list[int]) -> list[int]:
     return list(Person.objects.filter(user_id__in=users).values_list("pk", flat=True))
 
 
+def _periodic_status(
+    robot: Robot, pattern: ManifestPattern | None, at: datetime | None, production: bool
+) -> fleet_services.PeriodicStatus:
+    """X-3 status from the authoritative SQL function readiness_periodic_inspection_status (EM Option B):
+    ONE statement, independent of the robot's inspection history. ``at`` None means the database clock
+    (clock_timestamp(), as db_now()). The independent Python implementation
+    fleet_services.periodic_inspection_status stays the oracle in tests (test_s7_integration)."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT state, due_at, inspection_id, rule_id"
+            " FROM readiness_periodic_inspection_status(%s, %s, coalesce(%s, clock_timestamp()))",
+            [robot.pk, production, at],
+        )
+        state, due_at, inspection_id, rule_id = cur.fetchone()
+    return fleet_services.PeriodicStatus(
+        state, due_at, inspection_id, rule_id, pattern.code if pattern is not None else None
+    )
+
+
 def _read_world(visit: Visit, at: datetime | None = None) -> _World:
     v = Visit.objects.select_related("site").get(pk=visit.pk)
     rev = (
@@ -235,11 +254,7 @@ def _read_world(visit: Visit, at: datetime | None = None) -> _World:
     plan = _select_recovery_plan(v, rev, manifest_id)
     production = not fleet_services.demo_mode()
     latest = _latest_evidence_for(v, rev, manifest_id)
-    periodic = (
-        fleet_services.periodic_inspection_status(robot, at, production=production, fresh=(robot, pattern))
-        if robot is not None
-        else None
-    )
+    periodic = _periodic_status(robot, pattern, at, production) if robot is not None else None
     # Dependency persons (contract 07a section 7.2, P0-1), deduplicated: the revision's lead and second, the
     # recovery plan's two people, and the signers of BOTH relied inspections (the latest pre-departure
     # evidence's inspection and the periodic inspection the database will select).

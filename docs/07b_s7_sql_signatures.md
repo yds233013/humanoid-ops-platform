@@ -322,3 +322,31 @@ Test evidence (real PostgreSQL):
   `public.clock_timestamp()` in the test transaction): the 0007 guard body refuses the equipment check exactly as in
   the failure; the 0008 body accepts it; boundary `statement_timestamp()` -1 us / = accepted, +1 us refused; a
   caller-supplied future `observed_at` is still refused.
+
+### 13.1 Readiness statement budget (EM ruling, Option B)
+
+Measured on `tests/test_operations_readmodels.py::test_timeline_readiness_cap_partial_coverage_and_statement_budget`
+(the same 10 evaluated visits on every tree):
+
+| Tree | Statements per evaluated visit | Worst |
+|---|---|---|
+| main `0a8bdab` (Slice 6) | 61, 70 x9 | 70 |
+| `s7/int` before dedupe | - | 81 |
+| `s7/int` `14de062` (no robot/manifest re-read, mode read once) | 72, 79 x9 | 79 |
+| `s7/int` Option B | 65, 72 x9 | **72** |
+
+The +9 at `14de062` were new X-3/X-8 reads, and the Python candidate loop cost about 4 statements per newer
+non-qualifying inspection (unbounded in inspection history). EM decision (2026-11-19): Option B - the evaluator
+reads the X-3 status with ONE call to `readiness_periodic_inspection_status(robot, production, at)`
+(`readiness.evaluator._periodic_status`; `at` NULL -> `clock_timestamp()`, as `db_now()`); `pattern_code` comes from
+the pattern already loaded; the periodic inspection's signers stay in the dependency persons. The independent
+Python `fleet.services.periodic_inspection_status` is unchanged and remains the oracle. Pin: the EM pre-approved
+the exact measured worst in 71-75, so E is pinned at **72** (this evaluator budget only).
+
+Evidence (`tests/test_s7_option_b.py`): `test_readiness_statements_do_not_grow_with_inspection_history` (0, 1, 10, 100
+newer candidates, disqualified by template - approved for pre-departure only - or by a non-inspector signer; the
+oracle still selects the original inspection; the statement count is identical for every N);
+`test_sql_status_evaluator_equals_python_oracle_evaluator[...]` (the evaluator with the SQL status equals the
+evaluator with the Python status: blockers, label, evidence ids, expiry bound, guard snapshot, selected inspection,
+due date) for due, valid authorization, production unknown interval, production configured, never inspected, rule
+withdrawn, overdue, due before unloading (`due_at = unload_end`) and history.
