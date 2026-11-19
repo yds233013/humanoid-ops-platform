@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "readiness",
     "execution",
     "operations",
+    "capacity",
 ]
 
 MIDDLEWARE = [
