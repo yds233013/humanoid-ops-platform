@@ -578,8 +578,9 @@ ex AS (
                             'within_min', (e.value ->> 'within_min')::int, 'level', ql.level_key,
                             'deadline_set_version', ql.version_no, 'escalated', fe.first_at IS NOT NULL)
   FROM qlev ql
-  -- LIMIT 16 keeps the row estimate honest (the default SRF estimate of 100 rows per call inflates the plan cost
-  -- past jit_above_cost); the trigger allows only distinct known roles per level, fewer than 16.
+  -- LIMIT 16 keeps the row estimate honest (the default SRF estimate of 100 rows per call inflates the plan
+  -- cost past jit_above_cost); the trigger allows only distinct known roles per level (6), fewer than 16
+  -- (test_maximum_deadline_configuration_is_not_truncated).
   CROSS JOIN LATERAL (SELECT x.value FROM jsonb_array_elements(ql.deadlines -> ql.level_key) x LIMIT 16) e
   LEFT JOIN planning_visit v ON v.id = ql.visit_id
   LEFT JOIN erole fe ON fe.incident_id = ql.incident_id AND fe.to_role = e.value ->> 'to_role'
