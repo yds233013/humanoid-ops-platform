@@ -718,6 +718,15 @@ SQL_COVERAGE: dict[str, Any] = {
     "PLANNING_VEHICLE_RESTRAINT_UNKNOWN": "has no recorded restraint kit",
     "PLANNING_QUALIFICATION": "is not qualified for robot handling during the activity",
     "PLANNING_CONFLICT": "is not covered by an active reservation",
+    # Slice 7 (contract 07a section 11.7; texts as frozen in docs/07b section 8 / issue-function list). The X-1
+    # literal is split over two source lines in readiness_issue_authorization ('... which is not approved for '
+    # 'pre-departure use in production'), so the contiguous tail is the text matched here.
+    "INSPECTION_TEMPLATE_NOT_APPROVED": "pre-departure use in production",
+    "POLICY_LACKS_INSPECTION": "does not require pre_departure_inspection",
+    "PERIODIC_INSPECTION_INTERVAL_UNKNOWN": "periodic inspection interval unknown for configuration",
+    "PERIODIC_INSPECTION_MISSING": "periodic inspection none on the current configuration",
+    "PERIODIC_INSPECTION_DUE_BEFORE_RETURN": "not after the planned unloading end",
+    "INSPECTOR_NOT_QUALIFIED": "is not a qualified readiness inspector",  # planning_inspection_signer_problem
 }
 ALLOWED_GAPS = {"RECOVERY_ONCALL_NOT_ENGINEER"}
 
@@ -739,7 +748,7 @@ def test_every_blocker_code_is_mapped_to_its_sql_refusal():
         cur.execute(
             "SELECT string_agg(pg_get_functiondef(p.oid), E'\n') FROM pg_proc p "
             "WHERE p.proname IN ('readiness_issue_authorization', 'readiness_guard_problem', "
-            "'execution_robot_departure_problem')"
+            "'execution_robot_departure_problem', 'planning_inspection_signer_problem')"
         )
         source = cur.fetchone()[0]
     for code, target in SQL_COVERAGE.items():
