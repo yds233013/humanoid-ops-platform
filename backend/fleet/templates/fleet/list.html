@@ -2,9 +2,10 @@
 {% block title %}Fleet{% endblock %}
 {% block content %}
 <h1>Fleet</h1>
+<p class="row"><a href="/fleet/hold-policies/">Hold release policies</a></p>
 <p class="muted">Eligibility here means a robot may be <b>considered when planning</b>. It never means cleared to depart. That needs a visit-specific check (a later release).</p>
 <table>
-<thead><tr><th>Robot</th><th>Lifecycle</th><th>Configuration</th><th>Planning eligibility</th><th>Open holds</th></tr></thead>
+<thead><tr><th>Robot</th><th>Lifecycle</th><th>Configuration</th><th>Planning eligibility</th><th>Periodic inspection</th><th>Open holds</th></tr></thead>
 <tbody>
 {% for row in rows %}
 <tr>
@@ -14,6 +15,7 @@
   <td>{% if row.e.eligible_for_planning %}<span class="badge elig">{{ row.e.label }}</span>
       {% else %}<span class="badge no">{{ row.e.label }}</span>
       <ul class="reasons">{% for r in row.e.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}</td>
+  <td>{% include "fleet/_periodic.html" with p=row.periodic %}</td>
   <td>{% for h in row.open_holds %}{{ h.code }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="muted">none</span>{% endfor %}</td>
 </tr>
 {% endfor %}

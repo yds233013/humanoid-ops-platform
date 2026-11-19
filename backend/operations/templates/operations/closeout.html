@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% load tz %}
+{% block title %}Daily close-out{% endblock %}
+{% block content %}{% timezone "UTC" %}
+{% include "operations/_chrome.html" %}
+<h1>Daily close-out view</h1>
+<div class="banner op-partial" role="note" data-not-sign-off="1"><b>{{ c.not_a_sign_off }}</b> It lists what is still open; it records nothing and approves nothing.</div>
+<p class="muted">{{ c.as_of_note }} No grace thresholds apply here (the exception inbox applies them).</p>
+{% if c.dated %}
+<form method="get" action="/ops/closeout/" class="row"><label>Local day ({{ c.timezone }}) <input type="date" name="date" value="{{ c.day|date:"Y-m-d" }}"></label><button class="primary">Show</button></form>
+<p data-summary="1">{{ c.summary }}</p>
+<p class="muted" data-timezone="{{ c.timezone }}">Runs belong to the local day of their departure in {{ c.timezone }}{% if demo_mode %} (SYNTHETIC demo value, not a company value){% endif %}. Times below are UTC.</p>
+<div class="kpis" data-counts="1"><div class="card"><b>{{ c.departed_count }}</b> run{{ c.departed_count|pluralize }} departed on {{ c.day|date:"Y-m-d" }}</div><div class="card"><b>{{ c.departed_closed_count }}</b> of them with a trip closure</div></div>
+<h2>Departed on {{ c.day|date:"Y-m-d" }}, still open</h2>
+{% include "operations/_closeout_runs.html" with runs=c.departed_open section="departed" %}
+<h2>Carried over (departed before {{ c.day|date:"Y-m-d" }}, still open)</h2>
+{% include "operations/_closeout_runs.html" with runs=c.carried_over section="carried" %}
+{% else %}
+<div class="banner op-partial" role="alert" data-undated="1"><b>{{ undated_heading }}</b>. Set the deployment setting ops_closeout_timezone to a time zone name to see a dated view.{% if c.date_ignored %} The requested date was ignored.{% endif %}</div>
+<p data-summary="1">{{ c.summary }}</p>
+<h2>Open runs (undated)</h2>
+{% include "operations/_closeout_runs.html" with runs=c.undated_open section="undated" %}
+{% endif %}
+<h2>Custody assignment not verified</h2>
+{% include "operations/_closeout_runs.html" with runs=c.custody_unverified section="custody" %}
+<h2>Post-visit inspection outstanding</h2>
+{% include "operations/_closeout_runs.html" with runs=c.post_visit_outstanding section="post_visit" %}
+<h2>Reconciliation unresolved</h2>
+{% include "operations/_closeout_runs.html" with runs=c.reconciliation_unresolved section="reconciliation" %}
+{% endtimezone %}{% endblock %}

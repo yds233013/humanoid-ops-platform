@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import connection
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -202,6 +203,46 @@ def index(request: HttpRequest) -> HttpResponse:
     )
 
 
+INSPECTOR_NOTE = (
+    "Passing pre-departure evidence needs both inspection signers to be qualified readiness inspectors at "
+    "the "
+    "time of the inspection (and not revoked since). A failing result is always recorded."
+)
+UNUSABLE_TEMPLATE_WARNING = (
+    "This inspection is recorded, but it cannot be used as passing pre-departure evidence in production: its "
+    "template is not approved for pre-departure use."
+)
+
+
+def inspection_warnings(inspection_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """Slice 7 (X-8, X-1), Engineer A's SQL rules, one statement: per inspection the signer problem
+    (planning_inspection_signer_problem; None = both signers covered) and, in production, whether its
+    template is
+    usable for pre-departure evidence (fleet_template_usable). Warnings only: nothing is refused here."""
+    if not inspection_ids:
+        return {}
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT i.id, i.code, planning_inspection_signer_problem(i.id), fleet_production_mode(),
+                   fleet_template_usable(i.template_id, 'pre_departure', fleet_production_mode()), t.version
+            FROM fleet_inspection i JOIN fleet_inspectiontemplate t ON t.id = i.template_id
+            WHERE i.id = ANY(%s)
+            """,
+            [inspection_ids],
+        )
+        rows = cur.fetchall()
+    out: dict[int, dict[str, Any]] = {}
+    for iid, icode, signer_problem, production, usable, version in rows:
+        warnings = []
+        if signer_problem:
+            warnings.append(f"Signer qualification: {signer_problem}")
+        if production and not usable:
+            warnings.append(f"Template {version}: {UNUSABLE_TEMPLATE_WARNING}")
+        out[iid] = {"code": icode, "signer_problem": signer_problem, "warnings": warnings}
+    return out
+
+
 @login_required
 def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _deny(request)) is not None:
@@ -257,6 +298,7 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     for d in departures:
         history.append({"at": d.departed_at, "what": f"Departure recorded on {d.authorization.code}"})
     history.sort(key=lambda h: h["at"], reverse=True)
+    warn = inspection_warnings([e.inspection_id for e in evidence if e.inspection_id is not None])
     for h in history:
         h["at_local"] = h["at"].astimezone(ZoneInfo(tz))
 
@@ -272,9 +314,11 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
                     "void": getattr(e, "void", None),
                     "observed_local": e.observed_at.astimezone(ZoneInfo(tz)),
                     "current": v.current_revision_id == e.revision_id,
+                    "warnings": warn.get(e.inspection_id, {}).get("warnings", []) if e.inspection_id else [],
                 }
                 for e in evidence
             ],
+            "inspector_note": INSPECTOR_NOTE,
             "plans": [
                 {
                     "plan": p,

@@ -70,6 +70,7 @@
   {% for e in evidence %}<tr class="{% if e.void %}voided{% endif %}">
     <td>{{ e.ev.code }}</td><td>{{ e.ev.get_kind_display }}</td><td>{{ e.ev.get_result_display }}</td>
     <td>{% if e.ev.inspection %}Inspection {{ e.ev.inspection.code }}{% endif %}
+        {% for w in e.warnings %}<div class="stale" data-signer-warning="1">Warning: {{ w }}</div>{% endfor %}
         {% if e.ev.details.soc_pct %}Battery {{ e.ev.details.soc_pct }}%{% endif %}
         {% if e.ev.details.items %}{% for name, state in e.ev.details.items.items %}{{ name }}: {{ state }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</td>
     <td>{{ e.observed_local|date:"D j M H:i" }}</td><td>{{ e.ev.recorded_by.username }}</td>
@@ -88,7 +89,8 @@
       <label>Result <select name="result"><option value="pass">Pass</option><option value="fail">Fail</option></select></label>
       <label>Observed at (site time, optional) <input type="datetime-local" name="observed_at"></label>
     </div>
-    <fieldset><legend>Pre-departure inspection</legend><label>Inspection code <input name="inspection_code" placeholder="e.g. INS-0001"></label></fieldset>
+    <fieldset><legend>Pre-departure inspection</legend><label>Inspection code <input name="inspection_code" placeholder="e.g. INS-0001"></label>
+      <div class="muted" data-inspector-note="1">{{ inspector_note }}</div></fieldset>
     <fieldset><legend>Battery check</legend><label>Battery % <input name="soc_pct" type="number" min="1" max="100"></label></fieldset>
     <fieldset><legend>Equipment check</legend><div class="row">
       {% for name in equipment %}<input type="hidden" name="item_names" value="{{ name }}">

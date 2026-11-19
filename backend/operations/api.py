@@ -60,6 +60,19 @@ def metrics(request: HttpRequest, at: datetime) -> JsonResponse:
     return _ok(v.metrics_data(at, start, end))
 
 
+@v.ops_view("operations.read", json_api=True)
+def production_blockers(request: HttpRequest, at: datetime) -> JsonResponse:
+    return _ok(v.production_blockers_data(at))
+
+
+@v.ops_view("operations.read", json_api=True)
+def closeout(request: HttpRequest, at: datetime) -> JsonResponse:
+    try:
+        return _ok(v.closeout_data(at, request.GET.get("date"))["data"])
+    except v.BadParam as exc:
+        return _bad(exc)
+
+
 app_name = "operations-api"
 
 urlpatterns = [
@@ -68,4 +81,6 @@ urlpatterns = [
     path("incidents", incidents, name="incidents"),
     path("timeline", timeline, name="timeline"),
     path("metrics", metrics, name="metrics"),
+    path("production-blockers", production_blockers, name="production-blockers"),
+    path("closeout", closeout, name="closeout"),
 ]

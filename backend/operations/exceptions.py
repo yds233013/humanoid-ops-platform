@@ -37,6 +37,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db import connection
 
@@ -49,7 +50,14 @@ THRESHOLD_RULES: dict[str, str] = {  # setting key -> the rule it enables
     "ops_return_grace_min": "RETURN_OVERDUE",
     "ops_inspection_grace_min": "POST_VISIT_INSPECTION_MISSING",
     "ops_readiness_lookahead_min": "READINESS_INCOMPLETE_SOON",
+    # Slice 7 (X-3, contract 07a 4.6): a visibility setting only, never a gate
+    "ops_periodic_due_lookahead_min": "PERIODIC_INSPECTION_DUE_SOON",
 }
+# Slice 7 (X-10, contract 07a 8.2): an IANA time-zone name, valid only when BOTH Python zoneinfo and
+# PostgreSQL
+# pg_timezone_names know it (not the minutes rule). Missing / invalid -> one THRESHOLD_NOT_CONFIGURED.
+CLOSEOUT_TIMEZONE_KEY = "ops_closeout_timezone"
+TIMEZONE_MAX_LEN = 64
 MAX_THRESHOLD_MIN = 10 * 525_600  # ten years; larger values are refused as not configured (no date overflow)
 READINESS_CAP = 10  # contract 4a: at most 10 evaluator runs per snapshot
 # E: statements one evaluate_readiness call may run, pinned by tests on the scale fixture (measured 60-69 per
@@ -71,7 +79,26 @@ PRIORITY: dict[str, int] = {
     "RECONCILIATION_UNRESOLVED": 3,
     "POST_VISIT_INSPECTION_MISSING": 3,
     "READINESS_INCOMPLETE_SOON": 3,
+    # Slice 7 (contract 07a sections 4.6, 5.2, 5.6, 6.2)
+    "PERIODIC_INTERVAL_UNCONFIGURED": 1,
+    "PERIODIC_INSPECTION_OVERDUE": 2,
+    "PERIODIC_INSPECTION_DUE_SOON": 3,
+    "ESCALATION_OVERDUE": 1,
+    "ESCALATION_DEADLINE_NOT_CONFIGURED": 1,
+    # production blockers (operations_production_blockers); inbox items in PRODUCTION only, priority 1
+    "HOLD_POLICY_NOT_APPROVED": 1,
+    "HOLD_UNRELEASABLE": 1,
+    "INSPECTION_TEMPLATE_NOT_APPROVED": 1,
+    "PERIODIC_INTERVAL_NOT_APPROVED": 1,
+    "ESCALATION_DEADLINES_NOT_APPROVED": 1,
 }
+BLOCKER_CODES = (
+    "HOLD_POLICY_NOT_APPROVED",
+    "HOLD_UNRELEASABLE",
+    "INSPECTION_TEMPLATE_NOT_APPROVED",
+    "PERIODIC_INTERVAL_NOT_APPROVED",
+    "ESCALATION_DEADLINES_NOT_APPROVED",
+)
 CODES = tuple(sorted(PRIORITY))
 
 # Resolution-path table (contract section 3, R6), column "always resolvable?": only an unconditional "yes"
@@ -91,6 +118,18 @@ RESOLVABLE: dict[str, bool] = {
     "HELD_ROBOT_ASSIGNED": False,
     "READINESS_INCOMPLETE_SOON": False,
     "THRESHOLD_NOT_CONFIGURED": False,
+    # Slice 7: recording a qualifying inspection needs an approved template and qualified signers (not always
+    # possible in the app); intervals, deadlines, templates and policies need company input (outside the app).
+    "PERIODIC_INTERVAL_UNCONFIGURED": False,
+    "PERIODIC_INSPECTION_OVERDUE": False,
+    "PERIODIC_INSPECTION_DUE_SOON": False,
+    "ESCALATION_OVERDUE": True,  # escalate to / acknowledge as the role on the incident page
+    "ESCALATION_DEADLINE_NOT_CONFIGURED": False,
+    "HOLD_POLICY_NOT_APPROVED": False,
+    "HOLD_UNRELEASABLE": False,
+    "INSPECTION_TEMPLATE_NOT_APPROVED": False,
+    "PERIODIC_INTERVAL_NOT_APPROVED": False,
+    "ESCALATION_DEADLINES_NOT_APPROVED": False,
 }
 
 SortKey = tuple[int, datetime, str, str]  # (priority, since, code, entity_ref)
@@ -140,15 +179,67 @@ def parse_threshold(value: str | None) -> int | None:
     return n if 1 <= n <= MAX_THRESHOLD_MIN else None
 
 
-def read_thresholds() -> tuple[dict[str, int | None], set[str]]:
-    """The four time thresholds as read in the current snapshot (one statement): ({key: minutes or None},
-    the keys that are missing altogether)."""
+@dataclass(frozen=True)
+class TimezoneSetting:
+    """ops_closeout_timezone as read in the snapshot: ``name`` when valid (known to zoneinfo AND PostgreSQL),
+    else None; ``state`` is "valid", "missing" or "invalid"."""
+
+    name: str | None
+    state: str
+    raw: str | None
+
+
+def python_knows_timezone(value: str) -> bool:
+    if not value or len(value) > TIMEZONE_MAX_LEN or value != value.strip():
+        return False
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return False
+    return True
+
+
+SETTINGS_SQL = r"""
+SELECT s.key, s.value,
+       CASE WHEN s.key = %(tz_key)s AND length(s.value) <= %(tz_max)s
+            THEN EXISTS (SELECT 1 FROM pg_timezone_names z WHERE z.name = s.value) END AS pg_tz_known
+FROM fleet_deploymentsetting s
+WHERE s.key = ANY(%(keys)s)
+"""
+
+
+def read_settings() -> tuple[dict[str, int | None], set[str], TimezoneSetting]:
+    """The time thresholds and the close-out time zone, read in the current snapshot (ONE statement):
+    ({key: minutes or None}, the threshold keys missing altogether, the time-zone setting)."""
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT key, value FROM fleet_deploymentsetting WHERE key = ANY(%s)", [list(THRESHOLD_RULES)]
+            SETTINGS_SQL,
+            {
+                "tz_key": CLOSEOUT_TIMEZONE_KEY,
+                "tz_max": TIMEZONE_MAX_LEN,
+                "keys": [*THRESHOLD_RULES, CLOSEOUT_TIMEZONE_KEY],
+            },
         )
-        raw = dict(cur.fetchall())
-    return {key: parse_threshold(raw.get(key)) for key in THRESHOLD_RULES}, set(THRESHOLD_RULES) - set(raw)
+        rows = cur.fetchall()
+    raw = {key: value for key, value, _ in rows}
+    pg_known = {key: known for key, _, known in rows}
+    thresholds = {key: parse_threshold(raw.get(key)) for key in THRESHOLD_RULES}
+    missing = set(THRESHOLD_RULES) - set(raw)
+    tz_raw = raw.get(CLOSEOUT_TIMEZONE_KEY)
+    if tz_raw is None:
+        tz = TimezoneSetting(None, "missing", None)
+    elif pg_known.get(CLOSEOUT_TIMEZONE_KEY) and python_knows_timezone(tz_raw):
+        tz = TimezoneSetting(tz_raw, "valid", tz_raw)
+    else:
+        tz = TimezoneSetting(None, "invalid", tz_raw)
+    return thresholds, missing, tz
+
+
+def read_thresholds() -> tuple[dict[str, int | None], set[str]]:
+    """The time thresholds as read in the current snapshot (one statement): ({key: minutes or None},
+    the keys that are missing altogether)."""
+    thresholds, missing, _ = read_settings()
+    return thresholds, missing
 
 
 # ------------------------------------------------------------------ the SQL-derived rules
@@ -172,8 +263,37 @@ ors AS MATERIALIZED (
   FROM operations_open_run_stage
 ),
 q AS MATERIALIZED (
-  SELECT incident_code, robot_code, visit_id, event_type, reported_at, status, unclassified
+  SELECT incident_id, incident_code, robot_code, visit_id, event_type, reported_at, status, unclassified,
+         severity_level, severity_policy_id
   FROM operations_incident_queue
+),
+-- Slice 7 (contract 07a 2.2): the deployment mode as read in this snapshot (missing setting = production)
+mode AS MATERIALIZED (SELECT fleet_production_mode() AS production),
+-- Slice 7 X-3: periodic status of every non-retired robot from A's authoritative SQL function (state,
+-- due_at), in the current mode at the snapshot time
+pstat AS MATERIALIZED (
+  SELECT r.code AS robot_code, p.code AS pattern_code, st.state, st.due_at
+  FROM fleet_robot r
+  LEFT JOIN fleet_configurationmanifest m ON m.id = r.current_manifest_id
+  LEFT JOIN fleet_manifestpattern p ON p.id = m.pattern_id
+  CROSS JOIN mode
+  CROSS JOIN LATERAL readiness_periodic_inspection_status(r.id, mode.production, %(at)s) st
+  WHERE r.lifecycle <> 'retired'
+),
+-- Slice 7 X-4: the usable deadline set (active for the active incident policy; owner_approved in production)
+dset AS MATERIALIZED (
+  SELECT d.id, d.incident_policy_id, d.deadlines, d.version_no
+  FROM execution_escalationdeadlineset d CROSS JOIN mode
+  WHERE d.id = execution_active_deadline_set_id() AND (d.source = 'owner_approved' OR NOT mode.production)
+),
+-- level of each open incident under that set: 'unclassified' without a decision, the decision's level when it
+-- was made under the set's policy (and the set has that key), else NULL = unconfigured
+qlev AS MATERIALIZED (
+  SELECT q.incident_id, q.incident_code, q.robot_code, q.visit_id, q.reported_at, d.deadlines, d.version_no,
+         CASE WHEN q.unclassified AND d.deadlines ? 'unclassified' THEN 'unclassified'
+              WHEN NOT q.unclassified AND q.severity_policy_id = d.incident_policy_id
+                   AND d.deadlines ? q.severity_level THEN q.severity_level END AS level_key
+  FROM q CROSS JOIN dset d
 ),
 ex AS (
   -- ROBOT_UNACCOUNTED: custody unaccounted; since = that custody event
@@ -321,6 +441,120 @@ ex AS (
       AND NOT EXISTS (SELECT 1 FROM readiness_departureevent dep WHERE dep.visit_id = v.id)
   ) uv ON true
   WHERE cardinality(rs.hold_codes) > 0
+
+  UNION ALL
+  -- PERIODIC_INTERVAL_UNCONFIGURED (X-3): a pattern in use has no periodic rule usable in the current mode
+  SELECT DISTINCT 'PERIODIC_INTERVAL_UNCONFIGURED', 'pattern', ps.pattern_code, NULL::text, NULL::text,
+         %(at)s::timestamptz, 'engineering_lead',
+         'Configuration ' || ps.pattern_code || ' has no periodic inspection interval usable in '
+           || CASE WHEN (SELECT production FROM mode) THEN 'production' ELSE 'demo' END
+           || ' mode (interval unknown); its robots are not eligible for planning and cannot be authorized',
+         '/fleet/patterns/' || ps.pattern_code || '/', NULL::jsonb
+  FROM pstat ps
+  WHERE ps.state = 'unknown_interval' AND ps.pattern_code IS NOT NULL
+
+  UNION ALL
+  -- PERIODIC_INSPECTION_OVERDUE (X-3): overdue (since due_at) or never inspected on this configuration
+  (since at)
+  SELECT 'PERIODIC_INSPECTION_OVERDUE', 'robot', ps.robot_code, ps.robot_code, NULL::text,
+         coalesce(ps.due_at, %(at)s::timestamptz), 'engineering_lead',
+         CASE WHEN ps.state = 'overdue'
+              THEN 'Periodic inspection of robot ' || ps.robot_code || ' is overdue since '
+                   || to_char(ps.due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC'
+              ELSE 'Robot ' || ps.robot_code || ' has no qualifying periodic inspection on its current '
+                   || 'configuration (' || ps.pattern_code || ')' END,
+         '/fleet/' || ps.robot_code || '/', NULL::jsonb
+  FROM pstat ps
+  WHERE ps.state IN ('overdue', 'never_inspected')
+
+  UNION ALL
+  -- PERIODIC_INSPECTION_DUE_SOON (X-3): due, and at >= due_at - ops_periodic_due_lookahead_min (inclusive)
+  SELECT 'PERIODIC_INSPECTION_DUE_SOON', 'robot', ps.robot_code, ps.robot_code, NULL::text,
+         ps.due_at - make_interval(mins => %(g_periodic)s::int), 'engineering_lead',
+         'Periodic inspection of robot ' || ps.robot_code || ' is due at '
+           || to_char(ps.due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC',
+         '/fleet/' || ps.robot_code || '/', NULL::jsonb
+  FROM pstat ps
+  WHERE %(g_periodic)s::int IS NOT NULL AND ps.state = 'due'
+    AND ps.due_at - make_interval(mins => %(g_periodic)s::int) <= %(at)s
+
+  UNION ALL
+  -- ESCALATION_DEADLINE_NOT_CONFIGURED (X-4): no usable deadline set at all (once per snapshot) ...
+  SELECT 'ESCALATION_DEADLINE_NOT_CONFIGURED', 'setting', 'deadline-set', NULL::text, NULL::text,
+         %(at)s::timestamptz, 'safety_reviewer',
+         'No escalation deadline set is usable in '
+           || CASE WHEN (SELECT production FROM mode) THEN 'production (it must be owner approved)'
+                   ELSE 'demo' END
+           || ' mode for the active incident policy, so overdue escalations cannot be shown',
+         '/execution/escalation-deadlines/', NULL::jsonb
+  WHERE NOT EXISTS (SELECT 1 FROM dset)
+
+  UNION ALL
+  -- ... or once per open incident whose level is unconfigured (decision under another policy version)
+  SELECT 'ESCALATION_DEADLINE_NOT_CONFIGURED', 'incident', ql.incident_code, ql.robot_code, v.code,
+         %(at)s::timestamptz, 'safety_reviewer',
+         'Incident ' || ql.incident_code || ' (robot ' || ql.robot_code || ') has a severity decision '
+           || 'that the escalation deadline set v' || ql.version_no || ' does not cover (made under '
+           || 'another incident policy version), so no escalation deadline applies to it',
+         '/execution/incidents/' || ql.incident_code || '/', NULL::jsonb
+  FROM qlev ql LEFT JOIN planning_visit v ON v.id = ql.visit_id
+  WHERE ql.level_key IS NULL
+
+  UNION ALL
+  -- ESCALATION_OVERDUE (X-4): open incident, entry (R, N) of its level, at >= reported_at + N and no
+  -- acknowledgment on any escalation of the incident to R. Owner = R. Nothing is sent.
+  SELECT 'ESCALATION_OVERDUE', 'incident_role', ql.incident_code || '/' || (e.value ->> 'to_role'),
+         ql.robot_code, v.code,
+         ql.reported_at + make_interval(mins => (e.value ->> 'within_min')::int), e.value ->> 'to_role',
+         'Incident ' || ql.incident_code || ' (robot ' || ql.robot_code || ', ' || ql.level_key || '): '
+           || CASE WHEN fe.first_at IS NULL THEN 'no escalation to ' || (e.value ->> 'to_role') || ' recorded'
+                   ELSE 'escalated to ' || (e.value ->> 'to_role') || ' at '
+                        || to_char(fe.first_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')
+                        || ' UTC, not acknowledged'
+              END
+           || '; required within ' || (e.value ->> 'within_min') || ' min of the report',
+         '/execution/incidents/' || ql.incident_code || '/',
+         jsonb_build_object('incident', ql.incident_code, 'to_role', e.value ->> 'to_role',
+                            'within_min', (e.value ->> 'within_min')::int, 'level', ql.level_key,
+                            'deadline_set_version', ql.version_no, 'escalated', fe.first_at IS NOT NULL)
+  FROM qlev ql
+  CROSS JOIN LATERAL jsonb_array_elements(ql.deadlines -> ql.level_key) e
+  LEFT JOIN planning_visit v ON v.id = ql.visit_id
+  LEFT JOIN LATERAL (
+    SELECT min(x.recorded_at) AS first_at FROM execution_incidentescalation x
+    WHERE x.incident_id = ql.incident_id AND x.to_role = e.value ->> 'to_role'
+  ) fe ON true
+  WHERE ql.level_key IS NOT NULL
+    AND ql.reported_at + make_interval(mins => (e.value ->> 'within_min')::int) <= %(at)s
+    AND NOT EXISTS (SELECT 1 FROM execution_incidentescalation x
+                    JOIN execution_escalationack k ON k.escalation_id = x.id
+                    WHERE x.incident_id = ql.incident_id AND x.to_role = e.value ->> 'to_role')
+
+  UNION ALL
+  -- Production blockers (G-01, X-1, X-3, X-4; operations_production_blockers): inbox items in PRODUCTION
+  -- only (the overview panel shows them in both modes). The one-time filter skips the view in demo mode.
+  SELECT pb.code,
+         CASE pb.code WHEN 'HOLD_UNRELEASABLE' THEN 'hold' WHEN 'HOLD_POLICY_NOT_APPROVED' THEN 'hold_policy'
+                      WHEN 'ESCALATION_DEADLINES_NOT_APPROVED' THEN 'setting' ELSE 'pattern' END,
+         pb.entity_ref, hb.robot_code, NULL::text, %(at)s::timestamptz,
+         CASE WHEN pb.code = 'ESCALATION_DEADLINES_NOT_APPROVED' THEN 'safety_reviewer'
+              ELSE 'engineering_lead' END,
+         'Production blocker: ' || pb.detail,
+         CASE pb.code
+           WHEN 'HOLD_POLICY_NOT_APPROVED' THEN '/fleet/hold-policies/'
+           WHEN 'ESCALATION_DEADLINES_NOT_APPROVED' THEN '/execution/escalation-deadlines/'
+           WHEN 'HOLD_UNRELEASABLE' THEN coalesce('/fleet/' || hb.robot_code || '/',
+                                                  '/fleet/patterns/' || hb.pattern_code || '/')
+           ELSE '/fleet/patterns/' || pb.entity_ref || '/' END,
+         NULL::jsonb
+  FROM operations_production_blockers pb
+  LEFT JOIN LATERAL (
+    SELECT r.code AS robot_code, pp.code AS pattern_code FROM fleet_hold h
+    LEFT JOIN fleet_robot r ON r.id = h.robot_id
+    LEFT JOIN fleet_manifestpattern pp ON pp.id = h.pattern_id
+    WHERE pb.code = 'HOLD_UNRELEASABLE' AND h.code = pb.entity_ref
+  ) hb ON true
+  WHERE (SELECT production FROM mode)
 )
 """
 
@@ -377,6 +611,7 @@ def _relation_params(at: datetime, thresholds: dict[str, int | None]) -> dict[st
         "g_verify": thresholds["ops_custody_verify_grace_min"],
         "g_return": thresholds["ops_return_grace_min"],
         "g_inspect": thresholds["ops_inspection_grace_min"],
+        "g_periodic": thresholds["ops_periodic_due_lookahead_min"],
     }
 
 
@@ -470,9 +705,12 @@ def _readiness(at: datetime, lookahead: int | None) -> tuple[list[OpsException],
 
 
 def _threshold_items(
-    at: datetime, thresholds: dict[str, int | None], raw_missing: set[str]
+    at: datetime,
+    thresholds: dict[str, int | None],
+    raw_missing: set[str],
+    tz: TimezoneSetting | None = None,
 ) -> list[OpsException]:
-    return [
+    items = [
         OpsException(
             code="THRESHOLD_NOT_CONFIGURED",
             priority=PRIORITY["THRESHOLD_NOT_CONFIGURED"],
@@ -495,6 +733,30 @@ def _threshold_items(
         for key, value in thresholds.items()
         if value is None
     ]
+    if tz is not None and tz.state != "valid":
+        items.append(
+            OpsException(
+                code="THRESHOLD_NOT_CONFIGURED",
+                priority=PRIORITY["THRESHOLD_NOT_CONFIGURED"],
+                entity_type="setting",
+                entity_ref=CLOSEOUT_TIMEZONE_KEY,
+                robot=None,
+                visit=None,
+                since=at,
+                owner_role="engineering_lead",
+                message=f"Deployment setting {CLOSEOUT_TIMEZONE_KEY} is "
+                + (
+                    "missing"
+                    if tz.state == "missing"
+                    else "not a time zone name known to both the application and the database"
+                )
+                + "; the daily close-out cannot assign runs to a local day (it lists every open run "
+                "undated) until the schema owner sets it",
+                action_url="/ops/closeout/",
+                resolvable=RESOLVABLE["THRESHOLD_NOT_CONFIGURED"],
+            )
+        )
+    return items
 
 
 # ------------------------------------------------------------------ entry point
@@ -512,7 +774,7 @@ def open_exceptions(
     produced and the coverage says ``skipped`` (never complete)."""
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
-    thresholds, missing = read_thresholds()
+    thresholds, missing, tz = read_settings()
 
     sql_items = _sql_rules(at, thresholds, None if limit is None else limit + 1, after)
     with connection.cursor() as cur:
@@ -525,7 +787,7 @@ def open_exceptions(
         coverage = {"qualifying": 0, "evaluated": 0, "not_evaluated": 0, "complete": False, "skipped": True}
     py_items = [
         x
-        for x in ready_items + _threshold_items(at, thresholds, missing)
+        for x in ready_items + _threshold_items(at, thresholds, missing, tz)
         if after is None or x.sort_key > after
     ]
     items = sorted(sql_items + py_items, key=lambda x: x.sort_key)
@@ -544,9 +806,76 @@ def count_operational_exceptions(at: datetime) -> int:
     materialization) plus THRESHOLD_NOT_CONFIGURED (the same ``_threshold_items``). READINESS_INCOMPLETE_SOON
     is excluded and the evaluator never runs; unknown_basis is not part of the inbox items and is not read.
     Two statements (thresholds, count). Call inside ``read_snapshot()`` with its time as ``at``."""
-    thresholds, missing = read_thresholds()
+    thresholds, missing, tz = read_settings()
     with connection.cursor() as cur:
         cur.execute(COUNT_SQL, _relation_params(at, thresholds))
         row = cur.fetchone()
     assert row is not None
-    return int(row[0]) + len(_threshold_items(at, thresholds, missing))
+    return int(row[0]) + len(_threshold_items(at, thresholds, missing, tz))
+
+
+# ------------------------------------------------------------------ X-4 Python reference (oracle only)
+def _reference_active_deadline_set(production: bool) -> Any:
+    """Usable deadline set, derived row by row (contract 07a 6.2): for the active incident policy, the highest
+    version_no ever approved by both slots (safety + founder); none when that version is withdrawn (no
+    fallback); in production only an owner_approved set."""
+    from execution.models import EscalationDeadlineSet
+    from execution.policy import current_incident_policy
+
+    policy = current_incident_policy()
+    if policy is None:
+        return None
+    approved = [
+        d
+        for d in EscalationDeadlineSet.objects.filter(incident_policy=policy).prefetch_related("approvals")
+        if {a.slot for a in d.approvals.all()} >= {"safety", "founder"}
+    ]
+    if not approved:
+        return None
+    top = max(approved, key=lambda d: d.version_no)
+    if hasattr(top, "withdrawal"):
+        return None
+    if production and top.source != "owner_approved":
+        return None
+    return top
+
+
+def reference_escalation_overdue(at: datetime) -> set[tuple[str, str, datetime, str]]:
+    """Independent Python derivation of ESCALATION_OVERDUE and ESCALATION_DEADLINE_NOT_CONFIGURED as
+    {(code, entity_ref, since, owner_role)}. Used ONLY by the oracle test against RULES_RELATION_SQL;
+    never by a
+    page. Reads ORM rows one by one (not constant in fleet size), so never call it from a read model."""
+    from datetime import timedelta
+
+    from execution.incidents import incident_status, latest_severity
+    from execution.models import Incident
+    from fleet.services import demo_mode
+
+    production = not demo_mode()
+    dset = _reference_active_deadline_set(production)
+    out: set[tuple[str, str, datetime, str]] = set()
+    if dset is None:
+        out.add(("ESCALATION_DEADLINE_NOT_CONFIGURED", "deadline-set", at, "safety_reviewer"))
+        return out
+    for i in Incident.objects.prefetch_related("escalations__ack").order_by("id"):
+        if incident_status(i) == "closed":
+            continue
+        decision = latest_severity(i)
+        if decision is None:
+            level = "unclassified"
+        elif decision.policy_id == dset.incident_policy_id:
+            level = decision.level
+        else:
+            level = None
+        if level is None or level not in dset.deadlines:
+            out.add(("ESCALATION_DEADLINE_NOT_CONFIGURED", i.code, at, "safety_reviewer"))
+            continue
+        for entry in dset.deadlines[level]:
+            role, minutes = entry["to_role"], int(entry["within_min"])
+            deadline = i.reported_at + timedelta(minutes=minutes)
+            if at < deadline:
+                continue
+            acked = any(e.to_role == role and hasattr(e, "ack") for e in i.escalations.all())
+            if not acked:
+                out.add(("ESCALATION_OVERDUE", f"{i.code}/{role}", deadline, role))
+    return out
