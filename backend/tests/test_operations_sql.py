@@ -99,9 +99,11 @@ def py_open_runs() -> dict[int, dict[str, Any]]:
 
 
 def py_eligibility() -> dict[int, dict[str, Any]]:
+    # Slice 7 (X-3): eligibility is time-dependent; the views evaluate at transaction_timestamp() (= now()).
+    now = db_now()
     out = {}
     for robot in Robot.objects.all():
-        e = fs.evaluate_eligibility(robot)
+        e = fs.evaluate_eligibility(robot, now)
         out[robot.pk] = {
             "eligible": e.eligible_for_planning,
             "reasons": e.reasons,
@@ -115,7 +117,7 @@ def py_status() -> dict[int, dict[str, Any]]:
     runs = py_open_runs()
     out = {}
     for robot in Robot.objects.exclude(lifecycle="retired"):
-        e = fs.evaluate_eligibility(robot)
+        e = fs.evaluate_eligibility(robot, now)
         c = current_custody(robot.pk)
         orun = open_run_id(robot.pk)
         pid = robot.current_manifest.pattern_id if robot.current_manifest_id else None
@@ -261,6 +263,9 @@ def _reason_kind(reason: str) -> str:
         "No approved capability profile",
         "Capability unknown",
         "Capability profile is synthetic",
+        "Periodic inspection interval unknown",
+        "No qualifying periodic inspection",
+        "Periodic inspection overdue",
         "Robot hold",
     ):
         if reason.startswith(prefix):
@@ -293,6 +298,8 @@ def test_random_worlds_cover_the_variety():
         "Capability unknown",
         "Capability profile is synthetic",
         "Configuration hold",
+        "Periodic inspection interval unknown",  # X-3: random worlds that end in production
+        "No qualifying periodic inspection",  # X-3: robots added without a periodic inspection
         "Robot hold",
     } <= COVERAGE["reason"], COVERAGE["reason"]
     assert {
@@ -327,7 +334,7 @@ def test_edge_case_eligibility(name, build, expected):
     code = build(w)
     want = expected(w) if callable(expected) else expected
     robot = Robot.objects.get(code=code)
-    py = fs.evaluate_eligibility(robot)
+    py = fs.evaluate_eligibility(robot, db_now())  # the view's time: transaction_timestamp()
     assert py.reasons == want, "the hand-written expectation must match the Python rule first"
     with connection.cursor() as cur:
         cur.execute(
@@ -357,6 +364,16 @@ def test_edge_cases_cover_every_reason_and_mode():
         "synthetic_profile_mode_missing",
         "pattern_hold",
         *[f"robot_hold_{s}" for s in ow.HOLD_SOURCES],
+        # X-3 (CR-1): normal (eligible_baseline), never inspected, unknown interval, overdue, production/demo
+        "periodic_never_inspected",
+        "periodic_signer_revoked",
+        "periodic_no_rule",
+        "periodic_interval_null",
+        "periodic_rule_withdrawn",
+        "periodic_synthetic_rule_production",
+        "periodic_synthetic_template_production",
+        "periodic_overdue",
+        "engineering_profile_production_with_production_periodic",
     } <= names
 
 

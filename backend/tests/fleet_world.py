@@ -5,8 +5,16 @@ inspection rule (SYNTHETIC_PERIODIC_INTERVAL_MIN, a deliberately arbitrary test 
 the new rule commands are Engineer B's, so the rule rows are written through the ORM and the database triggers
 still check author, roles and versions). Production fixtures for tests that need a production-usable world:
 make_engineering_template / make_periodic_rule.
+
+Slice 7 integration (X-3, EM decision 7): a robot with no qualifying periodic inspection is not eligible. The
+world therefore registers the two field operators as persons P-2 (w.field) and P-3 (w.field2), grants them the
+SYNTHETIC readiness_inspector qualification (X-8), and records ONE complete PASS periodic inspection per robot on
+T1 (synthetic, usable for 'periodic' in demo) on its current manifest, signed by both, through
+fleet.services.submit_inspection, before any visit is planned (w.periodic_inspections: robot code -> inspection
+code). tests.planning_world reuses these person codes (P-1 = w.ops is registered there).
 """
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,6 +29,8 @@ from fleet.models import (
     PeriodicInspectionRule,
     PeriodicInspectionRuleApproval,
 )
+from planning import services as planning_services
+from planning.models import Person, Qualification
 from tests.conftest import make_user
 
 # SYNTHETIC test interval (90 days): long enough that a fresh inspection covers the test visits planned on
@@ -56,6 +66,32 @@ def make_periodic_rule(
         PeriodicInspectionRuleApproval.objects.create(rule=rule, slot="engineering", approver=w.lead)
         PeriodicInspectionRuleApproval.objects.create(rule=rule, slot="safety", approver=w.safety)
     return rule
+
+
+def grant_inspector(w: SimpleNamespace, person_code: str, valid_to: datetime | None = None) -> Qualification:
+    """SYNTHETIC readiness_inspector grant by w.safety, effective now (database time)."""
+    return Qualification.objects.create(
+        person=Person.objects.get(code=person_code),
+        kind="readiness_inspector",
+        valid_from=None,
+        valid_to=valid_to or datetime(2027, 6, 1, tzinfo=UTC),
+        granted_by=w.safety,
+        basis_ref="SYNTHETIC-TRAINING",
+    )
+
+
+def record_periodic_inspection(w: SimpleNamespace, robot_code: str, template_version: str = "T1") -> str:
+    """One complete PASS inspection of the robot's current manifest, signed by P-2 (w.field) + P-3 (w.field2),
+    both qualified readiness inspectors: with T1 (synthetic) it qualifies as the periodic inspection in demo."""
+    code: str = s.submit_inspection(
+        w.ops,
+        robot_code=robot_code,
+        template_version=template_version,
+        answers=dict(w.all_pass),
+        performer=w.field.username,
+        verifier=w.field2.username,
+    )["entity_id"]
+    return code
 
 
 def make_engineering_template(
@@ -96,6 +132,10 @@ def build_world(robots: int = 2, prefix: str = "") -> SimpleNamespace:
     w.field2 = make_user(f"{prefix}field2", "field_operator")
     set_setting("allow_draft_policies", "true")
     set_setting("demo_mode", "true")
+    # X-8: the periodic inspection signers are qualified readiness inspectors (codes shared with planning_world).
+    for user, person_code in ((w.field, "P-2"), (w.field2, "P-3")):
+        planning_services.register_person(w.ops, username=user.username, code=person_code)
+        grant_inspector(w, person_code)
     s.create_hold_policy(w.lead, rules=DRAFT_POLICY_RULES)
     for code, rel in (("P-A", "4.3.0"), ("P-C", "4.3.1")):
         s.create_pattern(w.lead, code=code, hardware_rev="SYN-B", release=rel, firmware_set="FW-12")
@@ -131,4 +171,6 @@ def build_world(robots: int = 2, prefix: str = "") -> SimpleNamespace:
         s.grant_base_authorization(w.lead, robot_code=code)
         w.robots.append(code)
     w.all_pass = dict(ALL_PASS)
+    # X-3: one qualifying periodic inspection per robot, after the inspector grants, before any planning.
+    w.periodic_inspections = {code: record_periodic_inspection(w, code) for code in w.robots}
     return w

@@ -23,6 +23,11 @@ guard versions, audit rows and every insert trigger run exactly as in production
 
 Mode: worlds are built in demo mode (synthetic policies are only usable there); `random_world` may switch to
 production at the END (DeploymentSetting demo_mode), which changes the synthetic-profile eligibility reason.
+
+Slice 7 (X-3): every robot built by the shared worlds gets one qualifying periodic inspection (tests.fleet_world).
+`add_robot` / `_repattern` record one on the new manifest unless told not to; `random_world` leaves some robots
+without one (a separate per-robot random stream, so the Slice 5 choices of a seed are unchanged); in production
+the worlds' SYNTHETIC periodic rule is not usable, so every robot there shows "interval unknown".
 """
 
 import random
@@ -30,6 +35,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+from django.db import connection
 from django.utils import timezone
 
 from execution import escalation as esc
@@ -42,11 +48,16 @@ from execution import site_checks as sc
 from execution.models import ExecutionRun, SiteCheckTemplate
 from fleet import services as fs
 from fleet.management.commands.seed_fleet import DRAFT_POLICY_RULES, TEMPLATE_ITEMS
-from fleet.models import DeploymentSetting, Hold, InspectionTemplate, ManifestPattern
+from fleet.models import DeploymentSetting, Hold, Inspection, InspectionTemplate, ManifestPattern
 from readiness import commands as rc
 from tests.execution_world import ALL_OK
 from tests.execution_world import TEMPLATE_ITEMS as SITE_ITEMS
-from tests.fleet_world import make_periodic_rule, set_setting
+from tests.fleet_world import (
+    make_engineering_template,
+    make_periodic_rule,
+    record_periodic_inspection,
+    set_setting,
+)
 from tests.planning_world import DAY
 from tests.readiness_world import build_readiness, new_confirmed_visit, record_all_evidence, record_inspection
 
@@ -172,13 +183,17 @@ def add_robot(
     pattern: str | None = "P-A",
     lifecycle: str = "in_service",
     auth: bool = True,
+    periodic: bool = True,
 ) -> str:
-    """Register a robot; optionally record a manifest, walk the lifecycle and grant base authorization."""
+    """Register a robot; optionally record a manifest (+ a periodic inspection on it, X-3), walk the lifecycle
+    and grant base authorization."""
     fs.register_robot(w.ops, code=code, serial=f"{w.prefix}SYN-{code}")
     if pattern is not None:
         fs.record_manifest(
             w.eng, robot_code=code, pattern_code=pattern, autonomy_version="a1", safety_config_hash="h" * 64
         )
+        if periodic:
+            record_periodic_inspection(w, code)
         if auth:
             fs.grant_base_authorization(w.lead, robot_code=code)
     if lifecycle in ("validation", "in_service", "retired"):
@@ -195,6 +210,7 @@ def new_pattern(
     code: str,
     decisions: list[str] = ("approved_home",),  # type: ignore[assignment]
     profiles: list[dict[str, Any]] | None = None,
+    periodic_rule: bool = True,
 ) -> str:
     """Create a pattern with a decision history and capability profiles. Each profile dict: fields for
     publish_capability_profile plus `approve` in {"both", "engineering", "none"} and optional `source`."""
@@ -215,7 +231,10 @@ def new_pattern(
     InspectionTemplate.objects.create(
         pattern=ManifestPattern.objects.get(code=code), version="T1", items=TEMPLATE_ITEMS, created_by=w.eng
     )
-    make_periodic_rule(w, code)  # Slice 7: every pattern gets the world's approved SYNTHETIC periodic rule
+    if periodic_rule:
+        make_periodic_rule(
+            w, code
+        )  # Slice 7: every pattern gets the world's approved SYNTHETIC periodic rule
     return code
 
 
@@ -395,13 +414,15 @@ def random_world(seed: int) -> SimpleNamespace:
         if lifecycle != "commissioning" and pattern is None:
             pattern = "P-A"  # validation needs nothing, but keep most robots configured
         auth = pattern is not None and rng.random() < 0.8
+        # X-3: own stream, so the Slice 5 choices above and below stay what they were for this seed.
+        periodic = random.Random(seed * 1000 + n).random() < 0.7
         try:
-            add_robot(w, code, pattern=pattern, lifecycle=lifecycle, auth=auth)
+            add_robot(w, code, pattern=pattern, lifecycle=lifecycle, auth=auth, periodic=periodic)
         except Exception:
             # in_service needs an approved profile with stop behaviour: the command refuses; keep validation
             say(f"{code}: in_service refused (pattern {pattern})")
         robots.append(code)
-        say(f"{code}: pattern={pattern} lifecycle={lifecycle} auth={auth}")
+        say(f"{code}: pattern={pattern} lifecycle={lifecycle} auth={auth} periodic={periodic}")
 
     # Departures at varied stages (only robots that can actually depart: R-01..R-03 on P-A).
     departing = rng.sample(w.robots, k=rng.randint(0, 3))
@@ -513,13 +534,21 @@ def _repattern(
     decisions: list[str],
     profiles: list[dict[str, Any]] | None = None,
     auth: bool = True,
+    periodic: bool = True,
+    periodic_rule: bool = True,
 ) -> str:
     new_pattern(
-        w, code, decisions=decisions, profiles=profiles if profiles is not None else [dict(FULL_PROFILE)]
+        w,
+        code,
+        decisions=decisions,
+        profiles=profiles if profiles is not None else [dict(FULL_PROFILE)],
+        periodic_rule=periodic_rule,
     )
     fs.record_manifest(
         w.eng, robot_code="R-01", pattern_code=code, autonomy_version="a2", safety_config_hash="g" * 64
     )
+    if periodic:  # X-3: a new manifest restarts the periodic clock; keep each case to its own reason
+        record_periodic_inspection(w, "R-01")
     if auth:
         fs.grant_base_authorization(w.lead, robot_code="R-01")
     return "R-01"
@@ -545,9 +574,19 @@ def _hold(source: str, scope: str = "robot", blocking: bool = True, released: bo
     return build
 
 
-def _mode(value: str | None, source: str = "synthetic_demo") -> Any:
+def _production_periodic(w: SimpleNamespace, pattern: str, robot: str = "R-01") -> None:
+    """SYNTHETIC production fixtures (test approvals by test users, never company values): an engineering_doc
+    periodic rule and template E1 approved for 'periodic', and a PASS inspection on E1."""
+    make_periodic_rule(w, pattern, source="engineering_doc")
+    make_engineering_template(w, pattern, "E1", purposes=("periodic",))
+    record_periodic_inspection(w, robot, template_version="E1")
+
+
+def _mode(value: str | None, source: str = "synthetic_demo", production_periodic: bool = False) -> Any:
     def build(w: SimpleNamespace) -> str:
         _repattern(w, "P-M", ["approved_home"], [{**FULL_PROFILE, "source": source}])
+        if production_periodic:
+            _production_periodic(w, "P-M")
         if value is None:
             DeploymentSetting.objects.filter(key="demo_mode").delete()
         else:
@@ -563,11 +602,69 @@ def _combined(w: SimpleNamespace) -> str:
     spec.pop("lift_crew")
     spec["stop_behaviour"] = ""
     _repattern(w, "P-X", ["engineering_only"], [spec], auth=False)
-    set_setting("demo_mode", "false")
+    set_setting("demo_mode", "false")  # also: the SYNTHETIC periodic rule is not usable in production
     fs.transition_lifecycle(w.lead, robot_code="R-01", to="validation", reason="SYNTHETIC")
     w.p_hold = place_hold(w, "manifest_pattern", "P-X", source="engineering", reason=ODD_REASON)
     w.r_hold1 = place_hold(w, "robot", "R-01", source="maintenance")
     w.r_hold2 = place_hold(w, "robot", "R-01", source="manual")
+    return "R-01"
+
+
+def _owner_backdate(table: str, column: str, where: str, params: list[Any], minutes: int) -> None:
+    """TEST-ONLY owner rewrite (the documented owner trust boundary; the test connection is the schema owner):
+    move a forced database time `minutes` into the past, in the test's own transaction, because the commands can
+    never backdate it. Pending deferred foreign-key checks are flushed first (ALTER TABLE refuses while trigger
+    events are pending) and the user triggers are re-enabled before anything else runs."""
+    with connection.cursor() as cur:
+        cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")
+        cur.execute(
+            f"UPDATE {table} SET {column} = {column} - make_interval(mins => %s) WHERE {where}",
+            [minutes, *params],
+        )
+        cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER USER")
+        cur.execute("SET CONSTRAINTS ALL DEFERRED")
+
+
+def _backdate_inspections(robot_code: str, minutes: int) -> None:
+    """Every inspection of the robot, and the readiness_inspector grants of its signers (so the moved
+    inspections are still covered at their submitted_at), `minutes` into the past."""
+    robot = "robot_id = (SELECT id FROM fleet_robot WHERE code = %s)"
+    _owner_backdate(
+        "planning_qualification",
+        "valid_from",
+        "kind = 'readiness_inspector' AND person_id IN (SELECT p.id FROM planning_person p "
+        f"JOIN fleet_inspection i ON p.user_id IN (i.performer_id, i.verifier_id) WHERE i.{robot})",
+        [robot_code],
+        minutes,
+    )
+    _owner_backdate("fleet_inspection", "submitted_at", robot, [robot_code], minutes)
+
+
+def _periodic_overdue(w: SimpleNamespace) -> str:
+    """Every R-01 inspection moved one interval + 1 day into the past: due_at is before the snapshot time."""
+    rule = make_periodic_rule(w, "P-A", interval_min=60)
+    _backdate_inspections("R-01", 60 + 24 * 60)
+    w.due_at = max(Inspection.objects.filter(robot__code="R-01").values_list("submitted_at", flat=True)) + (
+        timedelta(minutes=rule.interval_min or 0)
+    )
+    return "R-01"
+
+
+def _periodic_signer_revoked(w: SimpleNamespace) -> str:
+    """P-2 signed every R-01 inspection; revoking the qualification makes none of them qualify (X-8)."""
+    from planning import services as ps  # noqa: PLC0415
+    from planning.models import Qualification  # noqa: PLC0415
+
+    q = Qualification.objects.get(person__code="P-2", kind="readiness_inspector", revoked_at__isnull=True)
+    ps.revoke_qualification(w.safety, qualification_id=q.pk, reason="SYNTHETIC")
+    return "R-01"
+
+
+def _periodic_rule_withdrawn(w: SimpleNamespace) -> str:
+    rule = fs.active_periodic_rule(ManifestPattern.objects.get(code="P-A").pk)
+    assert rule is not None
+    fs.withdraw_periodic_rule(w.safety, rule_id=rule.pk, reason="SYNTHETIC")
     return "R-01"
 
 
@@ -641,6 +738,7 @@ def _auth_other_pattern(w: SimpleNamespace) -> str:
     fs.record_manifest(
         w.eng, robot_code="R-01", pattern_code="P-C", autonomy_version="a2", safety_config_hash="g" * 64
     )
+    record_periodic_inspection(w, "R-01")  # X-3: keep the case to its own reason
     return "R-01"
 
 
@@ -649,6 +747,9 @@ def _baseline(w: SimpleNamespace) -> str:
 
 
 P = "Configuration {p} is not approved for home use ({s})"
+PU = "Periodic inspection interval unknown for configuration {p}"
+PN = "No qualifying periodic inspection on the current configuration"
+CS = "Capability profile is synthetic demo data, not engineering-supplied"
 EDGE_CASES: list[tuple[str, Any, Any]] = [
     # (name, builder(w) -> robot code, expected reasons: list[str] or callable(w) -> list[str])
     ("eligible_baseline", _baseline, []),
@@ -710,22 +811,70 @@ EDGE_CASES: list[tuple[str, Any, Any]] = [
     ("older_profile_approved_newer_not", _older_profile_approved, []),
     ("newer_approved_profile_wins", _newer_approved_unknown, ["Capability unknown: charge turnaround min"]),
     ("synthetic_profile_demo_mode", _mode("true"), []),
+    # Production (X-3): the world's SYNTHETIC periodic rule is not usable there, so "interval unknown" joins in.
     (
         "synthetic_profile_production",
         _mode("false"),
-        ["Capability profile is synthetic demo data, not engineering-supplied"],
+        ["Capability profile is synthetic demo data, not engineering-supplied", PU.format(p="P-M")],
     ),
     (
         "synthetic_profile_mode_missing",
         _mode(None),
-        ["Capability profile is synthetic demo data, not engineering-supplied"],
+        ["Capability profile is synthetic demo data, not engineering-supplied", PU.format(p="P-M")],
     ),
     (
         "synthetic_profile_mode_uppercase",
         _mode("TRUE"),
+        ["Capability profile is synthetic demo data, not engineering-supplied", PU.format(p="P-M")],
+    ),
+    (
+        "synthetic_profile_production_with_production_periodic",
+        _mode("false", production_periodic=True),
         ["Capability profile is synthetic demo data, not engineering-supplied"],
     ),
-    ("engineering_profile_production", _mode("false", source="engineering_doc"), []),
+    ("engineering_profile_production", _mode("false", source="engineering_doc"), [PU.format(p="P-M")]),
+    (
+        "engineering_profile_production_with_production_periodic",
+        _mode("false", source="engineering_doc", production_periodic=True),
+        [],
+    ),
+    # X-3 periodic inspection (contract 07a section 4.2; EM decision 7), demo unless stated.
+    (
+        "periodic_never_inspected",
+        lambda w: _repattern(w, "P-NI", ["approved_home"], periodic=False),
+        [PN],
+    ),
+    ("periodic_signer_revoked", _periodic_signer_revoked, [PN]),
+    (
+        "periodic_no_rule",
+        lambda w: _repattern(w, "P-NR", ["approved_home"], periodic_rule=False),
+        [PU.format(p="P-NR")],
+    ),
+    (
+        "periodic_interval_null",
+        lambda w: (make_periodic_rule(w, "P-A", interval_min=None), "R-01")[1],
+        [PU.format(p="P-A")],
+    ),
+    ("periodic_rule_withdrawn", _periodic_rule_withdrawn, [PU.format(p="P-A")]),
+    (
+        "periodic_synthetic_rule_production",
+        lambda w: (set_setting("demo_mode", "false"), "R-01")[1],
+        [CS, PU.format(p="P-A")],
+    ),
+    (
+        "periodic_synthetic_template_production",
+        lambda w: (
+            make_periodic_rule(w, "P-A", source="engineering_doc"),
+            set_setting("demo_mode", "false"),
+            "R-01",
+        )[2],
+        [CS, PN],
+    ),
+    (
+        "periodic_overdue",
+        _periodic_overdue,
+        lambda w: [f"Periodic inspection overdue since {fs.format_db_time(w.due_at)}"],
+    ),
     (
         "robot_hold_inspection",
         _inspection_hold,
@@ -778,6 +927,7 @@ EDGE_CASES: list[tuple[str, Any, Any]] = [
             "Capability unknown: lift crew",
             "Capability profile is synthetic demo data, not engineering-supplied",
             f"Configuration hold {w.p_hold}: {ODD_REASON}",
+            PU.format(p="P-X"),
             f"Robot hold {w.r_hold1} (Maintenance): SYNTHETIC maintenance hold",
             f"Robot hold {w.r_hold2} (Manual): SYNTHETIC manual hold",
         ],

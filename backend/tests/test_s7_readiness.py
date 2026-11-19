@@ -56,19 +56,10 @@ def submit(
 
 
 def build_b7(monkeypatch: Any, prefix: str) -> SimpleNamespace:
-    """tests.readiness_world.build_readiness, plus one SYNTHETIC periodic inspection per robot right after the
-    inspector grants and before any visit is planned: X-3 (EM decision 7) makes a robot without a qualifying
-    periodic inspection ineligible for planning. (The lead's shared worlds need the same step; see the
-    Engineer B change request.)"""
-    original = readiness_world.build_planning
-
-    def build_planning(robots: int = 3, prefix: str = "") -> SimpleNamespace:
-        w = original(robots=robots, prefix=prefix)
-        for code in w.robots:
-            submit(w, code)
-        return w
-
-    monkeypatch.setattr(readiness_world, "build_planning", build_planning)
+    """tests.readiness_world.build_readiness. The shared worlds now record one SYNTHETIC periodic inspection per
+    robot right after the inspector grants and before any visit is planned (X-3, EM decision 7; integration of
+    Engineer B's change request), so no per-test patch is needed. ``monkeypatch`` is kept for the callers."""
+    del monkeypatch
     return readiness_world.build_readiness(prefix=prefix)
 
 
