@@ -157,30 +157,29 @@ def test_depart_first_then_switch_waits_departure_is_demo(w, pause):
 
 
 def test_mutation_without_shared_lock_depart_commits_demo_after_production(w, monkeypatch):
-    """Shared lock off: the departure has decided (demo) and inserted its event; the switch is NOT blocked and
-    commits; then the demo departure commits after production mode was already in effect."""
+    """Shared lock off. Before Slice 7 the switch committed while the demo departure was in flight and the demo
+    departure then committed under production. Slice 7 change (EM ruling 1, 07a 2.2): the departure trigger
+    asserts the settings lock, so the mutated command is refused before deciding, whatever the switch does."""
     code = authorize(w)["code"]
     no_shared_settings_lock(monkeypatch)
-    waited, returned, first, second = AdvisoryInterleaving("before_commit:readiness.record_departure").run(
-        lambda: depart(w, code), switch_to_production
-    )
-    assert not waited and returned, (
-        "without the shared lock the switch commits while the departure is in flight"
-    )
-    assert second == "switched" and isinstance(first, dict) and first["mode"] == "demo"
-    assert is_production() and DepartureEvent.objects.filter(authorization__code=code).exists()
+    with pytest.raises(Conflict, match="a departure depends on the deployment mode"):
+        depart(w, code)
+    assert switch_to_production() == "switched" and is_production()
+    assert not DepartureEvent.objects.exists()
 
 
 def test_mutation_without_shared_lock_depart_ignores_pending_switch(w, monkeypatch):
-    """Shared lock off, other order: the departure does not wait for the pending switch and records a demo
-    departure on the old setting."""
+    """Shared lock off, other order (switch pending). Before Slice 7 the departure ignored the pending switch and
+    recorded a demo departure. Slice 7 change (EM ruling 1): refused by the trigger's lock assertion, never
+    queued behind the pending switch."""
     code = authorize(w)["code"]
     no_shared_settings_lock(monkeypatch)
     waited, returned, first, second = AdvisoryInterleaving(SWITCHED).run(
         switch_to_production, lambda: depart(w, code)
     )
     assert not waited and returned and first == "switched"
-    assert isinstance(second, dict) and second["mode"] == "demo", second
+    assert isinstance(second, Conflict) and "depends on the deployment mode" in str(second), second
+    assert not DepartureEvent.objects.exists()
 
 
 # ------------------------------------------------------------------ authorize_departure

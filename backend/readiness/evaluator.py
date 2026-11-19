@@ -187,8 +187,28 @@ def _read_world(visit: Visit) -> _World:
         person_ids += [x for x in (rev.lead_id, rev.second_id) if x is not None]
     if plan is not None:
         person_ids += [plan.on_call_engineer_id, plan.escalation_contact_id]
+    if rev is not None and robot is not None and manifest_id is not None:
+        person_ids += _inspection_signer_person_ids(v.pk, rev.pk, robot.pk, manifest_id)
     persons = dict(Person.objects.filter(pk__in=person_ids).values_list("pk", "version"))
     return _World(v, rev, robot, manifest_id, pattern, plan, current_policy(), persons)
+
+
+def _inspection_signer_person_ids(visit_id: int, revision_id: int, robot_id: int, manifest_id: int) -> list[int]:
+    """Slice 7 (contract 07a section 7.2, P0-1): the signer persons of the relied pre-departure inspection (latest
+    non-voided pre-departure evidence) and of the periodic inspection the database would rely on, so they are
+    locked and versioned in person_versions. MINIMAL Engineer A shim through the frozen SQL functions
+    (readiness_dependency_persons, readiness_periodic_inspection_status) so existing flows keep authorizing;
+    Engineer B owns the evaluator and replaces it with the Python implementation and the INSPECTOR_NOT_QUALIFIED
+    gate."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT x FROM readiness_dependency_persons("
+            "  jsonb_build_array((readiness_latest_evidence(%s, %s, %s, 'pre_departure_inspection')).id),"
+            "  (SELECT s.inspection_id FROM readiness_periodic_inspection_status(%s, fleet_production_mode(),"
+            "   clock_timestamp()) s)) x WHERE x IS NOT NULL",
+            [visit_id, revision_id, manifest_id, robot_id],
+        )
+        return [int(r[0]) for r in cur.fetchall()]
 
 
 def _snapshot(w: _World) -> dict[str, Any]:

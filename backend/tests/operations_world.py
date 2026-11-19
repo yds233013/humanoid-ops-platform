@@ -46,7 +46,7 @@ from fleet.models import DeploymentSetting, Hold, InspectionTemplate, ManifestPa
 from readiness import commands as rc
 from tests.execution_world import ALL_OK
 from tests.execution_world import TEMPLATE_ITEMS as SITE_ITEMS
-from tests.fleet_world import set_setting
+from tests.fleet_world import make_periodic_rule, set_setting
 from tests.planning_world import DAY
 from tests.readiness_world import build_readiness, new_confirmed_visit, record_all_evidence, record_inspection
 
@@ -213,8 +213,9 @@ def new_pattern(
         if approve == "both":
             fs.approve_capability_profile(w.safety, profile_id=pid, slot="safety")
     InspectionTemplate.objects.create(
-        pattern=ManifestPattern.objects.get(code=code), version="T1", items=TEMPLATE_ITEMS
+        pattern=ManifestPattern.objects.get(code=code), version="T1", items=TEMPLATE_ITEMS, created_by=w.eng
     )
+    make_periodic_rule(w, code)  # Slice 7: every pattern gets the world's approved SYNTHETIC periodic rule
     return code
 
 
@@ -1140,7 +1141,9 @@ def _scale_depart_wave(cur: Any, w: SimpleNamespace, k: int) -> None:
             'pattern_version', (SELECT version FROM fleet_manifestpattern WHERE id = m.pattern_id),
             'person_versions', (SELECT jsonb_object_agg(pp.id::text, pp.version) FROM planning_person pp
                                 WHERE pp.id IN (r.lead_id, r.second_id, rp.on_call_engineer_id,
-                                                rp.escalation_contact_id)),
+                                                rp.escalation_contact_id)
+                                   -- Slice 7 (07a 7.2): the inspection signers are dependency persons
+                                   OR pp.user_id IN (%(perf)s, %(ver)s)),
             'vehicle_id', r.vehicle_id,
             'policy_id', readiness_active_policy_id(),
             'policy_lock_version', (SELECT lock_version FROM readiness_readinesspolicy
@@ -1151,8 +1154,10 @@ def _scale_depart_wave(cur: Any, w: SimpleNamespace, k: int) -> None:
         ) s
         WHERE p.k = %(k)s
         """,
-        {"ops": w.ops.pk, "k": k},
+        {"ops": w.ops.pk, "k": k, "perf": w.field.pk, "ver": w.field2.pk},
     )
+    # Slice 7 (EM ruling 1): the departure trigger asserts the settings lock; take it SHARED first.
+    cur.execute("SELECT pg_advisory_xact_lock_shared(64942988919)")
     cur.execute(
         """
         INSERT INTO readiness_departureevent (guard_snapshot, authorization_id, recorded_by_id, robot_id, visit_id)

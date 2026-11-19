@@ -41,6 +41,13 @@ def _allow_test_teardown_to_flush_audit():
             + [f"ALTER TABLE {t} DISABLE TRIGGER USER;" for t in guarded]
             + list(sql)
             + [f"ALTER TABLE {t} ENABLE TRIGGER USER;" for t in guarded]
+            # Slice 7: the hold-policy registry row (id 1) is schema, not test data (inserted by fleet/0008); the
+            # flush must not leave the serialization point missing for the next test.
+            + (
+                ["INSERT INTO fleet_holdpolicyregistry (id) VALUES (1) ON CONFLICT (id) DO NOTHING;"]
+                if "fleet_holdpolicyregistry" in tables
+                else []
+            )
         )
 
     DatabaseOperations.sql_flush = sql_flush

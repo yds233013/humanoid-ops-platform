@@ -24,7 +24,7 @@ from readiness.models import (
     ReadinessEvidence,
     ReadinessPolicy,
 )
-from tests.fleet_world import set_setting
+from tests.fleet_world import make_engineering_template, make_periodic_rule, set_setting
 from tests.planning_world import new_visit, plan
 from tests.readiness_world import REQUIREMENTS, build_readiness, requirements
 
@@ -129,7 +129,26 @@ def _snapshot(c, **over) -> dict[str, Any]:
     return s
 
 
+def _periodic(c, production: bool = False) -> tuple[int | None, Any]:
+    """Slice 7 (07a 4.4): the periodic inspection the database selects for the robot, and the revision's planned
+    unloading end (the end of its 'unloading' reservation), which every new authorization row must carry."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT inspection_id FROM readiness_periodic_inspection_status(%s, %s, clock_timestamp())",
+            [c["robot"].pk, production],
+        )
+        insp = cur.fetchone()[0]
+        cur.execute(
+            "SELECT max(ends_at) FROM planning_reservation WHERE revision_id = %s AND purpose = 'unloading'",
+            [c["rev"].pk],
+        )
+        return insp, cur.fetchone()[0]
+
+
 def _auth_row(w, c, expires: str = "clock_timestamp() + interval '30 minutes'", **over) -> dict[str, Any]:
+    # Slice 7 change (X-3/X-8, 07a 4.4): a new authorization row records its relied periodic inspection and
+    # planned unloading end; every structural rule asserted below is unchanged.
+    periodic, unload_end = _periodic(c, production=over.get("mode") == "production")
     row = {
         "code": f"DA-T{next(_SEQ)}",
         "visit_id": c["visit"].pk,
@@ -142,6 +161,8 @@ def _auth_row(w, c, expires: str = "clock_timestamp() + interval '30 minutes'", 
         "evidence_ids": c["ev_ids"],
         "recovery_plan_id": w.recovery_plan_id,
         "issued_by_id": w.ops.pk,
+        "periodic_inspection_id": periodic,
+        "planned_unload_end": unload_end,
         "_expires": expires,
     }
     row.update(over)
@@ -189,7 +210,14 @@ def _departure(cur, w, auth_id: int, **over) -> int:
         "guard_snapshot": a.guard_snapshot,
     }
     row.update(over)
-    return _ins(cur, "readiness_departureevent", **row)
+    # Slice 7 change (EM ruling 1, 07a 9.1): a direct-SQL departure takes the settings lock SHARED first (the
+    # departure trigger asserts it); every refusal asserted with this helper is unchanged.
+    if not cur.connection.autocommit:  # inside the caller's transaction
+        cur.execute("SELECT pg_advisory_xact_lock_shared(64942988919)")
+        return _ins(cur, "readiness_departureevent", **row)
+    with cur.connection.transaction():
+        cur.execute("SELECT pg_advisory_xact_lock_shared(64942988919)")
+        return _ins(cur, "readiness_departureevent", **row)
 
 
 def _reschedule(w, code: str, hours: int = 2) -> None:
@@ -623,6 +651,19 @@ def test_authorization_policy_and_mode_rules(w, app_role_conn):
             _ins_auth(cur, _auth_row(w, c, mode="production"))
     set_setting("demo_mode", "true")
     procedure = ReadinessPolicy.objects.get(version=w.make_policy(source="approved_procedure"))
+    # Slice 7 change (X-3): a production row must rely on a production-qualifying periodic inspection, so the
+    # world gets an engineering_doc rule and an approved periodic template (SYNTHETIC fixtures) and one PASS on it.
+    make_periodic_rule(w, "P-A", source="engineering_doc")
+    make_engineering_template(w, "P-A", "E1", ("periodic",))
+    fleet_services.submit_inspection(
+        w.ops,
+        robot_code="R-01",
+        template_version="E1",
+        answers=dict(w.all_pass),
+        performer=w.field.username,
+        verifier=w.field2.username,
+    )
+    c = _ctx(w)
     set_setting("demo_mode", "false")
     with app_role_conn.cursor() as cur:  # structurally acceptable: approved procedure in production
         _ins_auth(
@@ -809,6 +850,9 @@ def test_two_raw_transactions_cannot_both_depart_on_one_authorization(w, app_rol
     def depart(conn):
         try:
             with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock_shared(64942988919)"
+                )  # Slice 7: settings lock first
                 barrier.wait()
                 cur.execute(
                     "INSERT INTO readiness_departureevent (authorization_id, visit_id, robot_id, recorded_by_id, "

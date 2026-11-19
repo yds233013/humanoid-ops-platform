@@ -271,9 +271,12 @@ def raw_resolve(
 
 
 def raw_hold(cur, w: SimpleNamespace, *, source_ref: str, robot_id: int | None = None, **over: Any) -> int:
-    """A robot-scope blocking incident hold under the newest hold policy (releasable with release_hold(w, code))."""
+    """A robot-scope blocking incident hold under the binding hold policy (releasable with release_hold(w, code)).
+    Slice 7: the binding is the active policy, else the newest (fleet_hold_binding_policy_id, fleet/0008)."""
     rid = robot_id or w.run.robot_id
-    policy = HoldPolicy.objects.order_by("-version").first()
+    cur.execute("SELECT fleet_hold_binding_policy_id()")
+    binding = cur.fetchone()[0]
+    policy = HoldPolicy.objects.filter(pk=binding).first() if binding is not None else None
     source_type = over.get("source_type", "incident")
     slots = (policy.rules.get(source_type) or {}).get("slots", []) if policy else []
     cols: dict[str, Any] = {

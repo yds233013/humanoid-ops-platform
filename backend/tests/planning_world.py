@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from django.utils import timezone
 
 from planning import services as p
+from planning.models import Person, Qualification
 from tests.fleet_world import build_world, set_setting
 
 TZ = "America/Los_Angeles"
@@ -29,6 +30,10 @@ def build_planning(robots: int = 3, prefix: str = "") -> SimpleNamespace:
         p.register_person(w.ops, username=user.username, code=code)
         for k in kinds:
             p.grant_qualification(w.ops, person_code=code, kind=k, valid_from=lo, valid_to=hi)
+    # Slice 7 (X-8): the three field people may sign inspections that readiness relies on. Immediate synthetic
+    # grants by the safety reviewer (valid_from NULL = database time); the grant command change is Engineer B's.
+    for code in ("P-1", "P-2", "P-3"):
+        grant_inspector(w, code)
     p.register_vehicle(w.ops, code="VAN-1", robot_capacity=1, restraint_kit="SYN kit")
     p.register_vehicle(w.ops, code="VAN-2", robot_capacity=1, restraint_kit="SYN kit")
     p.register_vehicle(w.ops, code="VAN-X")  # unknown capacity and restraint
@@ -40,6 +45,18 @@ def build_planning(robots: int = 3, prefix: str = "") -> SimpleNamespace:
         add_site(w, code, adults, decision)
     w.p = p
     return w
+
+
+def grant_inspector(w, person_code: str, valid_to: datetime | None = None) -> Qualification:
+    """SYNTHETIC readiness_inspector grant by w.safety, effective now (database time)."""
+    return Qualification.objects.create(
+        person=Person.objects.get(code=person_code),
+        kind="readiness_inspector",
+        valid_from=None,
+        valid_to=valid_to or datetime(2027, 6, 1, tzinfo=UTC),
+        granted_by=w.safety,
+        basis_ref="SYNTHETIC-TRAINING",
+    )
 
 
 def add_site(

@@ -503,7 +503,14 @@ def _create_hold(
 ) -> Hold:
     """Placing a hold never depends on a policy being approved (fail closed). Without a release rule the
     hold is created with no release slots and stays unreleasable until a policy provides one."""
-    policy = HoldPolicy.objects.order_by("-version").first()
+    # Slice 7 (G-01): bind to the active policy, else the newest, else none, resolved AFTER the hold-policy
+    # registry S lock (last in the global order; the caller already holds the robot / pattern rows). Minimal
+    # Engineer A change so placements satisfy fleet_hold_guard; Engineer B owns the Python mirror.
+    lock_guards(share_hold_policy_registry=True)
+    with connection.cursor() as cur:
+        cur.execute("SELECT fleet_hold_binding_policy_id()")
+        binding_id = cur.fetchone()[0]
+    policy = HoldPolicy.objects.filter(pk=binding_id).first() if binding_id is not None else None
     rule = policy.rules.get(source_type) if policy else None
     return Hold.objects.create(
         code=_next_code("fleet_hold_code_seq", "HD"),
@@ -687,15 +694,22 @@ def withdraw_release_approval(actor: Any, *, approval_id: int, reason: str) -> d
 def release_hold(actor: Any, *, hold_code: str) -> dict[str, Any]:
     def handler() -> Outcome:
         h = _hold(hold_code)
+        # Slice 7 (section 9.1): release is mode-dependent, so the settings lock is taken SHARED first; the
+        # fleet_hold_guard UPDATE trigger refuses a release without it. Minimal Engineer A change (B owns it).
         if h.scope == "robot":
             assert h.robot_id is not None
-            lock_guards(update_robots=[h.robot_id], label="fleet.release_hold")
+            lock_guards(share_settings=True, update_robots=[h.robot_id], label="fleet.release_hold")
         else:
             assert h.pattern_id is not None
             robot_ids = list(
                 Robot.objects.filter(current_manifest__pattern_id=h.pattern_id).values_list("pk", flat=True)
             )
-            lock_guards(update_patterns=[h.pattern_id], update_robots=robot_ids, label="fleet.release_hold")
+            lock_guards(
+                share_settings=True,
+                update_patterns=[h.pattern_id],
+                update_robots=robot_ids,
+                label="fleet.release_hold",
+            )
         h = Hold.objects.select_related("robot", "policy").get(pk=h.pk)
         if h.released_at is not None:
             raise Conflict("Hold already released")

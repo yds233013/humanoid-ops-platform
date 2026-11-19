@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from fleet import services as fleet_services
 from fleet.models import CapabilityProfile, Robot
-from planning.models import ConsentRecord, Qualification, Reservation, Visit
+from planning.models import ConsentRecord, Person, Qualification, Reservation, Visit
 from platform_core.models import AuditEvent
 from readiness import evaluator as ev
 from readiness import evidence as rx
@@ -115,15 +115,31 @@ def test_fully_ready_world_is_ready_with_snapshot_evidence_and_expiry(w):
         "manifest_id": robot.current_manifest_id,
         "pattern_id": robot.current_manifest.pattern_id,
         "pattern_version": robot.current_manifest.pattern.version,
+        # Slice 7 (07a 7.2, P0-1): person_versions also holds the signers of the relied pre-departure inspection
+        # (here also the relied periodic inspection): P-2 is crew AND signer (one entry), P-3 is signer only.
         "person_versions": {
-            str(p.pk): p.version for p in (r.lead, r.second, rp.on_call_engineer, rp.escalation_contact)
+            str(p.pk): p.version
+            for p in (
+                r.lead,
+                r.second,
+                rp.on_call_engineer,
+                rp.escalation_contact,
+                Person.objects.get(code="P-3"),
+            )
         },
         "vehicle_id": r.vehicle_id,
         "policy_id": policy.pk,
         "policy_lock_version": policy.lock_version,
     }
     assert set(snap["person_versions"]) == {
-        str(x) for x in (r.lead_id, r.second_id, rp.on_call_engineer_id, rp.escalation_contact_id)
+        str(x)
+        for x in (
+            r.lead_id,
+            r.second_id,
+            rp.on_call_engineer_id,
+            rp.escalation_contact_id,
+            Person.objects.get(code="P-3").pk,
+        )
     }
     assert policy.lock_version == 3  # created 1, +1 per approval slot
     assert snap == ev.take_guard_snapshot(v)
@@ -446,7 +462,12 @@ def test_recovery_plan_missing_blocks(w):
     assert _codes(res) == {"RECOVERY_PLAN_MISSING"}
     assert res.recovery_plan_id is None
     r = _visit(code).current_revision
-    assert set(res.guard_snapshot["person_versions"]) == {str(r.lead_id), str(r.second_id)}
+    # Slice 7 (07a 7.2): plus the signer-only person P-3 of the relied inspections (no recovery plan people)
+    assert set(res.guard_snapshot["person_versions"]) == {
+        str(r.lead_id),
+        str(r.second_id),
+        str(Person.objects.get(code="P-3").pk),
+    }
 
 
 def test_recovery_plan_not_required_by_policy(w):

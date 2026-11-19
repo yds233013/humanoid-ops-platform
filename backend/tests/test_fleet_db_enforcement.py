@@ -2,9 +2,10 @@
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from fleet import services as s
-from fleet.models import Hold, Robot
+from fleet.models import Hold, HoldPolicy, Robot
 from tests.fleet_world import build_world
 
 
@@ -23,13 +24,23 @@ def _refused(conn, sql, params=None, match=None):
 
 
 def test_hold_cannot_be_released_by_raw_sql_without_approvals(w, app_role_conn):
+    # Slice 7 change (07a section 9.1 / 11.7): a direct-SQL release must take the settings lock SHARED first;
+    # without it the trigger refuses before deciding. With the lock, the approval rules still refuse.
     h = s.place_hold(w.ops, scope="robot", target="R-01", source_type="maintenance", reason="x")["entity_id"]
     _refused(
         app_role_conn,
         "UPDATE fleet_hold SET released_at = now(), released_by_id = %s WHERE code = %s",
         [w.lead.pk, h],
-        match="cannot release",
+        match="releasing a hold depends on the deployment mode",
     )
+    with app_role_conn.transaction(), app_role_conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock_shared(64942988919)")
+        with pytest.raises(psycopg.Error) as err, app_role_conn.transaction():
+            cur.execute(
+                "UPDATE fleet_hold SET released_at = now(), released_by_id = %s WHERE code = %s",
+                [w.lead.pk, h],
+            )
+        assert "cannot release" in str(err.value)
     assert Hold.objects.get(code=h).released_at is None
 
 
@@ -187,6 +198,10 @@ def test_failed_inspection_cannot_borrow_an_unrelated_or_earlier_hold(w, app_rol
         "'[]', '[]', %s, %s, %s, %s, now())"
     )
     args = [r.pk, r.current_manifest_id, tmpl, w.field.pk, w.field2.pk]
+    # Slice 7 change (G-01 binding, 07a 5.2): a raw hold must bind to the active policy, else the newest (here the
+    # world's draft v1) with its slots copied exactly; the causality assertions below are unchanged.
+    policy = HoldPolicy.objects.order_by("-version").first()
+    bound = [policy.pk, Jsonb(policy.rules["inspection"]["slots"])]
     # 1) an unrelated, already-open hold
     _refused(app_role_conn, insert, ["Y-1", *args, unrelated.pk, w.field.pk], match="its own")
     # 2) an inspection-sourced hold with the right reference, but committed in an EARLIER transaction
@@ -194,8 +209,8 @@ def test_failed_inspection_cannot_borrow_an_unrelated_or_earlier_hold(w, app_rol
         cur.execute(
             "INSERT INTO fleet_hold (code, scope, robot_id, blocking, source_type, source_ref, reason, "
             "policy_id, required_slots, placed_by_id, placed_at) VALUES ('HD-X', 'robot', %s, true, "
-            "'inspection', 'Y-2', 'pre-made', NULL, '[]', %s, now()) RETURNING id",
-            [r.pk, w.ops.pk],
+            "'inspection', 'Y-2', 'pre-made', %s, %s, %s, now()) RETURNING id",
+            [r.pk, *bound, w.ops.pk],
         )
         premade = cur.fetchone()[0]
     _refused(app_role_conn, insert, ["Y-2", *args, premade, w.field.pk], match="its own")
@@ -204,8 +219,8 @@ def test_failed_inspection_cannot_borrow_an_unrelated_or_earlier_hold(w, app_rol
         cur.execute(
             "INSERT INTO fleet_hold (code, scope, robot_id, blocking, source_type, source_ref, reason, "
             "policy_id, required_slots, placed_by_id, placed_at) VALUES ('HD-Y', 'robot', %s, true, "
-            "'inspection', 'Y-3', 'linked', NULL, '[]', %s, now()) RETURNING id",
-            [r.pk, w.ops.pk],
+            "'inspection', 'Y-3', 'linked', %s, %s, %s, now()) RETURNING id",
+            [r.pk, *bound, w.ops.pk],
         )
         linked = cur.fetchone()[0]
         cur.execute(insert, ["Y-3", *args, linked, w.field.pk])

@@ -79,19 +79,29 @@ def authorize(w) -> DepartureAuthorization:
 def raw_depart(
     cur, a: DepartureAuthorization, recorded_by: Any, snapshot: dict[str, Any] | None = None
 ) -> int:
-    """Direct INSERT as ops_app, copying the authorization's snapshot (what a bypass would do)."""
-    cur.execute(
-        "INSERT INTO readiness_departureevent (authorization_id, visit_id, robot_id, recorded_by_id, "
-        "guard_snapshot) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-        [
-            a.pk,
-            a.visit_id,
-            a.robot_id,
-            recorded_by.pk,
-            Jsonb(snapshot if snapshot is not None else a.guard_snapshot),
-        ],
-    )
-    return int(cur.fetchone()[0])
+    """Direct INSERT as ops_app, copying the authorization's snapshot (what a bypass would do). Slice 7 change
+    (EM ruling 1): the bypass takes the settings lock SHARED first, as the departure trigger requires (in its own
+    transaction when the connection is autocommit, else inside the caller's open transaction)."""
+
+    def insert() -> int:
+        cur.execute("SELECT pg_advisory_xact_lock_shared(64942988919)")
+        cur.execute(
+            "INSERT INTO readiness_departureevent (authorization_id, visit_id, robot_id, recorded_by_id, "
+            "guard_snapshot) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            [
+                a.pk,
+                a.visit_id,
+                a.robot_id,
+                recorded_by.pk,
+                Jsonb(snapshot if snapshot is not None else a.guard_snapshot),
+            ],
+        )
+        return int(cur.fetchone()[0])
+
+    if cur.connection.autocommit:
+        with cur.connection.transaction():
+            return insert()
+    return insert()
 
 
 def raw_authorize(cur, w, policy: ReadinessPolicy, snapshot: dict[str, Any] | None = None) -> int:
@@ -383,11 +393,14 @@ def test_unprivileged_recorder_is_refused(w, app_role_conn, who):
 
 # ------------------------------------------------------------------ concurrency (raw transactions)
 def _raw_hold(cur, w) -> None:
+    # Slice 7 change (G-01 binding): a raw hold binds to fleet_hold_binding_policy_id() with its slots copied.
     robot = Robot.objects.get(code="R-01")
     cur.execute(
         "INSERT INTO fleet_hold (code, scope, robot_id, pattern_id, blocking, source_type, source_ref, reason, "
         "policy_id, required_slots, manifest_at_placement_id, placed_by_id, placed_at) "
-        "VALUES (%s, 'robot', %s, NULL, true, 'maintenance', '', 'raw concurrent hold', NULL, '[]', %s, %s, now())",
+        "SELECT %s, 'robot', %s, NULL, true, 'maintenance', '', 'raw concurrent hold', p.id, "
+        "coalesce(p.rules -> 'maintenance' -> 'slots', '[]'), %s, %s, now() "
+        "FROM (SELECT fleet_hold_binding_policy_id() AS id) b LEFT JOIN fleet_holdpolicy p ON p.id = b.id",
         [f"HD-R{time.monotonic_ns() % 10**6}", robot.pk, robot.current_manifest_id, w.ops.pk],
     )
 

@@ -17,7 +17,7 @@ from fleet import services as fs
 from planning.models import ConsentRecord, Qualification, Visit
 from platform_core import testhooks
 from platform_core.commands import Conflict
-from platform_core.locks import ORDER
+from platform_core.locks import ORDER, lock_settings_shared
 from platform_core.models import AuditEvent, IdempotencyKey
 from readiness import commands as rc
 from readiness.authorization import authorization_status
@@ -269,7 +269,11 @@ def test_database_alone_prevents_double_departure_when_app_locks_are_bypassed(w,
     """Mutation check: with the command's lock_guards disabled, both departures pass the application's
     'already used' check, and the unique constraint on DepartureEvent.authorization still allows one."""
     code = authorize(w)["code"]
-    monkeypatch.setattr(rc, "lock_guards", lambda **kw: None)
+    # Slice 7: the row locks stay bypassed, but the settings lock is still taken, since the departure trigger
+    # now asserts it (EM ruling 1); without it both departures are refused before the unique key decides.
+    monkeypatch.setattr(
+        rc, "lock_guards", lambda **kw: lock_settings_shared() if kw.get("share_settings") else None
+    )
     blocked, first, second = Interleaving("before_commit:readiness.record_departure").run(
         lambda: depart(w, code), lambda: depart(w, code, actor=w.field)
     )
@@ -427,13 +431,15 @@ def test_authorize_lock_sequence(w):
     v = Visit.objects.get(code=w.visit)
     seen = _capture_locks(lambda: authorize(w))
     _assert_global_order(seen)
-    persons = _ids(Person, code__in=["P-1", "P-2", "P-4", "P-5"])  # lead, second, on-call, escalation
+    # lead, second, on-call, escalation and (Slice 7, 07a 9.2) P-3, the signer-only person of the relied
+    # inspections (P-2 is crew and signer: one entry)
+    persons = _ids(Person, code__in=["P-1", "P-2", "P-3", "P-4", "P-5"])
     assert [(t, m) for t, m, _ in seen] == [
         ("accounts_rolegrant", "SHARE"),
         ("planning_site", "SHARE"),
         ("fleet_manifestpattern", "SHARE"),
         ("fleet_robot", "SHARE"),
-        *[("planning_person", "SHARE")] * 4,
+        *[("planning_person", "SHARE")] * 5,  # Slice 7: + signer-only P-3
         ("planning_vehicle", "SHARE"),
         ("planning_visit", "UPDATE"),
         ("readiness_readinesspolicy", "SHARE"),
@@ -453,7 +459,7 @@ def test_depart_lock_sequence(w):
         ("planning_site", "SHARE"),
         ("fleet_manifestpattern", "SHARE"),
         ("fleet_robot", "UPDATE"),
-        *[("planning_person", "SHARE")] * 4,
+        *[("planning_person", "SHARE")] * 5,  # Slice 7: + signer-only P-3
         ("planning_vehicle", "SHARE"),
         ("planning_visit", "UPDATE"),
         ("planning_vehicletrip", "UPDATE"),

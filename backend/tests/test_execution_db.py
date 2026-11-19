@@ -647,6 +647,9 @@ def test_incident_on_a_released_hold_is_refused(w, app_role_conn):
                 [hold, s["slot"], user.pk, role, w.robot.current_manifest_id],
             )
         cur.execute(
+            "SELECT pg_advisory_xact_lock_shared(64942988919)"
+        )  # Slice 7: releases take the lock first
+        cur.execute(
             "UPDATE fleet_hold SET released_at = now(), released_by_id = %s WHERE id = %s", [w.ops.pk, hold]
         )
         ew.incident_row(cur, w, code, hold)
