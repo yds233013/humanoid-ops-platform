@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Capacity forecast{% endblock %}
+{% block content %}
+<div class="banner cap-banner" role="status" data-capacity-banner="1"><b>{{ banner }}</b>. Every number below is computed from stated, synthetic assumptions; it is read only and records nothing.</div>
+<p class="row op-nav"><a href="/ops/">Fleet overview</a> · <a href="/ops/exceptions/">Exceptions</a> · <a href="/ops/incidents/">Incident queue</a> · <a href="/ops/timeline/">Timeline</a>{% if can_metrics %} · <a href="/ops/metrics/">Metrics</a> · <a href="/ops/capacity/" aria-current="page">Capacity forecast</a>{% endif %}</p>
+<p class="op-asof" data-as-of="{{ as_of_iso }}">As of <b>{{ as_of_text }}</b> <span class="muted">(one consistent database snapshot; reload for a newer one)</span></p>
+<style>
+ .cap-banner{background:var(--amberbg);border:2px solid #E9C46A;color:var(--amber);position:sticky;top:0;z-index:5}
+ .op-nav a[aria-current]{font-weight:700;color:var(--ink)}
+ .op-asof{font-size:14px;margin:0 0 10px}
+ .tablewrap{overflow-x:auto;margin:0 0 16px}
+ tr.unknown td, li.unknown{background:var(--amberbg)}
+ .badge.unknown{background:var(--amberbg);color:var(--amber);border-color:#E9C46A}
+ tr.rec td{background:var(--bluebg)}
+ td.num{text-align:right;font-variant-numeric:tabular-nums}
+ h2{margin-top:22px}
+</style>
+<h1>Capacity forecast: 5 / 10 / 25 / 50 robots</h1>
+<form method="get" class="row"><label>Assumption set
+<select name="assumption">{% for a in assumptions %}<option value="{{ a }}"{% if a == assumption %} selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+<button class="primary" type="submit">Show</button></form>
+{% if error %}
+<div class="msg error" role="alert">{{ error }}</div>
+{% else %}
+<p>Assumption set <b data-assumption="{{ report.assumption }}">{{ report.assumption }}</b>. Baseline: <span data-baseline>{{ report.baseline.status }}</span>{% if report.baseline.window %} (window {{ report.baseline.window }}){% endif %}.</p>
+
+<h2>Founder takeaways</h2>
+<ul data-takeaways>{% for t in report.takeaways %}<li>{{ t }}</li>{% endfor %}</ul>
+
+<h2>Current team vs recommended staffing</h2>
+<div class="tablewrap"><table data-table="comparison">
+<thead><tr><th>Robots</th><th>Staffing</th><th>Crews</th><th>Vehicles</th><th>Engineers</th><th>Stations</th><th>Ops leads</th><th>Completed/wk</th><th>Demand/wk</th><th>Unmet/wk</th><th>Binding</th><th>Flags</th><th>Monthly total (SCU)</th><th>Cost per completed (SCU)</th><th>Status</th></tr></thead>
+<tbody>{% for row in report.comparison %}{% with c=row.current r=row.recommended %}
+<tr data-fleet="{{ row.fleet_size }}" data-staffing="current"><td>{{ row.fleet_size }}</td><td>current</td><td class="num">{{ c.crews }}</td><td class="num">{{ c.vehicles }}</td><td class="num">{{ c.engineers }}</td><td class="num">{{ c.stations }}</td><td class="num">{{ c.ops_leads }}</td><td class="num" data-done>{{ c.done }}</td><td class="num">{{ row.demand }}</td><td class="num">{{ c.unmet }}</td><td>{{ c.binding_text }}</td><td>{{ c.flags_text }}</td><td class="num" data-total>{{ c.total_text }}</td><td class="num" data-cost>{{ c.cost_text }}</td><td>{{ c.status }}<div class="muted">{{ c.reason }}</div></td></tr>
+<tr class="rec" data-fleet="{{ row.fleet_size }}" data-staffing="recommended"><td>{{ row.fleet_size }}</td><td>recommended</td><td class="num">{{ r.crews }}</td><td class="num">{{ r.vehicles }}</td><td class="num">{{ r.engineers }}</td><td class="num">{{ r.stations }}</td><td class="num">{{ r.ops_leads }}</td><td class="num" data-done>{{ r.done }}</td><td class="num">{{ row.demand }}</td><td class="num">{{ r.unmet }}</td><td>{{ r.binding_text }}</td><td>{{ r.flags_text }}</td><td class="num" data-total>{{ r.total_text }}</td><td class="num" data-cost>{{ r.cost_text }}</td><td>{{ r.status }}<div class="muted">{{ r.reason }}</div></td></tr>
+{% endwith %}{% endfor %}</tbody></table></div>
+<p class="muted">Recommended staffing is a deterministic greedy heuristic starting from the current team, not a global optimum.</p>
+
+<h2>Hiring and vehicle triggers</h2>
+<div class="tablewrap"><table data-table="triggers">
+<thead><tr><th>Resource</th><th>Current team</th>{% for n in report.fleet_sizes %}<th>At {{ n }}</th>{% endfor %}<th>First rises at</th></tr></thead>
+<tbody>{% for t in report.triggers %}<tr data-resource="{{ t.resource }}"><td>{{ t.label }}</td><td class="num">{{ t.configured }}</td>{% for n, count in t.counts %}<td class="num">{{ count }}</td>{% endfor %}<td>{% if t.first_rise %}{{ t.first_rise }} robots{% else %}no rise{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+
+<h2>Next constraint after relieving the current one</h2>
+<div class="tablewrap"><table data-table="next">
+<thead><tr><th>Robots</th><th>Staffing</th><th>Constraint now</th><th>Relieved by</th><th>Next constraint</th><th>Completed now</th><th>Completed after</th></tr></thead>
+<tbody>{% for n in report.next_constraints %}<tr><td>{{ n.fleet_size }}</td><td>{{ n.staffing }}</td><td>{{ n.constraint_text }}</td><td>{{ n.relieved_by }}</td><td>{{ n.next_text }}</td><td class="num">{{ n.done_before }}</td><td class="num">{{ n.done_after }}</td></tr>{% endfor %}</tbody></table></div>
+
+<h2>Top levers by incremental completed deployments</h2>
+<p class="muted">Each input moved -20% / +20% (feasible values only); only changes that add completed deployments are listed. Not offered as levers: {% for k, why in report.lever_exclusions.items %}{{ k }} ({{ why }}){% if not forloop.last %}; {% endif %}{% endfor %}.</p>
+<div class="tablewrap"><table data-table="levers">
+<thead><tr><th>Robots</th><th>Staffing</th><th>#</th><th>Input</th><th>Change</th><th>From</th><th>To</th><th>Completed/wk</th><th>Added</th><th>Cost per completed (SCU)</th></tr></thead>
+<tbody>{% for lv in report.levers %}<tr{% if lv.unknown %} class="unknown"{% endif %}><td>{{ lv.fleet_size }}</td><td>{{ lv.staffing }}</td><td>{{ lv.rank }}</td><td>{{ lv.label }} <span class="muted">{{ lv.key }}</span>{% if lv.unknown %} <span class="badge unknown">unknown company input</span>{% endif %}</td><td>{{ lv.change }}</td><td>{{ lv.from_text }}</td><td>{{ lv.to_text }}</td><td>{{ lv.done_before }} -&gt; {{ lv.done_after }}</td><td class="num">+{{ lv.delta_done }}</td><td class="num">{{ lv.cost_text }}</td></tr>{% empty %}<tr><td colspan="10" class="muted">No single input change adds completed deployments.</td></tr>{% endfor %}</tbody></table></div>
+
+<h2>Worked example: {{ report.fleet_sizes.0 }} robots</h2>
+<div class="tablewrap"><table data-table="worked">
+<thead><tr><th>Step</th><th>Item</th><th>Value</th><th>How</th></tr></thead>
+<tbody>{% for s in report.worked_example %}<tr><td class="muted">{{ s.section }}</td><td>{{ s.label }}</td><td>{{ s.display }}</td><td class="muted">{{ s.formula }}</td></tr>{% endfor %}</tbody></table></div>
+
+<h2>Unknown company inputs these results depend on</h2>
+<p>Illustrative placeholders, not company data. Replace them with real figures before relying on any number on this page.</p>
+<div class="tablewrap"><table data-table="unknown">
+<thead><tr><th>Input</th><th>Unit</th><th>Value used</th><th>Conservative / base / optimistic</th><th>Source</th></tr></thead>
+<tbody>{% for u in report.unknown_inputs %}<tr class="unknown" data-unknown="{{ u.key }}"><td><span class="badge unknown">UNKNOWN</span> {{ u.label }} <span class="muted">{{ u.key }}</span></td><td>{{ u.unit }} {{ u.time_basis }}</td><td>{{ u.value_text }}</td><td>{{ u.range_text }}</td><td>{{ u.source }}</td></tr>{% endfor %}</tbody></table></div>
+
+<h2>Input provenance</h2>
+<div class="tablewrap"><table data-table="provenance">
+<thead><tr><th>Input</th><th>Unit</th><th>Provenance</th><th>Value used</th><th>Value from</th><th>Source</th></tr></thead>
+<tbody>{% for p in report.provenance %}<tr{% if p.unknown %} class="unknown"{% endif %} data-input="{{ p.key }}"><td>{{ p.label }} <span class="muted">{{ p.key }}</span></td><td>{{ p.unit }} {{ p.time_basis }}</td><td>{% if p.unknown %}<span class="badge unknown">unknown company data</span>{% else %}{{ p.provenance }}{% endif %}</td><td>{{ p.value_text }}</td><td>{{ p.value_source }}</td><td class="muted">{{ p.source }}{% if p.notes %} ({{ p.notes }}){% endif %}</td></tr>{% endfor %}</tbody></table></div>
+
+<h2>Notes and approximations</h2>
+<ul class="muted">{% for n in report.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}
