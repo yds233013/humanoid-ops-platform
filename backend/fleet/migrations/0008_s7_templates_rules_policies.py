@@ -300,6 +300,18 @@ LANGUAGE sql STABLE AS $$
     AND (r.source = 'engineering_doc' OR NOT coalesce(p_production, true))
 $$;
 
+-- ================================================================ G-01 registry (section 5.2, P0-3)
+-- The singleton serialization point, last in the global lock order. Fails closed if the row is missing.
+CREATE OR REPLACE FUNCTION fleet_lock_hold_policy_registry(p_update boolean) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_update THEN
+    PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR UPDATE;
+  ELSE
+    PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR SHARE;
+  END IF;
+  IF NOT FOUND THEN PERFORM fleet_fail('the hold-policy registry row (id 1) is missing'); END IF;
+END $$;
+
 -- ================================================================ G-01 hold policies
 CREATE OR REPLACE FUNCTION fleet_hold_policy_slot_role(slot text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE slot WHEN 'engineering' THEN 'engineering_lead' WHEN 'safety' THEN 'safety_reviewer'
@@ -396,7 +408,7 @@ END $$;
 CREATE OR REPLACE FUNCTION fleet_hold_policy_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE problem text;
 BEGIN
-  PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR UPDATE;  -- creation changes "newest"
+  PERFORM fleet_lock_hold_policy_registry(true);  -- creation changes "newest"
   NEW.created_at := clock_timestamp();
   IF NEW.version IS DISTINCT FROM coalesce((SELECT max(version) FROM fleet_holdpolicy), 0) + 1 THEN
     PERFORM fleet_fail('hold policy versions must be consecutive');
@@ -419,7 +431,7 @@ CREATE TRIGGER fleet_hold_policy_guard BEFORE INSERT ON fleet_holdpolicy
 CREATE OR REPLACE FUNCTION fleet_policy_approval_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p fleet_holdpolicy; role text;
 BEGIN
-  PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR UPDATE;  -- may change "active"
+  PERFORM fleet_lock_hold_policy_registry(true);  -- may change "active"
   NEW.approved_at := clock_timestamp();
   SELECT * INTO p FROM fleet_holdpolicy WHERE id = NEW.policy_id;
   role := fleet_hold_policy_slot_role(NEW.slot);
@@ -440,7 +452,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION fleet_hold_policy_withdrawal_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR UPDATE;  -- may change "active"
+  PERFORM fleet_lock_hold_policy_registry(true);  -- may change "active"
   NEW.withdrawn_at := clock_timestamp();
   IF NOT fleet_nonblank(NEW.reason) THEN PERFORM fleet_fail('a withdrawal needs a reason'); END IF;
   IF NOT fleet_has_any_role(NEW.withdrawn_by_id, ARRAY['engineering_lead', 'safety_reviewer']) THEN
@@ -553,7 +565,7 @@ BEGIN
   END IF;
   IF TG_OP = 'INSERT' THEN
     -- Placement NEVER depends on a policy or a setting (section 0a): bind, never refuse for policy reasons.
-    PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR SHARE;
+    PERFORM fleet_lock_hold_policy_registry(false);
     NEW.placed_at := clock_timestamp();
     binding := fleet_hold_binding_policy_id();
     brule := (SELECT rules -> NEW.source_type FROM fleet_holdpolicy WHERE id = binding);
@@ -571,7 +583,7 @@ BEGIN
     NEW.created_txid := pg_current_xact_id();
   ELSE
     PERFORM fleet_hold_lock_source(NEW);   -- incident S (before the registry, global order)
-    PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR SHARE;
+    PERFORM fleet_lock_hold_policy_registry(false);
     problem := fleet_hold_release_problem(NEW);
     IF problem IS NOT NULL THEN PERFORM fleet_fail('cannot release: ' || problem); END IF;
   END IF;
@@ -582,7 +594,7 @@ CREATE OR REPLACE FUNCTION fleet_release_approval_guard() RETURNS trigger LANGUA
 DECLARE h fleet_hold; e record; s jsonb;
 BEGIN
   SELECT * INTO h FROM fleet_hold WHERE id = NEW.hold_id;
-  PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR SHARE;
+  PERFORM fleet_lock_hold_policy_registry(false);
   IF h.released_at IS NOT NULL THEN PERFORM fleet_fail('hold already released'); END IF;
   SELECT * INTO e FROM fleet_hold_effective_rule(h);
   NEW.rebase_id := e.rebase_id;  -- forced: only approvals under the current effective rule fill slots
@@ -625,7 +637,7 @@ BEGIN
     PERFORM 1 FROM fleet_robot r WHERE r.current_manifest_id IN
       (SELECT m.id FROM fleet_configurationmanifest m WHERE m.pattern_id = h.pattern_id) ORDER BY r.id FOR UPDATE;
   END IF;
-  PERFORM 1 FROM fleet_holdpolicyregistry WHERE id = 1 FOR SHARE;
+  PERFORM fleet_lock_hold_policy_registry(false);
 END $$;
 
 CREATE OR REPLACE FUNCTION fleet_hold_rebase_guard() RETURNS trigger LANGUAGE plpgsql AS $$
