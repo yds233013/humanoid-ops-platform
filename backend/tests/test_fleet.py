@@ -3,6 +3,7 @@
 import pytest
 from rest_framework.test import APIClient
 
+from execution import incidents as inc
 from fleet import services as s
 from fleet.models import Hold, Inspection, Robot
 from platform_core.commands import Conflict, Invalid, PermissionDenied
@@ -110,10 +111,25 @@ def test_capability_approval_rules(w):
 
 
 # ---------- hold release
-def _incident_hold(w):
-    return s.place_hold(
-        w.ops, scope="robot", target="R-01", source_type="incident", source_ref="INC-1", reason="fall"
-    )["entity_id"]
+def _incident_hold(w, robot="R-01", by=None):
+    """Slice 7 (G-01, EM decision 12): fleet.place_hold refuses source 'incident'; an incident hold comes only
+    from reporting the incident, which records the Incident the release depends on. Returns the hold code."""
+    code = inc.report_incident(
+        by or w.ops,
+        robot_code=robot,
+        event_type="fall",
+        description="fall (SYNTHETIC)",
+        occurred_at=s.db_now(),  # database time: never ahead of the database clock that checks it
+        knowledge_source="witnessed",
+    )["code"]
+    return Hold.objects.get(source_ref=code).code
+
+
+def _resolve_incident_of(w, hold_code):
+    """The incident must be resolved (or closed) before its hold can be released (G-01)."""
+    i = inc.Incident.objects.get(hold__code=hold_code)
+    for step in ("triaged", "response_in_progress", "resolved"):
+        inc.change_incident_status(w.safety, incident_code=i.code, to_status=step)
 
 
 def test_release_needs_every_slot(w):
@@ -126,6 +142,9 @@ def test_release_needs_every_slot(w):
     with pytest.raises(Conflict, match="founder"):
         s.release_hold(w.lead, hold_code=h)
     s.approve_release(w.founder, hold_code=h, slot="founder", role_used="founder")
+    with pytest.raises(Conflict, match="resolved or closed"):  # G-01: every slot filled, incident still open
+        s.release_hold(w.lead, hold_code=h)
+    _resolve_incident_of(w, h)
     s.release_hold(w.lead, hold_code=h)
     assert elig("R-01").eligible_for_planning
 
@@ -136,7 +155,7 @@ def test_distinct_and_independent_approvers(w):
     with pytest.raises(Conflict, match="same person"):
         s.approve_release(w.eng, hold_code=h, slot="eng_review_2", role_used="engineer")
     dual = make_user("dual", "ops_lead", "engineer")
-    h2 = s.place_hold(dual, scope="robot", target="R-02", source_type="incident", reason="x")["entity_id"]
+    h2 = _incident_hold(w, robot="R-02", by=dual)
     with pytest.raises(Conflict, match="placed the hold"):
         s.approve_release(dual, hold_code=h2, slot="eng_review_1", role_used="engineer")
 
@@ -185,7 +204,7 @@ def test_hold_without_any_release_rule_is_placeable_and_unreleasable(w):
         w.lead, rules={"manual": {"slots": [{"slot": "engineering", "roles": ["engineering_lead"]}]}}
     )
     assert HoldPolicy.objects.order_by("-version").first().rules.get("incident") is None
-    h = s.place_hold(w.ops, scope="robot", target="R-01", source_type="incident", reason="fall")["entity_id"]
+    h = _incident_hold(w)
     hold = Hold.objects.get(code=h)
     assert hold.required_slots == [] and hold.policy is None
     assert s.hold_release_status(hold)["releasable"] is False
@@ -240,6 +259,7 @@ def test_visit_item_failure_does_not_hold_robot(w):
 
 
 def test_malformed_and_unqualified_inspections_store_nothing(w):
+    before = Inspection.objects.count()  # the world's periodic inspections (X-3)
     with pytest.raises(Invalid):
         insp(w, {"I99": "pass"})
     with pytest.raises(Invalid):
@@ -250,7 +270,7 @@ def test_malformed_and_unqualified_inspections_store_nothing(w):
         )
     with pytest.raises(Invalid, match="not qualified"):
         insp(w, w.all_pass, performer="eng")
-    assert Inspection.objects.count() == 0
+    assert Inspection.objects.count() == before
 
 
 def test_inspection_hold_release_needs_newer_pass(w):

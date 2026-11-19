@@ -45,6 +45,7 @@ from fleet.models import (
 )
 from planning import services as ps
 from planning.models import Person, Qualification, Reservation, Visit
+from platform_core.commands import Invalid
 from readiness import commands as rc
 from readiness import evidence as rx
 from readiness.evaluator import evaluate_readiness
@@ -1521,13 +1522,31 @@ def test_incident_hold_release_needs_resolved_or_closed(ew):
 
 
 def test_incident_source_hold_without_incident_row(w):
-    h = Hold.objects.get(
-        code=fs.place_hold(w.ops, scope="robot", target="R-02", source_type="incident", reason="SYNTHETIC")[
+    # Slice 7 (G-01): the command path can no longer create such a hold ...
+    with pytest.raises(Invalid, match="placed only by reporting the incident"):
+        fs.place_hold(w.ops, scope="robot", target="R-02", source_type="incident", reason="SYNTHETIC")
+    assert not Hold.objects.filter(source_type="incident").exists()
+    # ... but rows placed that way before Slice 7 remain: a legacy-shaped row (owner-written test fixture, through
+    # the same insert trigger as any hold), bound like any new hold, with no Incident row.
+    template = Hold.objects.get(
+        code=fs.place_hold(w.ops, scope="robot", target="R-02", source_type="manual", reason="SYNTHETIC")[
             "entity_id"
         ]
     )
+    h = Hold.objects.create(
+        code="HD-LEGACY-INC",
+        scope="robot",
+        robot=template.robot,
+        source_type="incident",
+        source_ref="",
+        reason="SYNTHETIC pre-Slice 7 incident hold",
+        policy=template.policy,
+        required_slots=template.policy.rules["incident"]["slots"] if template.policy else [],
+        manifest_at_placement_id=template.robot.current_manifest_id,
+        placed_by=w.ops,
+    )
     problem = "SELECT fleet_hold_source_problem(h) FROM fleet_hold h WHERE id = %s"
-    assert _one(problem, [h.pk]) is None  # demo: the seeded R-03 flow keeps working
+    assert _one(problem, [h.pk]) is None  # demo: a legacy incident hold without an incident stays releasable
     set_setting("demo_mode", "false")
     assert (
         _one(problem, [h.pk]) == "an incident hold with no incident record cannot be released in production"

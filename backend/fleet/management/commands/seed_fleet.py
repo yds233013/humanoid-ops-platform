@@ -144,24 +144,33 @@ class Command(BaseCommand):
             performer=field,
             verifier=ops,
         )
-        h = s.place_hold(
+        # Slice 7 (G-01, EM decision 12): an incident hold comes only from reporting the incident, which
+        # records the Incident its release depends on (fleet.place_hold refuses source 'incident'). The
+        # synthetic fall is reported now (database time, never ahead of the clock that checks it), worked to
+        # 'resolved' and given every release approval but the founder's: the hold awaits the founder only.
+        from execution import incidents as inc  # noqa: PLC0415 - execution depends on fleet, not the reverse
+
+        reported = inc.report_incident(
             u["ops_lead"],
-            scope="robot",
-            target="R-03",
-            source_type="incident",
-            source_ref="INC-001",
-            reason="Fell during visit V-002 (synthetic); quarantined",
+            robot_code="R-03",
+            event_type="fall",
+            description="Fell during a synthetic demo visit; quarantined (SYNTHETIC)",
+            occurred_at=s.db_now(),
+            knowledge_source="witnessed",
         )
+        for step in ("triaged", "response_in_progress", "resolved"):
+            inc.change_incident_status(u["safety_reviewer"], incident_code=reported["code"], to_status=step)
+        hold_code = reported["hold"]
         s.approve_release(
             eng,
-            hold_code=h["entity_id"],
+            hold_code=hold_code,
             slot="eng_review_1",
             role_used="engineer",
             note="Root cause: rug edge (synthetic)",
         )
-        s.approve_release(lead, hold_code=h["entity_id"], slot="eng_review_2", role_used="engineering_lead")
+        s.approve_release(lead, hold_code=hold_code, slot="eng_review_2", role_used="engineering_lead")
         s.approve_release(
-            u["safety_reviewer"], hold_code=h["entity_id"], slot="safety", role_used="safety_reviewer"
+            u["safety_reviewer"], hold_code=hold_code, slot="safety", role_used="safety_reviewer"
         )
         self.stdout.write(
             "demo fleet created: R-01, R-04 eligible; R-02 inspection hold; "
