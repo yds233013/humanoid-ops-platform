@@ -35,4 +35,15 @@ urlpatterns = [
     path("policies/<int:version>/approve/", views.policy_approve_view, name="policy-approve"),
     path("policies/<int:version>/withdraw/", views.policy_withdraw_view, name="policy-withdraw"),
     path("visits/<str:visit_code>/dossier/", views.dossier, name="dossier"),
+    # Slice 7 (X-4, Engineer C): escalation deadline sets
+    path("escalation-deadlines/", views.escalation_deadlines, name="escalation-deadlines"),
+    path("escalation-deadlines/create/", views.deadline_set_create_view, name="deadline-create"),
+    path(
+        "escalation-deadlines/<int:set_id>/approve/", views.deadline_set_approve_view, name="deadline-approve"
+    ),
+    path(
+        "escalation-deadlines/<int:set_id>/withdraw/",
+        views.deadline_set_withdraw_view,
+        name="deadline-withdraw",
+    ),
 ]

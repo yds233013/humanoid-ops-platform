@@ -52,6 +52,15 @@
   </form>{% endif %}{% endif %}
 </div>
 
+<div class="card" data-deadlines="{% if deadlines.configured %}configured{% else %}unconfigured{% endif %}">
+  <h2>Escalation deadlines</h2>
+  {% if deadlines.configured %}<p class="muted">Required escalations for level <b>{{ deadlines.level }}</b> under deadline set v{{ deadlines.set_version }} (incident policy v{{ deadlines.policy_version }}){% if deadlines.synthetic %} <span class="badge synthetic">SYNTHETIC demo, not a company value</span>{% endif %}. The clock starts at the report time. Nothing is sent, paged or notified: this only shows lateness.</p>
+  <div class="tablewrap"><table><thead><tr><th>To role</th><th>Within</th><th>Deadline ({{ tz }})</th><th>State</th></tr></thead><tbody>
+  {% for d in deadlines.entries %}<tr data-deadline-role="{{ d.role }}"><td>{{ d.role }}</td><td>{{ d.within_min }} min</td><td>{{ d.due_local|date:"D j M H:i" }}</td><td>{% if d.overdue %}<span class="badge unresolved">{{ d.state }}</span>{% else %}{{ d.state }}{% endif %}</td></tr>
+  {% empty %}<tr><td colspan="4" class="muted">No clocked escalation at this level (a stated decision of the deadline set).</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<p class="stale" data-deadline-unconfigured="1">Escalation deadlines not configured: {{ deadlines.reason }} <a href="/execution/escalation-deadlines/">Deadline sets</a></p>{% endif %}
+</div>
+
 <div class="card">
   <h2>Escalations</h2>
   <div class="tablewrap"><table><thead><tr><th>To</th><th>Requested action</th><th>By</th><th>Acknowledgment</th></tr></thead><tbody>

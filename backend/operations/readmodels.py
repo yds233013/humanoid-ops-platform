@@ -6,7 +6,8 @@ READ ONLY. Every function takes the snapshot time ``at`` explicitly and must run
 a lock, calls a command, ``nextval`` or ``set_config``. Each read model is built on Engineer A's SQL views
 with a fixed number of statements, independent of fleet size:
 
-    fleet_overview(at)                 1 statement  (operations_robot_status)
+    fleet_overview(at)                 1 statement  (operations_robot_status + X-3 periodic status per robot)
+    production_blockers(at)            1 statement  (operations_production_blockers, Slice 7)
     incident_queue(at)                 1 statement  (operations_incident_queue)
     timeline(at, window_min=...)       3 statements + E per evaluated visit (at most 10; contract 4a)
                                        (thresholds, visits, open runs [+ one Visit load when evaluating])
@@ -21,11 +22,13 @@ evaluated in this snapshot.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
 from django.db import connection
+
+from operations.exceptions import PERIODIC_STATUS_CTES
 
 # ------------------------------------------------------------------ thresholds (fleet_deploymentsetting)
 CUSTODY_VERIFY_GRACE = "ops_custody_verify_grace_min"
@@ -149,14 +152,50 @@ class RobotStatus:
     status_rule: int  # contract section 2 order, 1..8
     status_label: str
     url: str
+    # Slice 7 (X-3, contract 07a 4.6): readiness_periodic_inspection_status in the current mode at the
+    # snapshot
+    # (compare=False: a Slice 7 addition that Slice 5 equality checks of the robot status do not cover)
+    periodic_inspection: "PeriodicInspection | None" = field(default=None, compare=False)
 
 
-FLEET_OVERVIEW_SQL = """
-SELECT n.snapshot_now, s.*
+@dataclass(frozen=True)
+class PeriodicInspection:
+    """X-3 periodic inspection state of a robot (A's SQL function, the authoritative rule): unknown_interval /
+    never_inspected / overdue / due. ``due_at`` only for overdue and due. Never a departure decision."""
+
+    state: str
+    due_at: datetime | None
+    rule_version: int | None
+    rule_source: str | None  # synthetic_demo / engineering_doc / None (no rule)
+    rule_interval_min: int | None
+
+
+PERIODIC_LABELS = {
+    "unknown_interval": "Periodic inspection interval unknown",
+    "never_inspected": "No qualifying periodic inspection on this configuration",
+    "overdue": "Periodic inspection overdue",
+    "due": "Periodic inspection due",
+}
+
+# The periodic status comes from the set-based operations.exceptions.PERIODIC_STATUS_CTES (oracle-tested
+# against A's readiness_periodic_inspection_status), evaluated at %(at)s = the snapshot time.
+FLEET_OVERVIEW_SQL = (
+    """
+WITH mode AS MATERIALIZED (SELECT fleet_production_mode() AS production),
+"""
+    # now() = transaction_timestamp() = the snapshot time (checked below); the statement takes no parameters
+    + PERIODIC_STATUS_CTES.replace("%(at)s", "now()").rstrip().rstrip(",")
+    + """
+SELECT n.snapshot_now, s.*, ps.state AS periodic_state, ps.due_at AS periodic_due_at,
+       pr.version_no AS periodic_rule_version, pr.source AS periodic_rule_source,
+       pr.interval_min AS periodic_rule_interval_min
 FROM (SELECT now() AS snapshot_now) n
 LEFT JOIN operations_robot_status s ON true
+LEFT JOIN pstat ps ON ps.robot_id = s.robot_id
+LEFT JOIN fleet_periodicinspectionrule pr ON pr.id = ps.rule_id
 ORDER BY s.robot_code
 """
+)
 
 
 def fleet_overview(at: datetime) -> list[RobotStatus]:
@@ -206,9 +245,108 @@ def fleet_overview(at: datetime) -> list[RobotStatus]:
                 status_rule=r["status_rule"],
                 status_label=r["status_label"],
                 url=robot_url(r["robot_code"]),
+                periodic_inspection=PeriodicInspection(
+                    state=r["periodic_state"],
+                    due_at=r["periodic_due_at"],
+                    rule_version=r["periodic_rule_version"],
+                    rule_source=r["periodic_rule_source"],
+                    rule_interval_min=r["periodic_rule_interval_min"],
+                ),
             )
         )
     return out
+
+
+# ------------------------------------------------------------------ production blockers (contract 07a 5.6)
+BLOCKER_LABELS = {
+    "HOLD_POLICY_NOT_APPROVED": "Hold release policy not approved for production",
+    "HOLD_UNRELEASABLE": "Hold unreleasable in production",
+    "INSPECTION_TEMPLATE_NOT_APPROVED": "Inspection template not approved for pre-departure use",
+    "PERIODIC_INTERVAL_NOT_APPROVED": "Periodic inspection interval not approved",
+    "ESCALATION_DEADLINES_NOT_APPROVED": "Escalation deadlines not owner approved",
+}
+
+
+@dataclass(frozen=True)
+class ProductionBlocker:
+    code: str
+    entity_ref: str
+    label: str
+    detail: str
+    url: str  # the page where the record (policy, hold, pattern, deadline set) is reviewed
+
+
+@dataclass(frozen=True)
+class BlockerPanel:
+    """The production-blocker panel. Evaluated AS PRODUCTION in both modes (no setting hides an item). In demo
+    mode each item is labelled "would block ... in production"; in production the same items are also
+    exception
+    inbox items (priority 1). An empty panel never means approved, cleared or ready."""
+
+    production: bool
+    items: list[ProductionBlocker]
+
+    @property
+    def heading(self) -> str:
+        return "Production blockers" if self.production else "Would block in production"
+
+    @property
+    def note(self) -> str:
+        if self.production:
+            return (
+                "These block production use now. Each needs a company decision recorded with its approvals; "
+                "the platform never supplies one."
+            )
+        return (
+            "This is a SYNTHETIC demo deployment. Each item below would block authorization, release or "
+            "visibility in production; demo mode keeps working on clearly labelled synthetic inputs."
+        )
+
+
+PRODUCTION_BLOCKERS_SQL = """
+SELECT n.production, pb.code, pb.entity_ref, pb.detail, hb.robot_code, hb.pattern_code
+FROM (SELECT fleet_production_mode() AS production) n
+LEFT JOIN operations_production_blockers pb ON true
+LEFT JOIN LATERAL (
+  SELECT r.code AS robot_code, pp.code AS pattern_code FROM fleet_hold h
+  LEFT JOIN fleet_robot r ON r.id = h.robot_id
+  LEFT JOIN fleet_manifestpattern pp ON pp.id = h.pattern_id
+  WHERE pb.code = 'HOLD_UNRELEASABLE' AND h.code = pb.entity_ref
+) hb ON true
+ORDER BY pb.code COLLATE "C", pb.entity_ref COLLATE "C"
+"""
+
+
+def _blocker_url(code: str, ref: str, robot: str | None, pattern: str | None) -> str:
+    if code == "HOLD_POLICY_NOT_APPROVED":
+        return "/fleet/hold-policies/"
+    if code == "ESCALATION_DEADLINES_NOT_APPROVED":
+        return "/execution/escalation-deadlines/"
+    if code == "HOLD_UNRELEASABLE":
+        return robot_url(robot) if robot else f"/fleet/patterns/{pattern}/"
+    return f"/fleet/patterns/{ref}/"
+
+
+def production_blockers(at: datetime) -> BlockerPanel:
+    """Every row of operations_production_blockers (evaluated as production whatever demo_mode says),
+    ordered by
+    (code, entity_ref), plus the current mode (one statement, inside the caller's snapshot)."""
+    with connection.cursor() as cur:
+        cur.execute(PRODUCTION_BLOCKERS_SQL)
+        rows = cur.fetchall()
+    production = bool(rows[0][0])
+    items = [
+        ProductionBlocker(
+            code=code,
+            entity_ref=ref,
+            label=BLOCKER_LABELS.get(code, code),
+            detail=detail,
+            url=_blocker_url(code, ref, robot, pattern),
+        )
+        for _, code, ref, detail, robot, pattern in rows
+        if code is not None
+    ]
+    return BlockerPanel(production=production, items=items)
 
 
 # ------------------------------------------------------------------ incident queue (contract section 4, D1)
@@ -554,7 +692,12 @@ def timeline(at: datetime, *, window_min: int) -> Timeline:
 
 
 __all__ = [
+    "BLOCKER_LABELS",
+    "PERIODIC_LABELS",
     "THRESHOLD_KEYS",
+    "BlockerPanel",
+    "PeriodicInspection",
+    "ProductionBlocker",
     "Custody",
     "Flag",
     "NextVisit",
@@ -568,6 +711,7 @@ __all__ = [
     "fleet_overview",
     "incident_queue",
     "parse_threshold",
+    "production_blockers",
     "read_thresholds",
     "timeline",
 ]

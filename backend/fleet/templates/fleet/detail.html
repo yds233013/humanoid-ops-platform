@@ -8,6 +8,7 @@
   <h2>Planning eligibility</h2>
   {% if e.eligible_for_planning %}<span class="badge elig">{{ e.label }}</span>
   {% else %}<span class="badge no">{{ e.label }}</span><ul class="reasons">{% for r in e.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+  <p style="margin-top:8px">{% include "fleet/_periodic.html" with p=periodic %}</p>
   <form method="post" action="check/" style="margin-top:10px">{% csrf_token %}<button class="primary">Record a locked eligibility check</button></form>
 </div>
 
@@ -17,6 +18,7 @@
   <p>{{ manifest.pattern.code }} · hardware {{ manifest.pattern.hardware_rev }} · release {{ manifest.pattern.release }} · firmware {{ manifest.pattern.firmware_set }} · autonomy {{ manifest.autonomy_version }}<br>
   <span class="muted">Safety config {{ manifest.safety_config_hash|truncatechars:16 }} · calibration {{ manifest.calibration_ref|default:"-" }} · recorded {{ manifest.recorded_at|date:"Y-m-d H:i" }}</span><br>
   {% if manifest.provenance == "manual" %}<span class="stale">Entered manually. Not verified against the robot.</span>{% endif %}</p>
+  <p><a href="/fleet/patterns/{{ manifest.pattern.code }}/">Configuration {{ manifest.pattern.code }}: templates and periodic inspection rules</a></p>
   {% else %}<p class="muted">No manifest recorded.</p>{% endif %}
 </div>
 
@@ -26,14 +28,15 @@
   <div style="border-top:1px solid var(--line);padding:10px 0">
     <b>{{ h.code }}</b> · {{ h.get_source_type_display }}{% if h.source_ref %} ({{ h.source_ref }}){% endif %} · placed {{ h.placed_at|date:"Y-m-d H:i" }}
     {% if h.released_at %}<span class="muted"> · released {{ h.released_at|date:"Y-m-d H:i" }}</span>{% endif %}
-    <div class="muted">{{ h.reason }} · {% if h.policy %}policy v{{ h.policy.version }}{% else %}no release policy{% endif %}</div>
+    <div class="muted">{{ h.reason }}</div>
+    {% include "fleet/_hold_basis.html" with b=item.basis %}
     {% if st %}
     <table style="margin-top:8px"><thead><tr><th>Required slot</th><th>Allowed roles</th><th>Status</th></tr></thead><tbody>
     {% for sl in st.slots %}<tr><td>{{ sl.slot }}</td><td>{{ sl.roles|join:", " }}</td>
       <td>{% if sl.valid %}Approved by {{ sl.valid.approver.username }} as {{ sl.valid.role_used }}{% else %}<b>Missing</b>{% endif %}
       {% for a in sl.stale %}<div class="stale">Stale: approved on an older configuration, needs re-approval</div>{% endfor %}</td></tr>{% endfor %}
     </tbody></table>
-    {% if st.needs_newer_pass %}<p class="stale">Needs a newer PASS inspection on the current configuration.</p>{% endif %}
+    {% if st.needs_newer_pass %}<p class="stale">Needs a newer PASS inspection on the current configuration{% if production %}, on a template approved for pre-departure or periodic use{% endif %}.</p>{% endif %}
     <div class="row" style="margin-top:8px">
       <form method="post" action="approve/" class="row">{% csrf_token %}<input type="hidden" name="hold" value="{{ h.code }}">
         <select name="slot">{% for sl in st.slots %}<option>{{ sl.slot }}</option>{% endfor %}</select>
@@ -43,13 +46,26 @@
         <button class="primary" {% if not st.releasable %}title="Missing: {{ st.missing|join:', ' }}"{% endif %}>Release hold</button></form>
     </div>
     {% endif %}
+    {% if item.rebases or not h.released_at and item.basis and not item.basis.production_usable %}{% include "fleet/_rebases.html" with rebases=item.rebases hold=h %}{% endif %}
   </div>{% endwith %}{% empty %}<p class="muted">No holds on this robot.</p>{% endfor %}
-  {% for item in pattern_holds %}<p class="no badge">Configuration hold {{ item.hold.code }}: {{ item.hold.reason }}</p>{% endfor %}
+  {% for item in pattern_holds %}<p class="no badge">Configuration hold {{ item.hold.code }}: {{ item.hold.reason }}</p>{% include "fleet/_hold_basis.html" with b=item.basis %}{% endfor %}
   <form method="post" action="hold/" class="row" style="margin-top:12px">{% csrf_token %}
     <select name="source_type"><option value="manual">Manual</option><option value="engineering">Engineering</option>
       <option value="maintenance">Maintenance</option><option value="incident">Incident</option></select>
     <input name="source_ref" placeholder="Reference (e.g. INC-002)"><input name="reason" placeholder="Reason (required)" size="30">
     <button class="primary">Place hold</button></form>
+</div>
+
+<div class="card">
+  <h2>Inspection templates for this configuration</h2>
+  {% for t in templates %}<div data-template="{{ t.template.version }}">{{ t.template.version }}: {% for pu in t.purposes %}{{ pu.label }} <b>{{ pu.state_text }}</b>{% if not forloop.last %} · {% endif %}{% endfor %}
+    {% if t.warning %}<div class="stale" data-template-warning="1">{{ t.warning }}</div>{% endif %}</div>{% empty %}<p class="muted">No inspection template for this configuration.</p>{% endfor %}
+  <h2 style="margin-top:12px">Recent inspections and signer qualification</h2>
+  <table><thead><tr><th>Inspection</th><th>Result</th><th>Signers</th><th>Readiness inspector qualification</th></tr></thead><tbody>
+  {% for x in recent_inspections %}<tr><td>{{ x.inspection.code }}<div class="muted">{{ x.inspection.submitted_at|date:"Y-m-d H:i" }}{% if x.inspection.visit_ref %} · visit {{ x.inspection.visit_ref }}{% endif %}</div></td><td>{{ x.inspection.result }}</td>
+    <td>{{ x.inspection.performer.username|default:"-" }} / {{ x.inspection.verifier.username|default:"-" }}</td>
+    <td>{% if x.signer_problem %}<span class="stale" data-signer-warning="1">Warning: {{ x.signer_problem }}. It is recorded, but it cannot back passing evidence or a periodic due date.</span>{% else %}<span class="muted">both signers were qualified readiness inspectors at the time</span>{% endif %}</td></tr>
+  {% empty %}<tr><td colspan="4" class="muted">No inspections recorded.</td></tr>{% endfor %}</tbody></table>
 </div>
 
 <div class="card">

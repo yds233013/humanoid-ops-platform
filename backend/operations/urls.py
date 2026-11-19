@@ -12,4 +12,5 @@ urlpatterns = [
     path("incidents/", views.incidents_page, name="incidents"),
     path("timeline/", views.timeline_page, name="timeline"),
     path("metrics/", views.metrics_page, name="metrics"),
+    path("closeout/", views.closeout_page, name="closeout"),
 ]

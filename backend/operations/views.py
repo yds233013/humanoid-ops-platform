@@ -186,7 +186,70 @@ def _read_model(name: str) -> Any:
 def overview_data(at: datetime) -> dict[str, Any]:
     readmodels = _read_model("readmodels")
 
-    return {"as_of": at, "robots": list(readmodels.fleet_overview(at))}
+    return {
+        "as_of": at,
+        "robots": list(readmodels.fleet_overview(at)),
+        # Slice 7 (contract 07a 5.6): the production-blocker panel, in BOTH modes
+        "production_blockers": readmodels.production_blockers(at),
+    }
+
+
+def production_blockers_data(at: datetime) -> dict[str, Any]:
+    readmodels = _read_model("readmodels")
+
+    panel = readmodels.production_blockers(at)
+    return {
+        "as_of": at,
+        "production": panel.production,
+        "heading": panel.heading,
+        "note": panel.note,
+        "items": list(panel.items),
+    }
+
+
+def closeout_data(at: datetime, date_raw: str | None) -> dict[str, Any]:
+    """X-10 (contract 07a section 8). A bad or future date is a 400 (BadParam) when the view is dated."""
+    closeout = _read_model("closeout")
+
+    try:
+        result = closeout.closeout(at, date_raw)
+    except closeout.CloseoutDateError as exc:
+        raise BadParam(str(exc)) from exc
+    data: dict[str, Any] = {
+        "as_of": at,
+        "not_a_sign_off": result.not_a_sign_off,
+        "as_of_note": result.as_of_note,
+        "summary": result.summary,
+        "timezone": result.timezone,
+        "timezone_state": result.timezone_state,
+        "dated": result.dated,
+        "custody_unverified": [r.run for r in result.custody_unverified],
+        "post_visit_outstanding": [r.run for r in result.post_visit_outstanding],
+        "reconciliation_unresolved": [r.run for r in result.reconciliation_unresolved],
+        "nothing_outstanding": result.nothing_outstanding,
+    }
+    if result.dated:
+        data.update(
+            {
+                "date": result.day,
+                "departed_open": list(result.departed_open),
+                "carried_over": list(result.carried_over),
+                "counts": {
+                    "departed": result.departed_count,
+                    "departed_closed": result.departed_closed_count,
+                },
+            }
+        )
+    else:
+        # P1-5: no local day can be computed; one undated list, no carried-over label, no local-day counts
+        data.update(
+            {
+                "date_unclassified": closeout.UNDATED_HEADING,
+                "date_ignored": result.date_ignored,
+                "open_runs": list(result.undated_open),
+            }
+        )
+    return {"result": result, "data": data}
 
 
 def exceptions_data(at: datetime, cursor: str | None) -> dict[str, Any]:
@@ -314,6 +377,21 @@ def overview(request: HttpRequest, at: datetime) -> HttpResponse:
         counts[label] = counts.get(label, 0) + 1
     ctx = {**_base(request, at, "overview"), **data, "label_counts": sorted(counts.items())}
     return render(request, "operations/overview.html", ctx)
+
+
+@ops_view("operations.read")
+def closeout_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    try:
+        built = closeout_data(at, request.GET.get("date"))
+    except BadParam as exc:
+        return _bad(request, at, "closeout", exc)
+    result = built["result"]
+    ctx = {
+        **_base(request, at, "closeout"),
+        "c": result,
+        "undated_heading": _read_model("closeout").UNDATED_HEADING,
+    }
+    return render(request, "operations/closeout.html", ctx)
 
 
 @ops_view("operations.read")

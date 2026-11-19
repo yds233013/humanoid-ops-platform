@@ -11,15 +11,17 @@ SYNTHETIC data only. The system records what authorized people report. No page s
 or ready, and an administrative custody assignment is never shown as a verified handoff.
 """
 
+import importlib
 import json
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import connection
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -37,6 +39,8 @@ from execution.custody import Custody, current_custody, open_run_id
 from execution.dossier import visit_dossier
 from execution.models import (
     CUSTODY_KINDS,
+    DEADLINE_SLOTS,
+    DEADLINE_SOURCES,
     DISPOSITIONS,
     INCIDENT_EVENT_TYPES,
     INCIDENT_STATUSES,
@@ -44,6 +48,7 @@ from execution.models import (
     POLICY_SLOTS,
     SOURCES,
     CustodyEvent,
+    EscalationDeadlineSet,
     ExecutionRun,
     FaultObservation,
     Incident,
@@ -77,6 +82,9 @@ ACTIONS = [
     "close_trip",
     "manage_incident_policy",
     "approve_incident_policy",
+    "manage_escalation_deadlines",
+    "approve_escalation_deadlines",
+    "withdraw_escalation_deadlines",
 ]
 ERROR_KINDS = {
     "conflict": "conflict",
@@ -628,11 +636,14 @@ def incident_detail(request: HttpRequest, code: str) -> HttpResponse:
         SeverityDecision.objects.filter(incident=i).select_related("policy", "recorded_by").order_by("id")
     )
     statuses = IncidentStatusChange.objects.filter(incident=i).select_related("recorded_by").order_by("id")
-    escalations = (
+    escalations = list(
         IncidentEscalation.objects.filter(incident=i)
         .select_related("to_person", "recorded_by", "ack", "ack__acknowledged_by")
         .order_by("id")
     )
+    deadlines = incident_deadlines(i, escalations)
+    for d in deadlines["entries"]:
+        d["due_local"] = _local(d["due"], tz)
     my_roles = active_roles(request.user)
     faults = FaultObservation.objects.filter(incident=i).select_related("recorded_by").order_by("id")
     status = row["status"]
@@ -666,9 +677,88 @@ def incident_detail(request: HttpRequest, code: str) -> HttpResponse:
                 custody, CustodyEvent.objects.filter(robot_id=i.robot_id).order_by("-seq").first()
             ),
             "can_recover": no_run_unaccounted and _recover_robot() is not None,
+            "deadlines": deadlines,
             **_base(request),
         },
     )
+
+
+# ------------------------------------------------------------------ Slice 7 X-4: escalation deadlines (read)
+DEADLINES_SQL = """
+SELECT d.id, d.version_no, d.source, d.incident_policy_id, d.deadlines, ip.version,
+       m.production, clock_timestamp()
+FROM (SELECT fleet_production_mode() AS production) m
+LEFT JOIN execution_escalationdeadlineset d
+  ON d.id = execution_active_deadline_set_id() AND (d.source = 'owner_approved' OR NOT m.production)
+LEFT JOIN execution_incidentpolicy ip ON ip.id = d.incident_policy_id
+"""
+
+
+def incident_deadlines(i: Incident, escalations: list[IncidentEscalation]) -> dict[str, Any]:
+    """Each required (role, deadline) of the incident under the usable deadline set, with its state at
+    database
+    time: the same rule as the inbox's ESCALATION_OVERDUE (contract 07a 6.2). Shown only, never sent."""
+    with connection.cursor() as cur:
+        cur.execute(DEADLINES_SQL)
+        row = cur.fetchone()
+    assert row is not None
+    set_id, version_no, source, policy_id, deadlines, policy_version, production, now = row
+    if set_id is None:
+        return {
+            "configured": False,
+            "reason": "No escalation deadline set is usable in "
+            + ("production (it must be owner approved)" if production else "demo")
+            + " mode for the active incident policy.",
+            "entries": [],
+        }
+    decision = inc.latest_severity(i)
+    if decision is None:
+        level: str | None = "unclassified"
+    elif decision.policy_id == policy_id:
+        level = decision.level
+    else:
+        level = None
+    if isinstance(deadlines, str):
+        deadlines = json.loads(deadlines)
+    if level is None or level not in deadlines:
+        return {
+            "configured": False,
+            "reason": "The latest severity decision was made under another incident policy version; no "
+            f"escalation deadline of set v{version_no} applies to this incident.",
+            "entries": [],
+        }
+    closed = inc.incident_status(i) == "closed"
+    entries = []
+    for entry in deadlines[level]:
+        role, minutes = entry["to_role"], int(entry["within_min"])
+        due = i.reported_at + timedelta(minutes=minutes)
+        to_role = [e for e in escalations if e.to_role == role]
+        acked = [e for e in to_role if getattr(e, "ack", None) is not None]
+        if acked:
+            state = "acknowledged"
+        elif closed:
+            state = "incident closed"
+        elif now >= due:
+            state = "overdue: escalated, not acknowledged" if to_role else "overdue: no escalation recorded"
+        else:
+            state = "escalated, awaiting acknowledgment" if to_role else "not yet escalated"
+        entries.append(
+            {
+                "role": role,
+                "within_min": minutes,
+                "due": due,
+                "state": state,
+                "overdue": state.startswith("overdue"),
+            }
+        )
+    return {
+        "configured": True,
+        "level": level,
+        "set_version": version_no,
+        "policy_version": policy_version,
+        "synthetic": source == "synthetic_demo",
+        "entries": entries,
+    }
 
 
 def _to_incident(code: str) -> HttpResponse:
@@ -926,4 +1016,143 @@ def dossier(request: HttpRequest, visit_code: str) -> HttpResponse:
         request,
         "execution/dossier.html",
         {"visit": visit, "tz": tz, "entries": entries, "run": run, **_base(request)},
+    )
+
+
+# ------------------------------------------------------------------ Slice 7 X-4: escalation deadline
+# sets page
+def _deadline_command(name: str) -> Callable[..., dict[str, Any]] | None:
+    """execution.escalation_deadlines.<name> (Engineer B, contract 07a 6.3) when this build has it."""
+    try:
+        module = importlib.import_module("execution.escalation_deadlines")
+    except ImportError:
+        return None
+    found = getattr(module, name, None)
+    return found if callable(found) else None
+
+
+@login_required
+def escalation_deadlines(request: HttpRequest) -> HttpResponse:
+    if (deny := _deny(request)) is not None:
+        return deny
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT execution_active_deadline_set_id(), execution_active_incident_policy_id(), "
+            "fleet_production_mode()"
+        )
+        row = cur.fetchone()
+    active_id, active_policy_id, production = row if row else (None, None, True)
+    rows = []
+    for d in (
+        EscalationDeadlineSet.objects.select_related(
+            "incident_policy", "created_by", "withdrawal", "withdrawal__withdrawn_by"
+        )
+        .prefetch_related("approvals__approver")
+        .order_by("-incident_policy__version", "-version_no")
+    ):
+        approvals = {a.slot: a for a in d.approvals.all()}
+        withdrawal = getattr(d, "withdrawal", None)
+        approved = {s for s, _ in DEADLINE_SLOTS} <= set(approvals)
+        rows.append(
+            {
+                "set": d,
+                "status": "withdrawn" if withdrawal else ("approved" if approved else "awaiting approval"),
+                "withdrawal": withdrawal,
+                "active": d.pk == active_id,
+                "usable_now": d.pk == active_id and (d.source == "owner_approved" or not production),
+                "synthetic": d.source == "synthetic_demo",
+                "for_active_policy": d.incident_policy_id == active_policy_id,
+                "slots": [
+                    {"slot": s, "label": lbl, "approval": approvals.get(s)} for s, lbl in DEADLINE_SLOTS
+                ],
+                "deadlines": json.dumps(d.deadlines, indent=2, sort_keys=True),
+            }
+        )
+    active_policy = IncidentPolicy.objects.filter(pk=active_policy_id).first() if active_policy_id else None
+    example: dict[str, list[dict[str, Any]]] = {}
+    if active_policy is not None:
+        example = {lvl: [] for lvl in (active_policy.rules or {}).get("severity_scale", [])}
+        example["unclassified"] = []
+    return render(
+        request,
+        "execution/escalation_deadlines.html",
+        {
+            "rows": rows,
+            "production": production,
+            "usable": any(r["usable_now"] for r in rows),
+            "active_policy": active_policy,
+            "sources": DEADLINE_SOURCES,
+            "example": request.session.pop("execution_deadlines_draft", None)
+            or json.dumps(example, indent=2, sort_keys=True),
+            **_base(request),
+        },
+    )
+
+
+def _to_deadlines() -> HttpResponse:
+    return redirect("execution:escalation-deadlines")
+
+
+def _deadline_action(request: HttpRequest, permission: str, name: str, ok: str, **kw: Any) -> HttpResponse:
+    if not has_permission(request.user, permission):
+        return HttpResponseForbidden("You do not have permission for this action.")
+    fn = _deadline_command(name)
+    if fn is None:
+        messages.error(request, f"Refused: this build does not provide {name} yet; nothing was recorded")
+        return _to_deadlines()
+    _run(request, fn, ok, **kw)
+    return _to_deadlines()
+
+
+@login_required
+@require_POST
+def deadline_set_create_view(request: HttpRequest) -> HttpResponse:
+    if not has_permission(request.user, "execution.manage_escalation_deadlines"):
+        return HttpResponseForbidden("You do not have permission for this action.")
+    f = request.POST
+    raw = f.get("deadlines", "")
+    try:
+        deadlines = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        messages.error(request, f"Refused (invalid input): deadlines are not valid JSON ({exc.msg})")
+        request.session["execution_deadlines_draft"] = raw
+        return _to_deadlines()
+    # ASSUMED signature (contract 07a 6.3 names permissions only):
+    # create_escalation_deadline_set(actor, *, deadlines, source, notes) for the active incident policy
+    return _deadline_action(
+        request,
+        "execution.manage_escalation_deadlines",
+        "create_escalation_deadline_set",
+        "Escalation deadline set recorded; it needs the safety and founder approvals",
+        deadlines=deadlines,
+        source=f.get("source", ""),
+        notes=f.get("notes", ""),
+    )
+
+
+@login_required
+@require_POST
+def deadline_set_approve_view(request: HttpRequest, set_id: int) -> HttpResponse:
+    # ASSUMED signature: approve_escalation_deadline_set(actor, *, set_id, slot)
+    return _deadline_action(
+        request,
+        "execution.approve_escalation_deadlines",
+        "approve_escalation_deadline_set",
+        "Deadline set approval recorded",
+        set_id=set_id,
+        slot=request.POST.get("slot", ""),
+    )
+
+
+@login_required
+@require_POST
+def deadline_set_withdraw_view(request: HttpRequest, set_id: int) -> HttpResponse:
+    # ASSUMED signature: withdraw_escalation_deadline_set(actor, *, set_id, reason)
+    return _deadline_action(
+        request,
+        "execution.withdraw_escalation_deadlines",
+        "withdraw_escalation_deadline_set",
+        "Deadline set withdrawn; there is no fallback to an older version",
+        set_id=set_id,
+        reason=request.POST.get("reason", ""),
     )
