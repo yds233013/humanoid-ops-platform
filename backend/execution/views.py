@@ -686,7 +686,7 @@ def incident_detail(request: HttpRequest, code: str) -> HttpResponse:
 # ------------------------------------------------------------------ Slice 7 X-4: escalation deadlines (read)
 DEADLINES_SQL = """
 SELECT d.id, d.version_no, d.source, d.incident_policy_id, d.deadlines, ip.version,
-       (SELECT production FROM m), clock_timestamp()
+       m.production, clock_timestamp()
 FROM (SELECT fleet_production_mode() AS production) m
 LEFT JOIN execution_escalationdeadlineset d
   ON d.id = execution_active_deadline_set_id() AND (d.source = 'owner_approved' OR NOT m.production)

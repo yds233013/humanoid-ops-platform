@@ -455,7 +455,7 @@ ex AS (
 
   UNION ALL
   -- PERIODIC_INSPECTION_OVERDUE (X-3): overdue (since due_at) or never inspected on this configuration
-  (since at)
+  -- (since at)
   SELECT 'PERIODIC_INSPECTION_OVERDUE', 'robot', ps.robot_code, ps.robot_code, NULL::text,
          coalesce(ps.due_at, %(at)s::timestamptz), 'engineering_lead',
          CASE WHEN ps.state = 'overdue'
