@@ -329,7 +329,9 @@ def _gate_custody(w: _World, b: _Blockers) -> None:
 def _gate_planning(w: _World, b: _Blockers) -> Plan | None:
     if w.revision is None:
         return None
-    plan = live_feasibility(w.visit)
+    # Slice 7 X-3: the periodic status read once in _read_world (same robot, time and mode) is shared with the
+    # planning eligibility check instead of being computed a second time there.
+    plan = live_feasibility(w.visit, periodic=w.periodic)
     if plan.feasibility != "feasible":
         for x in plan.blockers:
             b.add(PLANNING_PREFIX + x["code"], x["message"], x["action"], level=x.get("level", "blocked"))

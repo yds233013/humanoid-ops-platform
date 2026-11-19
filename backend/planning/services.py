@@ -192,7 +192,10 @@ def evaluate(
     second: Person | None,
     vehicle: Vehicle | None,
     visit: Visit | None = None,
+    periodic: fleet_services.PeriodicStatus | None = None,
 ) -> Plan:
+    """``periodic``: an already computed X-3 periodic status of ``robot`` in the current mode, reused for its
+    eligibility instead of reading it again (readiness evaluator; see fleet.services.evaluate_eligibility)."""
     b: list[dict[str, str]] = []
     snap: dict[str, Any] = {
         "evaluated_at": timezone.now().isoformat(),
@@ -255,7 +258,7 @@ def evaluate(
     if robot is None:
         _add(b, "blocked", "ROBOT_MISSING", "No robot assigned", "Assign a planning-eligible robot")
     else:
-        e = fleet_services.evaluate_eligibility(robot)
+        e = fleet_services.evaluate_eligibility(robot, periodic=periodic)
         snap.update(
             {
                 "robot": robot.code,
@@ -1066,9 +1069,9 @@ def plan_visit(
     )
 
 
-def live_feasibility(v: Visit) -> Plan:
+def live_feasibility(v: Visit, *, periodic: fleet_services.PeriodicStatus | None = None) -> Plan:
     """Re-evaluate the current revision against the world as it is NOW (consent withdrawn, hold placed...).
-    Never trusts the stored result or the existence of reservations."""
+    Never trusts the stored result or the existence of reservations. ``periodic``: see ``evaluate``."""
     r = v.current_revision
     assert r is not None
     return evaluate(
@@ -1084,6 +1087,7 @@ def live_feasibility(v: Visit) -> Plan:
         second=r.second,
         vehicle=r.vehicle,
         visit=v,
+        periodic=periodic,
     )
 
 

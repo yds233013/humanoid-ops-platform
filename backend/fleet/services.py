@@ -467,15 +467,19 @@ class Eligibility:
     periodic: PeriodicStatus | None = field(default=None)
 
 
-def evaluate_eligibility(robot: Robot, at: datetime | None = None) -> Eligibility:
+def evaluate_eligibility(
+    robot: Robot, at: datetime | None = None, *, periodic: PeriodicStatus | None = None
+) -> Eligibility:
     """Fleet eligibility only: may this robot be CONSIDERED when planning a visit? It never means the
     robot may depart - that needs a visit-specific departure authorization (later slice).
 
     Slice 7 (X-3, EM decision 7): time-dependent. The periodic inspection must be known, present and not
-    overdue at ``at`` (None = database time), in the current deployment mode."""
+    overdue at ``at`` (None = database time), in the current deployment mode. ``periodic``: the caller's
+    already computed ``periodic_inspection_status(robot, at, production=production_mode())`` for this same
+    robot, time and mode (the readiness evaluator computes it once and shares it, so it is not read twice)."""
     reasons: list[str] = []
     pattern = None
-    periodic = None
+    shared, periodic = periodic, None
     if robot.lifecycle != "in_service":
         reasons.append(f"Lifecycle is {robot.get_lifecycle_display()}, not In service")
     if robot.current_manifest_id is None:
@@ -502,7 +506,11 @@ def evaluate_eligibility(robot: Robot, at: datetime | None = None) -> Eligibilit
             scope="manifest_pattern", pattern=pattern, released_at__isnull=True, blocking=True
         ):
             reasons.append(f"Configuration hold {h.code}: {h.reason}")
-        periodic = periodic_inspection_status(robot, at, production=production_mode())
+        periodic = (
+            shared
+            if shared is not None
+            else periodic_inspection_status(robot, at, production=production_mode())
+        )
         why = periodic_eligibility_reason(periodic)
         if why:
             reasons.append(why)
