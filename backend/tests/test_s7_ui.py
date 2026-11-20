@@ -287,6 +287,47 @@ def test_incident_deadline_states_and_deadline_page(w):
     assert "data-deadlines-unconfigured" in dl and "it must be owner approved" in dl
 
 
+def test_deadline_set_lifecycle_through_the_page(w):
+    """Walkthrough regression (2026-11-20): the deadline page called command names this build never had, so it
+    could not record, approve or withdraw a set. Create (ops_lead), approve safety + founder, active, withdraw."""
+    import json as _json
+
+    from execution.models import EscalationDeadlineSet, IncidentPolicy
+
+    policy = IncidentPolicy.objects.order_by("-version").first()
+    levels = (policy.rules or {}).get("severity_scale", [])
+    deadlines = {
+        lvl: [{"to_role": "safety_reviewer", "within_min": 600}] for lvl in [*levels, "unclassified"]
+    }
+    ops = client("ops_lead", name="dl_ops")
+    r = ops.post(
+        "/execution/escalation-deadlines/create/",
+        {"source": "synthetic_demo", "notes": "SYNTHETIC", "deadlines": _json.dumps(deadlines)},
+        follow=True,
+    )
+    body = r.content.decode()
+    assert "does not provide" not in body and "needs the safety and founder approvals" in body, main(body)[
+        :600
+    ]
+    d = EscalationDeadlineSet.objects.order_by("-version_no").first()
+    assert d is not None and d.deadlines == deadlines and d.source == "synthetic_demo"
+    approvers = {role: client(role, name=f"dl_{role}") for role in ("safety_reviewer", "founder")}
+    for role, slot in (("safety_reviewer", "safety"), ("founder", "founder")):
+        r = approvers[role].post(
+            f"/execution/escalation-deadlines/{d.pk}/approve/", {"slot": slot}, follow=True
+        )
+        assert "Deadline set approval recorded" in r.content.decode(), (role, main(r.content.decode())[:600])
+    page = ops.get("/execution/escalation-deadlines/").content.decode()
+    assert "<b>Active</b>" in page
+    r = approvers["safety_reviewer"].post(
+        f"/execution/escalation-deadlines/{d.pk}/withdraw/", {"reason": "SYNTHETIC"}, follow=True
+    )
+    assert "Deadline set withdrawn" in r.content.decode(), main(r.content.decode())[:600]
+    from execution.models import EscalationDeadlineSetWithdrawal
+
+    assert EscalationDeadlineSetWithdrawal.objects.filter(deadline_set=d).exists()
+
+
 # ------------------------------------------------------------------ close-out
 def test_closeout_page_and_api_dated(w):
     run = ow.depart_new(w, "R-02")

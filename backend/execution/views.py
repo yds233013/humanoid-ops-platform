@@ -1117,13 +1117,23 @@ def deadline_set_create_view(request: HttpRequest) -> HttpResponse:
         messages.error(request, f"Refused (invalid input): deadlines are not valid JSON ({exc.msg})")
         request.session["execution_deadlines_draft"] = raw
         return _to_deadlines()
-    # ASSUMED signature (contract 07a 6.3 names permissions only):
-    # create_escalation_deadline_set(actor, *, deadlines, source, notes) for the active incident policy
+    # Engineer B: create_deadline_set(actor, *, incident_policy_version, deadlines, source, notes),
+    # always for the ACTIVE incident policy (the page says so); no active policy: nothing is recorded.
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT p.version FROM execution_incidentpolicy p"
+            " WHERE p.id = execution_active_incident_policy_id()"
+        )
+        row = cur.fetchone()
+    if row is None:
+        messages.error(request, "Refused: there is no active incident policy; nothing was recorded")
+        return _to_deadlines()
     return _deadline_action(
         request,
         "execution.manage_escalation_deadlines",
-        "create_escalation_deadline_set",
+        "create_deadline_set",
         "Escalation deadline set recorded; it needs the safety and founder approvals",
+        incident_policy_version=row[0],
         deadlines=deadlines,
         source=f.get("source", ""),
         notes=f.get("notes", ""),
@@ -1133,11 +1143,11 @@ def deadline_set_create_view(request: HttpRequest) -> HttpResponse:
 @login_required
 @require_POST
 def deadline_set_approve_view(request: HttpRequest, set_id: int) -> HttpResponse:
-    # ASSUMED signature: approve_escalation_deadline_set(actor, *, set_id, slot)
+    # Engineer B: approve_deadline_set(actor, *, set_id, slot)
     return _deadline_action(
         request,
         "execution.approve_escalation_deadlines",
-        "approve_escalation_deadline_set",
+        "approve_deadline_set",
         "Deadline set approval recorded",
         set_id=set_id,
         slot=request.POST.get("slot", ""),
@@ -1147,11 +1157,11 @@ def deadline_set_approve_view(request: HttpRequest, set_id: int) -> HttpResponse
 @login_required
 @require_POST
 def deadline_set_withdraw_view(request: HttpRequest, set_id: int) -> HttpResponse:
-    # ASSUMED signature: withdraw_escalation_deadline_set(actor, *, set_id, reason)
+    # Engineer B: withdraw_deadline_set(actor, *, set_id, reason)
     return _deadline_action(
         request,
         "execution.withdraw_escalation_deadlines",
-        "withdraw_escalation_deadline_set",
+        "withdraw_deadline_set",
         "Deadline set withdrawn; there is no fallback to an older version",
         set_id=set_id,
         reason=request.POST.get("reason", ""),
