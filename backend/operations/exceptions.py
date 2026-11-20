@@ -253,7 +253,8 @@ def read_thresholds() -> tuple[dict[str, int | None], set[str]]:
 # A's readiness_periodic_inspection_status, docs/07b section 4). Calling that plpgsql function once per robot
 # costs one planning_inspection_signer_problem call per candidate inspection and broke the Slice 5 scale
 # budgets, so the same rule is evaluated here with the usable rule once per pattern, the usable periodic
-# templates once, and the covered-signer rule (planning_inspector_covered) as two EXISTS. An oracle proves
+# templates once, and the covered-signer rule (planning_inspector_covered) as two EXISTS over the current
+# inspector grants, read once (pinsp). An oracle proves
 # it equals the function for every robot. Needs a CTE ``mode`` (production flag) and the parameter %(at)s;
 # yields pstat(robot_id, robot_code, pattern_code, state, due_at, inspection_id, rule_id).
 PERIODIC_STATUS_CTES = r"""
@@ -266,6 +267,13 @@ prule AS MATERIALIZED (
   SELECT pu.pattern_id, fleet_usable_periodic_rule_id(pu.pattern_id, mode.production) AS usable_id,
          fleet_active_periodic_rule_id(pu.pattern_id) AS active_id
   FROM pused pu CROSS JOIN mode
+),
+-- the current readiness_inspector grants, once (a handful of rows), not a person/qualification join per
+-- candidate inspection (1271 candidates on the scale fixture: ~100 ms with stale planner statistics)
+pinsp AS MATERIALIZED (
+  SELECT pp.user_id, q.valid_from, q.valid_to
+  FROM planning_qualification q JOIN planning_person pp ON pp.id = q.person_id
+  WHERE q.kind = 'readiness_inspector' AND q.revoked_at IS NULL
 ),
 ptpl AS MATERIALIZED (
   SELECT t.id FROM fleet_inspectiontemplate t CROSS JOIN mode
@@ -291,14 +299,12 @@ pstat AS MATERIALIZED (
     WHERE ru.id IS NOT NULL AND i.robot_id = r.id AND i.manifest_id = r.current_manifest_id
       AND i.result = 'PASS' AND i.complete AND i.template_id IN (SELECT id FROM ptpl)
       AND i.performer_id IS NOT NULL AND i.verifier_id IS NOT NULL
-      AND EXISTS (SELECT 1 FROM planning_qualification q JOIN planning_person pp ON pp.id = q.person_id
-                  WHERE pp.user_id = i.performer_id AND q.kind = 'readiness_inspector'
-                    AND q.revoked_at IS NULL
-                    AND q.valid_from <= i.submitted_at AND i.submitted_at <= q.valid_to)
-      AND EXISTS (SELECT 1 FROM planning_qualification q JOIN planning_person pp ON pp.id = q.person_id
-                  WHERE pp.user_id = i.verifier_id AND q.kind = 'readiness_inspector'
-                    AND q.revoked_at IS NULL
-                    AND q.valid_from <= i.submitted_at AND i.submitted_at <= q.valid_to)
+      AND EXISTS (SELECT 1 FROM pinsp g
+                  WHERE g.user_id = i.performer_id
+                    AND g.valid_from <= i.submitted_at AND i.submitted_at <= g.valid_to)
+      AND EXISTS (SELECT 1 FROM pinsp g
+                  WHERE g.user_id = i.verifier_id
+                    AND g.valid_from <= i.submitted_at AND i.submitted_at <= g.valid_to)
     ORDER BY i.submitted_at DESC, i.id DESC LIMIT 1
   ) qi ON true
   WHERE r.lifecycle <> 'retired'
