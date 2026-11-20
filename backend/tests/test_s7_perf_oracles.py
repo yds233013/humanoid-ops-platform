@@ -191,3 +191,51 @@ def test_base_relation_rs_equals_status_view_rs_on_edge_cases(name, build, expec
     build(w)
     ow.report(w, "R-02")  # an open incident (and its hold) on every edge case
     assert _assert_rules_equal(name) > 0
+
+
+# ================================================================== operations/0006: close-out stage once
+M6 = importlib.import_module("operations.migrations.0006_s7_closeout_stage_once")
+CLOSEOUT_ORACLE = "s7_closeout_runs_per_run_oracle"
+OPEN_RUNS_PER_ROW = (
+    "LEFT JOIN operations_open_run_stage s ON s.run_id = c.run_id"  # the previous OPEN_RUNS_SQL join
+)
+
+
+def _closeout_rows(view: str) -> list[tuple[Any, ...]]:
+    with connection.cursor() as cur:
+        cur.execute(f"SELECT * FROM {view} ORDER BY run_id")
+        return cur.fetchall()
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4, 5, 6])
+def test_closeout_view_stage_once_equals_the_per_run_view(seed):
+    from operations import closeout as co
+
+    if seed == 0:  # a fixed world with runs at several stages (random worlds may have none)
+        w = ow.ops_world("co_", robots=4)
+        ow.depart_new(w, "R-02")
+        ow.advance(w, ow.depart_new(w, "R-03"), "at_hub")
+        ow.advance(w, ow.depart_new(w, "R-04"), "reconciled")
+    else:
+        ow.random_world(seed)
+    head = "CREATE OR REPLACE VIEW operations_closeout_runs WITH (security_invoker = true) AS"
+    assert M6.REVERSE_SQL.count(head) == 1
+    with connection.cursor() as cur:
+        cur.execute(M6.REVERSE_SQL.replace(head, f"CREATE OR REPLACE TEMP VIEW {CLOSEOUT_ORACLE} AS"))
+    new, old = _closeout_rows("operations_closeout_runs"), _closeout_rows(CLOSEOUT_ORACLE)
+    assert new == old, seed
+    if seed == 0:
+        assert len(new) == 3
+    # OPEN_RUNS_SQL with the stage CTE == the previous per-row join (dated and undated)
+    m = re.search(r"-- the open run stage once.*?\nWITH s AS MATERIALIZED \(.*?\)\n", co.OPEN_RUNS_SQL, re.S)
+    assert m is not None
+    previous = co.OPEN_RUNS_SQL[: m.start()] + co.OPEN_RUNS_SQL[m.end() :]
+    previous = previous.replace("LEFT JOIN s ON s.run_id = c.run_id", OPEN_RUNS_PER_ROW)
+    with connection.cursor() as cur:
+        cur.execute("SELECT (now() AT TIME ZONE 'America/Los_Angeles')::date")
+        day = cur.fetchone()[0]
+        for params in ({"tz": "America/Los_Angeles", "day": day}, {"tz": None, "day": None}):
+            cur.execute(co.OPEN_RUNS_SQL, params)
+            a = cur.fetchall()
+            cur.execute(previous, params)
+            assert a == cur.fetchall(), (seed, params)

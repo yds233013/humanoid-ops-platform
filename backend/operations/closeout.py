@@ -102,6 +102,8 @@ class Closeout:
 # the run without a verification), POST_VISIT_INSPECTION_MISSING (awaiting a post-visit inspection after a hub
 # receipt), RECONCILIATION_UNRESOLVED (latest reconciliation unresolved).
 OPEN_RUNS_SQL = r"""
+-- the open run stage once per statement (joined per row it was evaluated for every run; perf, see 0006)
+WITH s AS MATERIALIZED (SELECT run_id, awaiting FROM operations_open_run_stage)
 SELECT c.run_code, c.robot_code, c.visit_code, c.departed_at,
        CASE WHEN %(tz)s::text IS NULL THEN NULL ELSE (c.departed_at AT TIME ZONE %(tz)s::text)::date END
          AS local_day,
@@ -114,7 +116,7 @@ SELECT c.run_code, c.robot_code, c.visit_code, c.departed_at,
          AS custody_unverified,
        s.awaiting
 FROM operations_closeout_runs c
-LEFT JOIN operations_open_run_stage s ON s.run_id = c.run_id
+LEFT JOIN s ON s.run_id = c.run_id
 WHERE NOT c.closed
   AND (%(tz)s::text IS NULL OR (c.departed_at AT TIME ZONE %(tz)s::text)::date <= %(day)s::date)
 ORDER BY c.departed_at, c.run_code COLLATE "C"
