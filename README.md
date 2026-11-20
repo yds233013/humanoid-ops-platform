@@ -2,7 +2,7 @@
 
 An internal operations platform for a small fleet of home humanoid robots. It coordinates and records operations. It does **not** control robots, implement emergency stops, or certify physical safety.
 
-**Status:** Slice 0 (foundation), Slice 1 (fleet core), Slice 2 (visit planning and scheduling), Slice 3 (deployment readiness and departure authorization) and Slice 4 (field execution and incident response) built and tested. Data is synthetic only.
+**Status:** Slices 0-7 built, tested and closed: foundation, fleet core, visit planning and scheduling, deployment readiness and departure authorization, field execution and incident response, operations command center, scaling and capacity model, production guardrail hardening (closure note `docs/07c_slice7_closure_note.md`). Field Operations Playbook v1.1: `docs/08_field_operations_playbook_v1.1.md`. Data is synthetic only; no production deployment is approved.
 
 ## Quick start
 
