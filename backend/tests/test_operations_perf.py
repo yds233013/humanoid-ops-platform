@@ -46,6 +46,9 @@ THRESHOLDS = {
     rm.RETURN_GRACE: "60",
     rm.INSPECTION_GRACE: "120",
     rm.READINESS_LOOKAHEAD: str(60 * 24 * 60),  # every scale visit qualifies: the cap of 10 is hit
+    # Slice 7: the due-soon rule on, and a valid close-out zone so the close-out page is dated (SYNTHETIC values)
+    "ops_periodic_due_lookahead_min": "1440",
+    ox.CLOSEOUT_TIMEZONE_KEY: "America/Los_Angeles",
 }
 WITH_READINESS = {"timeline", "inbox_with_readiness"}
 
@@ -300,6 +303,9 @@ HTTP_CASES = {
     "/ops/metrics/": FAST_MS,
     "/ops/exceptions/": READINESS_MS,
     "/ops/timeline/": READINESS_MS,
+    # Slice 7 X-10 (contract 07a section 14): the close-out page, contract 05 A1 budget (no evaluator)
+    "/api/ops/closeout": FAST_MS,
+    "/ops/closeout/": FAST_MS,
 }
 
 

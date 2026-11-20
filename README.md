@@ -155,6 +155,42 @@ The platform records what authorized people report after departure. It does not 
 Demo: `make seed` adds a synthetic site-check template and a synthetic_demo incident policy (demo mode only).
 Authorize and record V-0001's departure on the readiness page, then work the run on `/execution/`.
 
+## Slice 7: production guardrails
+
+Contract: `docs/07a_production_guardrails_contract.md` (SQL signatures and change log:
+`docs/07b_s7_sql_signatures.md`). Slice 7 makes the gates that matter in production refuse anything that is
+only demo data. Every rule is enforced in the database too, so direct SQL can't skip it.
+
+- **Approved inspection checklists (X-1):** in production a pre-departure inspection counts only on a checklist
+  template that engineering and safety both approved for that purpose. A synthetic template never authorizes a
+  production departure.
+- **Periodic inspection expiry (X-3):** each configuration needs one approved inspection interval. A robot whose
+  periodic inspection is overdue, missing, or whose interval is unknown can't be planned or authorized, and the
+  inspection must still be valid at the planned unloading end. No interval value is built in.
+- **Qualified inspectors (X-8):** both signers of an inspection must hold a current `readiness_inspector`
+  qualification. Revoking one blocks departures that relied on that inspection.
+- **Hold release policy (G-01):** releasing a hold in production needs an approved hold policy, bound when the
+  hold is placed. Holds placed under a policy that can no longer be used are re-based through an approval flow.
+- **Escalation deadlines (X-4):** owner-approved deadlines per incident level make overdue escalations visible
+  in the command center. Nothing is paged or emailed.
+- **Daily close-out (X-10):** `/ops/closeout/` lists, read-only, the runs still open for the day (custody not
+  verified, post-visit inspection outstanding, return not reconciled). It is not a sign-off.
+
+**Production blockers.** The overview (`/ops/`) shows this panel in both modes ("Would block in production" in
+demo). In production the same rows are also top-priority items in the exceptions inbox:
+
+| Code | Meaning |
+|---|---|
+| `HOLD_POLICY_NOT_APPROVED` | No approved hold-release policy, so no hold can be released in production |
+| `HOLD_UNRELEASABLE` | A hold whose bound policy can't release it (needs re-basing) |
+| `INSPECTION_TEMPLATE_NOT_APPROVED` | A configuration in use has no checklist template approved for production |
+| `PERIODIC_INTERVAL_NOT_APPROVED` | A configuration in use has no approved periodic inspection interval |
+| `ESCALATION_DEADLINES_NOT_APPROVED` | No owner-approved escalation deadline set for the active incident policy |
+
+Demo: `make seed` also runs `seed_guardrails`, which refuses to run outside demo mode and creates only
+`synthetic_demo` rules, templates and synthetic-labelled grants. A production-mode check after seeding still shows
+every blocker above. No migration or seed creates a production approval.
+
 ## Not built yet (by design)
 
 - Maintenance, teleoperation, analytics. Real procedures and hardware-specific safety evidence (production policies need `approved_procedure` sources that don't exist yet).
