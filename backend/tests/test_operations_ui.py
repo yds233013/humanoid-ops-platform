@@ -576,8 +576,8 @@ def test_partial_banner_from_coverage_dict(monkeypatch):
 
     real = ex.open_exceptions
 
-    def partial(at, *, limit=None, after=None):
-        page = real(at, limit=limit, after=after)
+    def partial(at, *, limit=None, after=None, since_at=None):
+        page = real(at, limit=limit, after=after, since_at=since_at)
         cov = {"qualifying": 14, "evaluated": 10, "not_evaluated": 4, "complete": False}
         return type(page)(items=page.items, readiness_coverage=cov, next_cursor=page.next_cursor)
 
