@@ -311,20 +311,50 @@ pstat AS MATERIALIZED (
 ),
 """
 
+# The previous definition of rs (read through operations_robot_status). Kept ONLY as the oracle for the
+# base-relation rs in RULES_RELATION_SQL (EM B2): both must yield the same rows.
+RS_FROM_STATUS_VIEW = r"""rs AS MATERIALIZED (
+  SELECT robot_id, robot_code, custody_kind, custody_event_id, custody_since, open_run_code,
+         open_run_visit_code, hold_codes, holds_since
+  FROM operations_robot_status
+),
+"""
+
 RULES_RELATION_SQL = (
     r"""
 -- Each view is read once, projecting only the columns the rules below use: the planner then drops the unused
 -- view outputs (eligibility reasons, next visit, status label, session state, severity rank, ...) instead of
 -- computing them for every robot / run / incident (Slice 5 perf, EXPLAIN on the scale fixture).
-WITH rs AS MATERIALIZED (
-  SELECT robot_id, robot_code, custody_kind, custody_event_id, custody_since, open_run_code,
-         open_run_visit_code, hold_codes, holds_since
-  FROM operations_robot_status
-),
-ors AS MATERIALIZED (
-  SELECT run_id, run_code, robot_code, visit_code, departed_at, planned_unloading_end, arrived_hub_at,
-         latest_reconciliation_outcome, latest_reconciliation_at, custody_event_id, awaiting
+WITH ors AS MATERIALIZED (
+  SELECT run_id, run_code, robot_id, robot_code, visit_code, departed_at, planned_unloading_end,
+         arrived_hub_at, latest_reconciliation_outcome, latest_reconciliation_at, custody_event_id, awaiting
   FROM operations_open_run_stage
+),
+-- Slice 7 perf (EM B2): rs = the rule columns of operations_robot_status, computed from the base relations
+-- with that view's exact expressions (custody LATERAL ... LIMIT 1, open run stage = ors, robot and
+-- manifest-pattern holds, non-retired robots), WITHOUT its join to operations_robot_eligibility, whose
+-- periodic status no rule reads here. Oracle: RS_FROM_STATUS_VIEW (tests/test_s7_operations.py).
+rs AS MATERIALIZED (
+  SELECT r.id AS robot_id, r.code AS robot_code, c.kind AS custody_kind, c.custody_event_id,
+         ce.recorded_at AS custody_since, s.run_code AS open_run_code, s.visit_code AS open_run_visit_code,
+         hl.hold_codes, hl.holds_since
+  FROM fleet_robot r
+  LEFT JOIN fleet_configurationmanifest m ON m.id = r.current_manifest_id
+  CROSS JOIN LATERAL (SELECT * FROM execution_current_custody(r.id) LIMIT 1) c
+  LEFT JOIN execution_custodyevent ce ON ce.id = c.custody_event_id
+  LEFT JOIN ors s ON s.robot_id = r.id
+  CROSS JOIN LATERAL (
+    SELECT ARRAY(SELECT h.code::text FROM fleet_hold h
+                 WHERE h.blocking AND h.released_at IS NULL
+                   AND ((h.scope = 'robot' AND h.robot_id = r.id)
+                        OR (h.scope = 'manifest_pattern' AND h.pattern_id = m.pattern_id))
+                 ORDER BY h.id) AS hold_codes,
+           (SELECT min(h.placed_at) FROM fleet_hold h
+            WHERE h.blocking AND h.released_at IS NULL
+              AND ((h.scope = 'robot' AND h.robot_id = r.id)
+                   OR (h.scope = 'manifest_pattern' AND h.pattern_id = m.pattern_id))) AS holds_since
+  ) hl
+  WHERE r.lifecycle <> 'retired'
 ),
 q AS MATERIALIZED (
   SELECT incident_id, incident_code, robot_code, visit_id, event_type, reported_at, status, unclassified,
