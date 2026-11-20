@@ -620,6 +620,10 @@ def test_periodic_status_states_and_boundaries(w):
             )
             assert cur.fetchone()[0] == expected, delta
     assert _status("R-01", True)[0] == "unknown_interval"  # synthetic rule refused in production
+    # every world robot gets a periodic inspection (fleet_world); a new manifest leaves R-02 with none
+    fs.record_manifest(
+        w.eng, robot_code="R-02", pattern_code="P-A", autonomy_version="a9", safety_config_hash="m" * 64
+    )
     assert _status("R-02", False)[0] == "never_inspected"
     # a newer approved interval changes due_at
     make_periodic_rule(w, "P-A", interval_min=SYNTHETIC_PERIODIC_INTERVAL_MIN + 60)
@@ -678,10 +682,10 @@ def test_issue_function_refuses_each_periodic_state(w, app_role_conn):
         _raw_issue(app_role_conn, w)
     make_periodic_rule(w, "P-A")
     insp = Inspection.objects.get(code=w.inspection)
-    _owner_rewrite(
+    _owner_rewrite(  # every R-01 inspection (the world's periodic one too), so none still covers now
         "fleet_inspection",
-        "UPDATE fleet_inspection SET submitted_at = %s WHERE id = %s",
-        [insp.submitted_at - timedelta(minutes=SYNTHETIC_PERIODIC_INTERVAL_MIN + 1), insp.pk],
+        "UPDATE fleet_inspection SET submitted_at = %s WHERE robot_id = %s",
+        [insp.submitted_at - timedelta(minutes=SYNTHETIC_PERIODIC_INTERVAL_MIN + 1), insp.robot_id],
     )
     q = Qualification.objects.filter(kind="readiness_inspector", person__code__in=["P-2", "P-3"])
     _owner_rewrite(
@@ -1534,7 +1538,7 @@ def test_incident_source_hold_without_incident_row(w):
         ]
     )
     h = Hold.objects.create(
-        code="HD-LEGACY-INC",
+        code="HD-LEG-INC",  # fits Hold.code max_length=12
         scope="robot",
         robot=template.robot,
         source_type="incident",

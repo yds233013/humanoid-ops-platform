@@ -505,7 +505,7 @@ ex AS (
   UNION ALL
   -- PERIODIC_INTERVAL_UNCONFIGURED (X-3): a pattern in use has no periodic rule usable in the current mode
   SELECT DISTINCT 'PERIODIC_INTERVAL_UNCONFIGURED', 'pattern', ps.pattern_code, NULL::text, NULL::text,
-         %(at)s::timestamptz, 'engineering_lead',
+         %(since_at)s::timestamptz, 'engineering_lead',
          'Configuration ' || ps.pattern_code || ' has no periodic inspection interval usable in '
            || CASE WHEN (SELECT production FROM mode) THEN 'production' ELSE 'demo' END
            || ' mode (interval unknown); its robots are not eligible for planning and cannot be authorized',
@@ -517,7 +517,7 @@ ex AS (
   -- PERIODIC_INSPECTION_OVERDUE (X-3): overdue (since due_at) or never inspected on this configuration
   -- (since at)
   SELECT 'PERIODIC_INSPECTION_OVERDUE', 'robot', ps.robot_code, ps.robot_code, NULL::text,
-         coalesce(ps.due_at, %(at)s::timestamptz), 'engineering_lead',
+         coalesce(ps.due_at, %(since_at)s::timestamptz), 'engineering_lead',
          CASE WHEN ps.state = 'overdue'
               THEN 'Periodic inspection of robot ' || ps.robot_code || ' is overdue since '
                    || to_char(ps.due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC'
@@ -541,7 +541,7 @@ ex AS (
   UNION ALL
   -- ESCALATION_DEADLINE_NOT_CONFIGURED (X-4): no usable deadline set at all (once per snapshot) ...
   SELECT 'ESCALATION_DEADLINE_NOT_CONFIGURED', 'setting', 'deadline-set', NULL::text, NULL::text,
-         %(at)s::timestamptz, 'safety_reviewer',
+         %(since_at)s::timestamptz, 'safety_reviewer',
          'No escalation deadline set is usable in '
            || CASE WHEN (SELECT production FROM mode) THEN 'production (it must be owner approved)'
                    ELSE 'demo' END
@@ -552,7 +552,7 @@ ex AS (
   UNION ALL
   -- ... or once per open incident whose level is unconfigured (decision under another policy version)
   SELECT 'ESCALATION_DEADLINE_NOT_CONFIGURED', 'incident', ql.incident_code, ql.robot_code, v.code,
-         %(at)s::timestamptz, 'safety_reviewer',
+         %(since_at)s::timestamptz, 'safety_reviewer',
          'Incident ' || ql.incident_code || ' (robot ' || ql.robot_code || ') has a severity decision '
            || 'that the escalation deadline set v' || ql.version_no || ' does not cover (made under '
            || 'another incident policy version), so no escalation deadline applies to it',
@@ -594,7 +594,7 @@ ex AS (
   SELECT pb.code,
          CASE pb.code WHEN 'HOLD_UNRELEASABLE' THEN 'hold' WHEN 'HOLD_POLICY_NOT_APPROVED' THEN 'hold_policy'
                       WHEN 'ESCALATION_DEADLINES_NOT_APPROVED' THEN 'setting' ELSE 'pattern' END,
-         pb.entity_ref, hb.robot_code, NULL::text, %(at)s::timestamptz,
+         pb.entity_ref, hb.robot_code, NULL::text, %(since_at)s::timestamptz,
          CASE WHEN pb.code = 'ESCALATION_DEADLINES_NOT_APPROVED' THEN 'safety_reviewer'
               ELSE 'engineering_lead' END,
          'Production blocker: ' || pb.detail,
@@ -663,7 +663,9 @@ LIMIT %(cap)s
 """
 
 
-def _relation_params(at: datetime, thresholds: dict[str, int | None]) -> dict[str, Any]:
+def _relation_params(
+    at: datetime, thresholds: dict[str, int | None], since_at: datetime | None = None
+) -> dict[str, Any]:
     """The parameters of RULES_RELATION_SQL (shared by both projections)."""
     return {
         "at": at,
@@ -671,14 +673,21 @@ def _relation_params(at: datetime, thresholds: dict[str, int | None]) -> dict[st
         "g_return": thresholds["ops_return_grace_min"],
         "g_inspect": thresholds["ops_inspection_grace_min"],
         "g_periodic": thresholds["ops_periodic_due_lookahead_min"],
+        # 'since' of the snapshot-dated items (no start time of their own): the FIRST page's snapshot time,
+        # so their keyset position does not move between continuation pages (each page is a new snapshot)
+        "since_at": since_at or at,
     }
 
 
 def _sql_rules(
-    at: datetime, thresholds: dict[str, int | None], limit: int | None, after: SortKey | None
+    at: datetime,
+    thresholds: dict[str, int | None],
+    limit: int | None,
+    after: SortKey | None,
+    since_at: datetime | None = None,
 ) -> list[OpsException]:
     params = {
-        **_relation_params(at, thresholds),
+        **_relation_params(at, thresholds, since_at),
         "prio": json.dumps(PRIORITY),
         "a_prio": after[0] if after else None,
         "a_since": after[1] if after else None,
@@ -768,7 +777,9 @@ def _threshold_items(
     thresholds: dict[str, int | None],
     raw_missing: set[str],
     tz: TimezoneSetting | None = None,
+    since_at: datetime | None = None,
 ) -> list[OpsException]:
+    since = since_at or at  # snapshot-dated: see _relation_params
     items = [
         OpsException(
             code="THRESHOLD_NOT_CONFIGURED",
@@ -777,7 +788,7 @@ def _threshold_items(
             entity_ref=key,
             robot=None,
             visit=None,
-            since=at,
+            since=since,
             owner_role="engineering_lead",
             message=f"Deployment setting {key} is "
             + (
@@ -801,7 +812,7 @@ def _threshold_items(
                 entity_ref=CLOSEOUT_TIMEZONE_KEY,
                 robot=None,
                 visit=None,
-                since=at,
+                since=since,
                 owner_role="engineering_lead",
                 message=f"Deployment setting {CLOSEOUT_TIMEZONE_KEY} is "
                 + (
@@ -825,17 +836,22 @@ def open_exceptions(
     limit: int | None = None,
     after: SortKey | None = None,
     include_readiness: bool = True,
+    since_at: datetime | None = None,
 ) -> ExceptionPage:
     """Open exceptions at the snapshot time ``at`` in the total order, starting after the sort key ``after``
     (keyset pagination), at most ``limit`` items. Call inside ``read_snapshot()``; each call (page) is its own
     snapshot. ``readiness_coverage`` and ``unknown_basis`` describe the whole inbox, not just this page.
     ``include_readiness=False`` (metrics page) runs no readiness evaluation: READINESS_INCOMPLETE_SOON is not
-    produced and the coverage says ``skipped`` (never complete)."""
+    produced and the coverage says ``skipped`` (never complete).
+    ``since_at``: the 'since' of items with no start time of their own (a missing setting, an unconfigured
+    interval or deadline set, a production blocker, a never-inspected robot); default ``at``. Continuation
+    pages pass the FIRST page's snapshot time so those items keep one keyset position across pages (otherwise
+    each new snapshot moves them past the cursor again and the pages never end)."""
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
     thresholds, missing, tz = read_settings()
 
-    sql_items = _sql_rules(at, thresholds, None if limit is None else limit + 1, after)
+    sql_items = _sql_rules(at, thresholds, None if limit is None else limit + 1, after, since_at)
     with connection.cursor() as cur:
         cur.execute(UNKNOWN_BASIS_SQL)
         unknown = [{"rule": r, "run": run, "reason": why} for r, run, why in cur.fetchall()]
@@ -846,7 +862,7 @@ def open_exceptions(
         coverage = {"qualifying": 0, "evaluated": 0, "not_evaluated": 0, "complete": False, "skipped": True}
     py_items = [
         x
-        for x in ready_items + _threshold_items(at, thresholds, missing, tz)
+        for x in ready_items + _threshold_items(at, thresholds, missing, tz, since_at)
         if after is None or x.sort_key > after
     ]
     items = sorted(sql_items + py_items, key=lambda x: x.sort_key)

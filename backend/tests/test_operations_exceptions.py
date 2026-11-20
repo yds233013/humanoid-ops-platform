@@ -652,6 +652,36 @@ def test_keyset_cursor_and_limit_validation():
         open_exceptions(at, limit=0)
 
 
+@pytest.mark.django_db
+def test_continuation_pages_end_when_snapshot_dated_items_tie():
+    """Regression (Slice 7 full suite): items with no start time of their own (missing settings, the missing
+    deadline set, unconfigured intervals, production blockers, never-inspected robots) are dated at the
+    snapshot. Each continuation page is a NEW, later snapshot, so with since = that page's time they sorted past
+    the cursor again and the pages never ended. They keep the FIRST page's time (since_at) instead."""
+    w = ow.ops_world("cp_", robots=3)
+    for key in ox.THRESHOLD_RULES:
+        DeploymentSetting.objects.filter(key=key).delete()
+    ow.report(w, "R-03")
+    first_at = db_clock()
+    full = open_exceptions(first_at).items
+    dated = [x for x in full if x.since == first_at]
+    assert len(dated) >= 3  # several snapshot-dated ties: the case that looped
+    for size in (1, 2):
+        got: list[OpsException] = []
+        cursor = None
+        at = first_at
+        for _ in range(len(full) + 1):  # bounded: a loop here is the bug
+            page = open_exceptions(at, limit=size, after=cursor, since_at=first_at)
+            got += page.items
+            if page.next_cursor is None:
+                break
+            cursor = page.next_cursor
+            at += timedelta(seconds=1)  # the next page is a later snapshot
+        else:
+            pytest.fail(f"pagination did not end (page size {size})")
+        assert [(x.code, x.entity_ref) for x in got] == [(x.code, x.entity_ref) for x in full], size
+
+
 # ------------------------------------------------------------------ snapshot, statements, scale
 @pytest.mark.django_db(transaction=True)
 def test_runs_inside_the_read_only_snapshot_without_writes_or_locks():

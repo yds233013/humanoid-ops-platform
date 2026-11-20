@@ -16,7 +16,7 @@ from platform_core.models import AuditEvent
 from readiness import evaluator as ev
 from readiness import evidence as rx
 from readiness.models import ReadinessEvidence, ReadinessPolicy, RecoveryPlan
-from tests.fleet_world import set_setting
+from tests.fleet_world import record_periodic_inspection, set_setting
 from tests.planning_world import DAY, plan
 from tests.readiness_world import (
     EQUIPMENT_ALL_PRESENT,
@@ -359,6 +359,7 @@ def test_evidence_for_old_manifest_after_manifest_change(w):
     fleet_services.record_manifest(
         w.eng, robot_code="R-01", pattern_code="P-A", autonomy_version="a2", safety_config_hash="h" * 64
     )
+    record_periodic_inspection(w, "R-01")  # X-3: keep the periodic gate out of this evidence test
     res = _eval(w.visit)
     assert len(_only(res, "EVIDENCE_WRONG_CONFIGURATION")) == 3
     assert _codes(res) == {"EVIDENCE_WRONG_CONFIGURATION", "RECOVERY_PLAN_MISSING"}

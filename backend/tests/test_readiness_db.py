@@ -24,7 +24,12 @@ from readiness.models import (
     ReadinessEvidence,
     ReadinessPolicy,
 )
-from tests.fleet_world import make_engineering_template, make_periodic_rule, set_setting
+from tests.fleet_world import (
+    make_engineering_template,
+    make_periodic_rule,
+    record_periodic_inspection,
+    set_setting,
+)
 from tests.planning_world import new_visit, plan
 from tests.readiness_world import REQUIREMENTS, build_readiness, requirements
 
@@ -612,6 +617,7 @@ def test_recovery_plan_rules_in_sql(w, app_role_conn):
         pytest.raises(psycopg.errors.CheckViolation, match="current configuration"),
     ):
         _ins_row(cur, "readiness_recoveryplan", _plan_row(w, c, manifest_id=old_manifest))
+    record_periodic_inspection(w, "R-01")  # X-3: the new configuration needs its own to stay plannable
     _reschedule(w, w.visit)
     c2 = _ctx(w)
     with (
@@ -738,6 +744,7 @@ def test_authorization_requires_confirmed_visit_and_current_manifest(w, app_role
         pytest.raises(psycopg.errors.CheckViolation, match="current configuration"),
     ):
         _ins_auth(cur, _auth_row(w, c))
+    record_periodic_inspection(w, "R-01")  # X-3: the new configuration needs its own to stay plannable
     _reschedule(w, w.visit)  # confirmed -> planned
     c = _ctx(w)
     with app_role_conn.cursor() as cur, pytest.raises(psycopg.errors.CheckViolation, match="confirmed visit"):

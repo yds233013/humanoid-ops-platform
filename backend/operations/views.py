@@ -258,8 +258,9 @@ def exceptions_data(at: datetime, cursor: str | None) -> dict[str, Any]:
     exceptions = _read_model("exceptions")
 
     page_no = cont["page"] if cont else 1
-    result = exceptions.open_exceptions(at, limit=PAGE_SIZE, after=after)
     first_at = cont["first_at"] if cont else at
+    # snapshot-dated items keep page 1's time as 'since', so they do not reappear on every new snapshot
+    result = exceptions.open_exceptions(at, limit=PAGE_SIZE, after=after, since_at=first_at)
     next_cursor = field(result, "next_cursor")
     return {
         "as_of": at,

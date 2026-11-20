@@ -9,7 +9,7 @@ Budgets (EM decision):
   * timeline and inbox WITH readiness (they run the authoritative evaluator, <= 10 visits): p95 <= 2,000 ms
     (a separate release gate)
   * SQL: overview / queue / metrics constant (1 / 1 / 1 + inbox-without-readiness); readiness pages
-    <= 12 + 10 x E with E pinned at 70 statements per evaluated visit
+    <= 12 + 10 x E with E pinned at 72 statements per evaluated visit (EM, 2026-11-19; was 70)
 The evaluator's time is measured and reported separately from each read model's own work.
 
 Times are server-side function times (no HTTP), measured inside the test transaction that holds the fixture:
@@ -36,7 +36,7 @@ from tests import operations_world as ow
 from tests.fleet_world import set_setting
 
 RUNS = 20
-E_PIN = 70
+E_PIN = ox.READINESS_EVALUATOR_STATEMENTS  # 72: EM Option B, 2026-11-19 (was 70)
 FAST_MS = 400  # read models without the evaluator
 READINESS_MS = 2000  # timeline and inbox with readiness (separate release gate)
 UPPER_S = 2.0  # normal runs: non-flaky bound on each read model's own time
