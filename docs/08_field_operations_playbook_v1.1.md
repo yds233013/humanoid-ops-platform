@@ -64,6 +64,8 @@ v1.1 keeps every v1.0 procedure. It fixes wording where v1.0 and the platform di
 
 Authorization is a named, time-limited decision ("Authorization issued (expires HH:MM)"), not a colour. The platform never shows a visit as green or "cleared". *Ready to request authorization* means the checks pass now; it is not permission to leave. **[PLATFORM]**
 
+What "the platform refuses" means: it refuses to **record** the step. Without a current Go, the platform will not record a work session start or resume; it does not, and cannot, physically stop a robot from moving. The crew's own stop rules (Section 10) and the robot's safety functions do that (Section 20).
+
 **Principles**
 
 1. **Safe first, then useful, then fast.** A cancelled visit costs a day. An injury or a broken trust costs the company.
@@ -92,7 +94,7 @@ Authorization is a named, time-limited decision ("Authorization issued (expires 
 | Regulator reporting, disclosure, data requests | Collects facts | | | | **Decides** | **Advises** |
 | Pay for minor customer damage up to $[X] **[A]** | **Decides** | | | | Above $[X] | |
 
-**Ops can restrict. Only engineering can lift.** That covers robot holds, task restrictions and configuration approvals. Approving a release and recording it are two steps by different people. **[PLATFORM]** for holds and configurations; **[MANUAL]** for task restrictions (section 15).
+**Ops can restrict. Lifting needs engineering's approval.** That covers robot holds, task restrictions and configuration approvals. For a hold, engineering (and any other approver the hold-release policy names) gives the approval; once every approval is in, an authorized operator (the ops lead, or the engineering lead) records the completed release. Approving a release and recording it are two separate steps. **[PLATFORM]** for holds and configurations; **[MANUAL]** for task restrictions (section 15).
 
 ## 1.2 Gates and where they live in the platform
 
