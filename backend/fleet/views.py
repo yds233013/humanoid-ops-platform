@@ -71,6 +71,10 @@ FLEET_ACTIONS = [
     "manage_periodic_rule",
     "approve_periodic_rule",
     "withdraw_periodic_rule",
+    "place_hold",
+    "approve_release",
+    "release_hold",
+    "check_eligibility",
 ]
 
 

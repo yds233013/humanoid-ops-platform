@@ -1,9 +1,9 @@
-{% extends "base.html" %}{% load tz %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Operations overview{% endblock %}
-{% block content %}{% timezone "UTC" %}
+{% block content %}
 {% include "operations/_chrome.html" %}
-<h1>Fleet overview</h1>
-<p class="muted">One row per robot that is not retired. The status is derived from the recorded rows at the snapshot time and describes where the robot is and what is waiting on it. It is <b>not a departure decision</b>: only the readiness and authorization pages decide that, and "eligible for planning" only means the planner may schedule it. No readiness is shown here. Times are UTC.</p>
+{% page_header title="Robot status" %}One row per robot that is not retired.{% endpage_header %}
+<p class="muted">One row per robot that is not retired. The status is derived from the recorded rows at the snapshot time and describes where the robot is and what is waiting on it. It is <b>not a departure decision</b>: only the readiness and authorization pages decide that, and "eligible for planning" only means the planner may schedule it. No readiness is shown here.</p>
 {% with pb=production_blockers %}<div class="card op-blockers{% if pb.production %} prod{% endif %}" data-blockers="{{ pb.items|length }}" data-mode="{% if pb.production %}production{% else %}demo{% endif %}">
 <h2>{{ pb.heading }}</h2>
 <p class="muted">{{ pb.note }} Evaluated as production in every mode; no setting hides these items. An empty list is not an approval or a sign-off.</p>
@@ -24,8 +24,8 @@
   <td>{% if r.eligible_for_planning %}<span class="badge info">Eligible for planning</span>{% else %}<span class="badge attn">Not eligible for planning</span>{% endif %}
       {% if r.eligibility_reasons %}<ul class="reasons">{% for x in r.eligibility_reasons %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}</td>
   <td data-periodic="{{ r.periodic_inspection.state }}">{% include "operations/_periodic.html" with p=r.periodic_inspection %}</td>
-  <td>{% if r.next_visit %}<a href="/planning/visits/{{ r.next_visit.code }}/">{{ r.next_visit.code }}</a><div class="muted">{{ r.next_visit.on_site_start|date:"D j M H:i" }}</div>{% else %}<span class="muted">none</span>{% endif %}</td>
+  <td>{% if r.next_visit %}<a href="/planning/visits/{{ r.next_visit.code }}/">{{ r.next_visit.code }}</a><div class="muted">{{ r.next_visit.on_site_start|local_dt }}</div>{% else %}<span class="muted">none</span>{% endif %}</td>
   <td>{{ r.awaiting }}</td>
 </tr>{% empty %}<tr><td colspan="9" class="muted">No robots.</td></tr>{% endfor %}
 </tbody></table></div>
-{% endtimezone %}{% endblock %}
+{% endblock %}

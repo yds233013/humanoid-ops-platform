@@ -1,8 +1,7 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Incidents{% endblock %}
 {% block content %}
-{% include "execution/_chrome.html" %}
-<h1>Incidents</h1>
+{% page_header title="Incident reports" %}Every report holds its robot.{% endpage_header %}
 <p class="muted">Every incident holds its robot. Status and severity are separate; resolving or closing an incident never releases the hold. Severity is <b>unclassified</b> until a decision is recorded under an approved incident policy.</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Incident</th><th>Robot</th><th>Type</th><th>Occurred / reported</th><th>Status</th><th>Severity</th><th>Hold</th><th>Run</th></tr></thead>
@@ -11,7 +10,7 @@
   <td><a href="/execution/incidents/{{ r.i.code }}/"><b>{{ r.i.code }}</b></a></td>
   <td><a href="/fleet/{{ r.i.robot.code }}/">{{ r.i.robot.code }}</a></td>
   <td>{{ r.i.get_event_type_display }}</td>
-  <td>{{ r.occurred_local|date:"D j M H:i" }}<div class="muted">reported {{ r.reported_local|date:"D j M H:i" }} ({{ r.tz }})</div></td>
+  <td>{{ r.occurred_local|local_dt }}<div class="muted">reported {{ r.reported_local|local_dt }}</div></td>
   <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
   <td><span class="badge {{ r.severity }}">{{ r.severity }}</span></td>
   <td>{{ r.i.hold.code }} {% if r.hold_active %}<span class="badge held">Active hold</span>{% else %}<span class="badge released">Released</span>{% endif %}</td>

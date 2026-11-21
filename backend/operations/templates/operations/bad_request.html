@@ -1,8 +1,8 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Operations{% endblock %}
 {% block content %}
 {% include "operations/_chrome.html" %}
-<h1>Request not understood</h1>
+{% page_header title="Request not understood" %}{% endpage_header %}
 <div class="msg error">{{ error }}</div>
 <p><a href="/ops/{% if section != 'overview' %}{{ section }}/{% endif %}">Start again from the first page</a></p>
 {% endblock %}

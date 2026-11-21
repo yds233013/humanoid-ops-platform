@@ -312,7 +312,7 @@ def test_fleet_ui_pages_and_hold_form(w):
     c = APIClient()
     c.force_login(w.ops)
     page = c.get("/fleet/").content.decode()
-    assert "Eligible for planning - not cleared to depart" in page and "SYNTHETIC" in page
+    assert "Eligible for planning - not cleared to depart" in page and "Demo workspace" in page
     assert "DRAFT" in page
     r = c.post("/fleet/R-01/hold/", {"source_type": "manual", "reason": "UI test"})
     assert r.status_code == 302

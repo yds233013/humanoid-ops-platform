@@ -1,40 +1,38 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}{{ visit.code }}{% endblock %}
 {% block content %}
-<p><a href="/planning/">&larr; Planner</a></p>
-<h1>{{ visit.code }} <span class="muted">{{ visit.site.code }} ({{ visit.site.zone }}) · {{ visit.get_status_display }} · revision {{ rev.revision_no }}</span></h1>
+{% page_header title=visit.code back_url="/planning/" back_label="Planner" %}{{ visit.site.code }} ({{ visit.site.zone }}) · {{ visit.get_status_display }} · revision {{ rev.revision_no }} · <a href="/readiness/visits/{{ visit.code }}/">Departure readiness</a>{% endpage_header %}
 <div class="card">
   <h2>Planning status (checked now)</h2>
   <span class="badge {{ state }}">{{ label }}</span> <span class="muted">Planning only - not cleared to depart.</span>
-  {% if live.blockers %}<table style="margin-top:8px"><thead><tr><th>Issue</th><th>Level</th><th>What to do</th></tr></thead><tbody>
-  {% for b in live.blockers %}<tr><td>{{ b.message }}</td><td>{{ b.level }}</td><td>{{ b.action }}</td></tr>{% endfor %}</tbody></table>{% endif %}
-  <p class="muted">On site {{ start|date:"D j M H:i" }}–{{ end|date:"H:i" }} ({{ site_tz }}) · travel {{ rev.travel_out_min|default:"unknown" }} / {{ rev.travel_back_min|default:"unknown" }} min · tasks {{ rev.tasks|join:", "|default:"-" }}</p>
+  {% if live.blockers %}<div class="tablewrap"><table style="margin-top:8px"><thead><tr><th>Issue</th><th>Level</th><th>What to do</th></tr></thead><tbody>
+  {% for b in live.blockers %}<tr><td>{{ b.message }}</td><td>{{ b.level }}</td><td>{{ b.action }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+  <p class="muted">On site {{ start|local_dt }} to {{ end|local_time }} · travel {{ rev.travel_out_min|default:"unknown" }} / {{ rev.travel_back_min|default:"unknown" }} min · tasks {{ rev.tasks|join:", "|default:"-" }}</p>
 </div>
 {% if visit.status != "cancelled" %}
-<div class="card"><h2>Plan or reschedule</h2>
-<form method="post" action="plan/" class="row">{% csrf_token %}
+{% if can.plan or can.confirm %}<div class="card"><h2>Plan or reschedule</h2>
+{% if can.plan %}<form method="post" action="plan/" class="row">{% csrf_token %}
   <label>Robot <select name="robot"><option value="">-</option>{% for r in robots %}<option {% if rev.robot_id == r.id %}selected{% endif %}>{{ r.code }}</option>{% endfor %}</select></label>
   <label>Lead <select name="lead"><option value="">-</option>{% for x in persons %}<option {% if rev.lead_id == x.id %}selected{% endif %}>{{ x.code }}</option>{% endfor %}</select></label>
   <label>Second <select name="second"><option value="">-</option>{% for x in persons %}<option {% if rev.second_id == x.id %}selected{% endif %}>{{ x.code }}</option>{% endfor %}</select></label>
   <label>Vehicle <select name="vehicle"><option value="">-</option>{% for x in vehicles %}<option {% if rev.vehicle_id == x.id %}selected{% endif %}>{{ x.code }}</option>{% endfor %}</select></label>
-  <label>New start (site time) <input type="datetime-local" name="start"></label>
+  <label>New start ({{ site_tz }}) <input type="datetime-local" name="start"></label>
   <label>New end <input type="datetime-local" name="end"></label>
   <input name="reason" placeholder="Reason for change"><button class="primary">Save plan</button>
-</form>
+</form>{% else %}<p class="waiting">Waiting for the ops lead to change the plan.</p>{% endif %}
 <div class="row" style="margin-top:10px">
-  <form method="post" action="confirm/">{% csrf_token %}<button class="primary">Confirm</button></form>
-  <form method="post" action="cancel/" class="row">{% csrf_token %}<input name="reason" placeholder="Cancel reason (required)"><button class="primary">Cancel visit</button></form>
-</div></div>
+  {% if can.confirm %}<form method="post" action="confirm/">{% csrf_token %}<button class="primary">Confirm</button></form>{% endif %}
+  {% if can.plan %}<form method="post" action="cancel/" class="row">{% csrf_token %}<input name="reason" placeholder="Cancel reason (required)"><button class="primary">Cancel visit</button></form>{% endif %}
+</div></div>{% else %}<p class="waiting">Waiting for the ops lead to plan, confirm or cancel this visit.</p>{% endif %}
 {% endif %}
 <div class="card"><h2>Reservations</h2>
-<table><thead><tr><th>Resource</th><th>Purpose</th><th>From (UTC)</th><th>To (UTC)</th><th>Revision</th><th>State</th></tr></thead><tbody>
-{% for r in reservations %}<tr><td>{{ r.resource }}</td><td>{{ r.get_purpose_display }}</td><td>{{ r.starts_at|date:"D j H:i" }}</td><td>{{ r.ends_at|date:"D j H:i" }}</td><td>r{{ r.revision.revision_no }}</td>
+<div class="tablewrap"><table><thead><tr><th>Resource</th><th>Purpose</th><th>From</th><th>To</th><th>Revision</th><th>State</th></tr></thead><tbody>
+{% for r in reservations %}<tr><td>{{ r.resource }}</td><td>{{ r.get_purpose_display }}</td><td>{{ r.starts_at|local_dt }}</td><td>{{ r.ends_at|local_dt }}</td><td>r{{ r.revision.revision_no }}</td>
 <td>{% if r.released_at %}<span class="muted">released: {{ r.released_reason }}</span>{% else %}active{% endif %}</td></tr>
-{% empty %}<tr><td colspan="6" class="muted">No reservations</td></tr>{% endfor %}</tbody></table></div>
+{% empty %}<tr><td colspan="6" class="muted">No reservations</td></tr>{% endfor %}</tbody></table></div></div>
 <div class="card"><h2>Revision history</h2>
-<table><thead><tr><th>Rev</th><th>When</th><th>Result at the time</th><th>Robot / crew / vehicle</th><th>Reason</th></tr></thead><tbody>
-{% for r in revisions %}<tr><td>r{{ r.revision_no }}</td><td class="muted">{{ r.created_at|date:"Y-m-d H:i" }}</td><td>{{ r.get_feasibility_display }}</td>
+<div class="tablewrap"><table><thead><tr><th>Rev</th><th>When</th><th>Result at the time</th><th>Robot / crew / vehicle</th><th>Reason</th></tr></thead><tbody>
+{% for r in revisions %}<tr><td>r{{ r.revision_no }}</td><td class="muted">{{ r.created_at|local_dt }}</td><td>{{ r.get_feasibility_display }}</td>
 <td>{{ r.robot.code|default:"-" }} / {{ r.lead.code|default:"-" }}, {{ r.second.code|default:"-" }} / {{ r.vehicle.code|default:"-" }}</td><td>{{ r.reason }}</td></tr>{% endfor %}
-</tbody></table></div>
-<style>.badge.feasible{background:var(--bluebg);color:var(--blue);border-color:#9CC0E4} .badge.blocked,.badge.cancelled{background:var(--redbg);color:var(--red);border-color:#E7A1A1} .badge.review{background:var(--amberbg);color:var(--amber);border-color:#E9C46A}</style>
+</tbody></table></div></div>
 {% endblock %}

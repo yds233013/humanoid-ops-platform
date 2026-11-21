@@ -1,18 +1,18 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}{{ visit.code }} readiness{% endblock %}
 {% block content %}
-{% include "readiness/_chrome.html" %}
-<p><a href="/readiness/">&larr; Readiness</a> · <a href="/planning/visits/{{ visit.code }}/">Planner view of {{ visit.code }}</a></p>
-<h1>{{ visit.code }} <span class="muted">{{ visit.site.code }} · {{ visit.get_status_display }}{% if rev %} · revision {{ rev.revision_no }}{% if rev.robot %} · {{ rev.robot.code }}{% endif %}{% endif %}</span></h1>
-{% if start %}<p class="muted">On site {{ start|date:"D j M H:i" }} ({{ tz }})</p>{% endif %}
+{% page_header title=visit.code back_url="/readiness/" back_label="Departure readiness" %}{{ visit.site.code }} · {{ visit.get_status_display }}{% if rev %} · revision {{ rev.revision_no }}{% if rev.robot %} · robot {{ rev.robot.code }}{% endif %}{% endif %}{% if start %} · on site {{ start|local_dt }}{% endif %} · <a href="/planning/visits/{{ visit.code }}/">Planner view</a>{% endpage_header %}
 
 <div class="card">
   <h2>Status (checked now)</h2>
   <div class="row">
     <span>Planning: <span class="badge {{ planning_state }}">{{ planning_label }}</span></span>
-    <span>Readiness: <span class="badge {{ readiness_state }}">{{ result.label }}</span></span>
-    <span>Authorization: {% if auth %}<span class="badge {{ auth.state }}">{{ auth.label }}</span>{% else %}<span class="muted">None issued</span>{% endif %}</span>
+    <span>Checklist: <span class="badge {{ readiness_state }}">{{ result.label }}</span></span>
+    <span>Leave decision: {% if valid_auth %}<span class="badge {{ valid_auth.state }}">{{ valid_auth.label }}</span>{% elif auth %}<span class="badge {{ auth.state }}">{{ auth.label }}</span>{% else %}<span class="muted">None issued</span>{% endif %}</span>
   </div>
+  {% if valid_auth %}<p class="decision" data-approved-to-leave="1" style="margin-top:12px">Approved to leave by <b>{{ valid_auth.auth.issued_by.username }}</b> at <b>{{ valid_auth.auth.issued_at|local_dt }}</b>, valid until <b>{{ valid_auth.auth.expires_at|local_dt }}</b>, for visit <b>{{ visit.code }}</b> with robot <b>{{ valid_auth.auth.robot.code }}</b>.</p>
+  {% elif result.ready and planning_state != "blocked" %}<p class="decision waiting-note" data-checklist-complete="1" style="margin-top:12px">Checklist complete - ask the ops lead to approve.</p>
+  {% else %}<p class="decision waiting-note" style="margin-top:12px">Checklist: {{ result.blockers|length }} item{{ result.blockers|length|pluralize }} left. Not ready to leave yet.</p>{% endif %}
   {% if result.policy_version %}<p class="muted">Evaluated against readiness policy v{{ result.policy_version }}.</p>{% endif %}
 </div>
 
@@ -21,26 +21,29 @@
   <div class="tablewrap"><table><thead><tr><th>Gate</th><th>State</th><th>Blockers and what to do</th></tr></thead><tbody>
   {% for g in gates %}<tr><td>{{ g.name }}</td>
     <td><span class="badge {{ g.state }}">{% if g.state == "clear" %}No blockers{% elif g.state == "review" %}Needs review{% else %}Blocked{% endif %}</span></td>
-    <td>{% for b in g.blockers %}<div class="blocker"><b>{{ b.message }}</b> <span class="muted">[{{ b.level }} · {{ b.code }}]</span><div>What to do: {{ b.action }}</div></div>{% empty %}<span class="muted">-</span>{% endfor %}</td></tr>
+    <td>{% for b in g.blockers %}<div class="blocker"><b>{{ b.message }}</b><div>What to do: {{ b.action }}</div><details class="fold"><summary>Details</summary><span class="muted">{{ b.level }} · {{ b.code }}</span></details></div>{% empty %}<span class="muted">-</span>{% endfor %}</td></tr>
   {% endfor %}</tbody></table></div>
-  {% if can.authorize_departure %}
+  {% if valid_auth %}<p class="waiting" style="margin-top:10px">This visit already has a valid leave approval ({{ valid_auth.auth.code }}); no new request is needed.</p>
+  {% elif result.ready and planning_state != "blocked" %}
+    {% if can.authorize_departure %}
   <form method="post" action="/readiness/visits/{{ visit.code }}/authorize/" style="margin-top:10px" class="row">{% csrf_token %}
     <input type="hidden" name="idempotency_key" value="{{ authorize_key }}">
     <button class="primary">Request departure authorization</button>
-    <span class="muted">Refused unless every gate is clear. Issues a time-limited authorization; it does not record a departure.</span>
-  </form>{% endif %}
+    <span class="muted">Issues a time-limited approval to leave; it does not record a departure.</span>
+  </form>{% else %}<p class="waiting" style="margin-top:10px">Waiting for the ops lead to approve.</p>{% endif %}
+  {% else %}<p class="waiting" style="margin-top:10px">Departure can be requested once every checklist item is clear.</p>{% endif %}
 </div>
 
 <div class="card">
-  <h2>Authorizations</h2>
-  <div class="tablewrap"><table><thead><tr><th>Code</th><th>Status now</th><th>Issued</th><th>Expires ({{ tz }})</th><th>Policy / mode</th><th>Actions</th></tr></thead><tbody>
+  <h2>Leave approvals</h2>
+  <div class="tablewrap"><table><thead><tr><th>Code</th><th>Status now</th><th>Issued</th><th>Valid until</th><th>Policy / mode</th><th>Actions</th></tr></thead><tbody>
   {% for a in auths %}<tr>
     <td><b>{{ a.auth.code }}</b></td>
     <td><span class="badge {{ a.state }}">{{ a.label }}</span>
       {% if a.reasons %}<ul class="reasons">{% for x in a.reasons %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
       {% if a.revocation %}<div class="muted">Revoked by {{ a.revocation.revoked_by.username }}: {{ a.revocation.reason }}</div>{% endif %}</td>
-    <td>{{ a.issued_local|date:"D j M H:i" }}<div class="muted">by {{ a.auth.issued_by.username }}</div></td>
-    <td>{{ a.expires_local|date:"D j M" }} <b>{{ a.expires_local|date:"H:i" }}</b></td>
+    <td>{{ a.auth.issued_at|local_dt }}<div class="muted">by {{ a.auth.issued_by.username }}</div></td>
+    <td><b>{{ a.auth.expires_at|local_dt }}</b></td>
     <td>v{{ a.auth.policy.version }} · {{ a.auth.get_mode_display }}<div class="muted">revision {{ a.auth.revision.revision_no }}</div></td>
     <td>
       {% if can.record_departure and a.state == "usable" %}
@@ -58,22 +61,22 @@
 
 <div class="card">
   <h2>Departure events</h2>
-  <div class="tablewrap"><table><thead><tr><th>Departed ({{ tz }})</th><th>Authorization</th><th>Robot</th><th>Recorded by</th></tr></thead><tbody>
-  {% for d in departures %}<tr><td>{{ d.local|date:"D j M H:i" }}</td><td>{{ d.d.authorization.code }}</td><td>{{ d.d.robot.code }}</td><td>{{ d.d.recorded_by.username }}</td></tr>
+  <div class="tablewrap"><table><thead><tr><th>Departed</th><th>Authorization</th><th>Robot</th><th>Recorded by</th></tr></thead><tbody>
+  {% for d in departures %}<tr><td>{{ d.local|local_dt }}</td><td>{{ d.d.authorization.code }}</td><td>{{ d.d.robot.code }}</td><td>{{ d.d.recorded_by.username }}</td></tr>
   {% empty %}<tr><td colspan="4" class="muted">No departure recorded.</td></tr>{% endfor %}
   </tbody></table></div>
 </div>
 
 <div class="card">
   <h2>Evidence history</h2>
-  <div class="tablewrap"><table><thead><tr><th>Code</th><th>Kind</th><th>Result</th><th>Details</th><th>Observed ({{ tz }})</th><th>By</th><th>State</th></tr></thead><tbody>
+  <div class="tablewrap"><table><thead><tr><th>Code</th><th>Kind</th><th>Result</th><th>Details</th><th>Observed</th><th>By</th><th>State</th></tr></thead><tbody>
   {% for e in evidence %}<tr class="{% if e.void %}voided{% endif %}">
     <td>{{ e.ev.code }}</td><td>{{ e.ev.get_kind_display }}</td><td>{{ e.ev.get_result_display }}</td>
     <td>{% if e.ev.inspection %}Inspection {{ e.ev.inspection.code }}{% endif %}
         {% for w in e.warnings %}<div class="stale" data-signer-warning="1">Warning: {{ w }}</div>{% endfor %}
         {% if e.ev.details.soc_pct %}Battery {{ e.ev.details.soc_pct }}%{% endif %}
         {% if e.ev.details.items %}{% for name, state in e.ev.details.items.items %}{{ name }}: {{ state }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</td>
-    <td>{{ e.observed_local|date:"D j M H:i" }}</td><td>{{ e.ev.recorded_by.username }}</td>
+    <td>{{ e.observed_local|local_dt }}</td><td>{{ e.ev.recorded_by.username }}</td>
     <td class="keep">{% if e.void %}<span class="badge revoked">Voided</span><div class="muted">{{ e.void.voided_by.username }}: {{ e.void.reason }}</div>
         {% else %}{% if e.current %}Active{% else %}<span class="muted">Earlier revision r{{ e.ev.revision.revision_no }}</span>{% endif %}
         {% if can.record_evidence %}<form method="post" action="/readiness/visits/{{ visit.code }}/void/" class="inline">{% csrf_token %}
@@ -87,7 +90,7 @@
     <div class="row">
       <label>Kind <select name="kind">{% for k, lbl in kinds %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></label>
       <label>Result <select name="result"><option value="pass">Pass</option><option value="fail">Fail</option></select></label>
-      <label>Observed at (site time, optional) <input type="datetime-local" name="observed_at"></label>
+      <label>Observed at ({% workspace_tz_label %}, optional) <input type="datetime-local" name="observed_at"></label>
     </div>
     <fieldset><legend>Pre-departure inspection</legend><label>Inspection code <input name="inspection_code" placeholder="e.g. INS-0001"></label>
       <div class="muted" data-inspector-note="1">{{ inspector_note }}</div></fieldset>
@@ -102,8 +105,8 @@
 
 <div class="card">
   <h2>Recovery plan</h2>
-  <div class="tablewrap"><table><thead><tr><th>Recorded ({{ tz }})</th><th>On-call engineer</th><th>Escalation contact</th><th>Escalation path</th><th>Equipment</th><th>Applies to</th></tr></thead><tbody>
-  {% for p in plans %}<tr><td>{{ p.local|date:"D j M H:i" }}<div class="muted">by {{ p.plan.recorded_by.username }}</div></td><td>{{ p.plan.on_call_engineer.code }}</td><td>{{ p.plan.escalation_contact.code }}</td>
+  <div class="tablewrap"><table><thead><tr><th>Recorded</th><th>On-call engineer</th><th>Escalation contact</th><th>Escalation path</th><th>Equipment</th><th>Applies to</th></tr></thead><tbody>
+  {% for p in plans %}<tr><td>{{ p.local|local_dt }}<div class="muted">by {{ p.plan.recorded_by.username }}</div></td><td>{{ p.plan.on_call_engineer.code }}</td><td>{{ p.plan.escalation_contact.code }}</td>
     <td>{{ p.plan.escalation_path }}</td><td>{{ p.plan.required_equipment|join:", "|default:"-" }}</td>
     <td>{% if p.current %}Current revision{% else %}<span class="muted">Earlier revision r{{ p.plan.revision.revision_no }}</span>{% endif %}</td></tr>
   {% empty %}<tr><td colspan="6" class="muted">No recovery plan recorded.</td></tr>{% endfor %}
@@ -120,8 +123,8 @@
 
 <div class="card">
   <h2>History</h2>
-  <div class="tablewrap"><table><thead><tr><th>When ({{ tz }})</th><th>What</th></tr></thead><tbody>
-  {% for h in history %}<tr><td class="muted">{{ h.at_local|date:"Y-m-d H:i" }}</td><td>{{ h.what }}</td></tr>
+  <div class="tablewrap"><table><thead><tr><th>When</th><th>What</th></tr></thead><tbody>
+  {% for h in history %}<tr><td class="muted">{{ h.at_local|local_dt }}</td><td>{{ h.what }}</td></tr>
   {% empty %}<tr><td colspan="2" class="muted">Nothing yet.</td></tr>{% endfor %}
   </tbody></table></div>
 </div>

@@ -136,7 +136,7 @@ def test_bad_parameters_are_400_inside_the_snapshot_with_as_of_and_banner(role, 
     r = client(role).get(url)
     assert r.status_code == 400
     body = r.content.decode()
-    assert "As of <b>" in body and "SYNTHETIC DEMO" in body
+    assert "As of <b>" in body and "Demo workspace" in body
     assert not FORBIDDEN_WORDS.search(body), FORBIDDEN_WORDS.search(body)
 
 
@@ -368,7 +368,7 @@ def test_every_read_role_renders_every_page_with_as_of_banner_and_wording():
             assert r.status_code == 200, (role, url, r.status_code)
             body = r.content.decode()
             assert "As of <b>" in body and _as_of(body)
-            assert "SYNTHETIC DEMO" in body
+            assert "Demo workspace" in body
             found = FORBIDDEN_WORDS.search(_main(body))
             assert not found, (role, url, found)
             assert "badge ready" not in body and "green" not in body.lower()

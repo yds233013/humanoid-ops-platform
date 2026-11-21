@@ -1,11 +1,11 @@
-{% extends "base.html" %}{% load tz %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Exceptions{% endblock %}
-{% block content %}{% timezone "UTC" %}
+{% block content %}
 {% include "operations/_chrome.html" %}
-<h1>Exception inbox</h1>
+{% page_header title="Issues needing attention" %}Open exceptions in priority order.{% endpage_header %}
 {% if coverage %}<div class="banner op-partial" role="alert" data-coverage="partial"><b>Readiness exceptions are incomplete: {{ coverage.not_evaluated }} upcoming visit{{ coverage.not_evaluated|pluralize }} {{ coverage.not_evaluated|pluralize:"was,were" }} not evaluated</b> ({{ coverage.evaluated }} of {{ coverage.qualifying }} qualifying visits were checked with the readiness evaluator in this snapshot). This list is not exhaustive. Check the remaining visits on the <a href="/readiness/">upcoming visits list</a>.</div>{% endif %}
-{% if new_snapshot %}<div class="banner demo" data-continuation="1">Page {{ page }} is a new snapshot as of {{ as_of_text }}; page 1 was as of {{ first_page_as_of_text }}{% if page > 2 %} and page {{ page|add:"-1" }} as of {{ previous_page_as_of_text }}{% endif %}. Rows may have changed between the pages. <a href="/ops/exceptions/">Start again from page 1</a>.</div>{% endif %}
-<p class="muted">Times are UTC. Ordered by priority, then since, code and reference. Priority is an operational triage order, not a safety severity. Each row links to the existing page where the work is done; not every exception can be resolved there (the last column says when).</p>
+{% if new_snapshot %}<div class="banner demo" data-continuation="1">Page {{ page }} is a new snapshot as of {{ as_of_text|localize_utc_text }}; page 1 was as of {{ first_page_as_of_text|localize_utc_text }}{% if page > 2 %} and page {{ page|add:"-1" }} as of {{ previous_page_as_of_text|localize_utc_text }}{% endif %}. Rows may have changed between the pages. <a href="/ops/exceptions/">Start again from page 1</a>.</div>{% endif %}
+<p class="muted">Ordered by priority, then since, code and reference. Priority is an operational triage order, not a safety severity. Each row links to the existing page where the work is done; not every exception can be resolved there (the last column says when).</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Priority</th><th>Code</th><th>About</th><th>Since</th><th>Suggested follow-up owner</th><th>What happened</th><th>Where to act</th></tr></thead>
 <tbody>
@@ -13,16 +13,16 @@
   <td><span class="badge p{{ e.priority }}">P{{ e.priority }}</span></td>
   <td><b>{{ e.code }}</b></td>
   <td>{{ e.entity_ref }}{% if e.robot %}<div class="muted">robot <a href="/fleet/{{ e.robot }}/">{{ e.robot }}</a></div>{% endif %}{% if e.visit %}<div class="muted">visit <a href="/planning/visits/{{ e.visit }}/">{{ e.visit }}</a></div>{% endif %}</td>
-  <td>{{ e.since|date:"D j M H:i" }}</td>
+  <td>{{ e.since|local_dt }}</td>
   <td>{{ e.owner_role }}</td>
-  <td>{{ e.message }}</td>
+  <td>{{ e.message|localize_utc_text }}</td>
   <td>{% if e.action_url %}<a href="{{ e.action_url }}">Open</a>{% else %}<span class="muted">No page in the app</span>{% endif %}{% if e.resolvable is not None and not e.resolvable %}<div class="muted">May not be resolvable there yet</div>{% endif %}</td>
 </tr>{% empty %}<tr><td colspan="7" class="muted">No open exceptions in this snapshot{% if coverage %} (readiness coverage is partial, see above){% endif %}.</td></tr>{% endfor %}
 </tbody></table></div>
 {% if unknown_basis %}<h2>Not computable</h2>
 <div class="banner op-partial" role="status" data-unknown-basis="1">These checks could not be computed because the scheduling basis is missing. They are not on-time; they are unknown.</div>
 <div class="tablewrap"><table><thead><tr><th>Rule</th><th>Run</th><th>Why it cannot be computed</th></tr></thead><tbody>
-{% for u in unknown_basis %}<tr data-unknown-rule="{{ u.rule }}" data-unknown-run="{{ u.run }}"><td>{{ u.rule }}</td><td><a href="/execution/runs/{{ u.run }}/">{{ u.run }}</a></td><td>{{ u.reason }}</td></tr>{% endfor %}
+{% for u in unknown_basis %}<tr data-unknown-rule="{{ u.rule }}" data-unknown-run="{{ u.run }}"><td>{{ u.rule }}</td><td><a href="/execution/runs/{{ u.run }}/">{{ u.run }}</a></td><td>{{ u.reason|localize_utc_text }}</td></tr>{% endfor %}
 </tbody></table></div>{% endif %}
 {% if next_cursor %}<p><a href="/ops/exceptions/?cursor={{ next_cursor|urlencode }}" rel="next">Next page</a> <span class="muted">(opens a new snapshot)</span></p>{% endif %}
-{% endtimezone %}{% endblock %}
+{% endblock %}

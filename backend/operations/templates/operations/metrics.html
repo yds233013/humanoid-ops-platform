@@ -1,10 +1,10 @@
-{% extends "base.html" %}{% load tz %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Operations metrics{% endblock %}
-{% block content %}{% timezone "UTC" %}
+{% block content %}
 {% include "operations/_chrome.html" %}
-<h1>Operational metrics</h1>
+{% page_header title="Operational metrics" %}{% endpage_header %}
 <form method="get" class="row"><label>From <input name="start" type="date"></label><label>To <input name="end" type="date"></label><button class="primary" type="submit">Show</button></form>
-<p>Window <b>{{ start_text }}</b> to <b>{{ end_text }}</b> (start inclusive, end exclusive).</p>
+<p>Window <b>{{ start_text|localize_utc_text }}</b> to <b>{{ end_text|localize_utc_text }}</b> (start inclusive, end exclusive).</p>
 <div class="banner demo" data-current-fleet-note="1"><b>Scheduled robot utilization uses the current fleet:</b> only robots in service now are counted, in the numerator and the denominator. Robot lifecycle history before this snapshot is not reconstructed, so the value can change for past windows when a robot is retired.</div>
 <p class="muted">{{ metrics.note }} Each metric shows its kind, numerator and denominator; a zero denominator shows N/A.</p>
 <div class="tablewrap"><table>
@@ -19,4 +19,4 @@
   <td class="muted">{{ m.definition }}</td>
 </tr>{% empty %}<tr><td colspan="6" class="muted">No metrics.</td></tr>{% endfor %}
 </tbody></table></div>
-{% endtimezone %}{% endblock %}
+{% endblock %}

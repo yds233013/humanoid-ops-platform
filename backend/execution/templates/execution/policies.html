@@ -1,11 +1,10 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Incident policies{% endblock %}
 {% block content %}
-{% include "execution/_chrome.html" %}
-<h1>Incident policies</h1>
+{% page_header title="Incident policies" %}How incident severity is classified.{% endpage_header %}
 <p class="muted">An incident policy only classifies severity (scale, when escalation is required before closing, who may downgrade). It never decides whether a robot is held: every incident holds its robot. Active = the highest version ever fully approved; if that one is withdrawn there is none. A <b>synthetic demo</b> policy is usable only in demo mode.</p>
 {% if current %}<p>Active policy: <b>v{{ current.version }}</b> <span class="badge {% if current.source == 'synthetic_demo' %}synthetic{% else %}approved{% endif %}">{{ current.get_source_display }}</span></p>
-{% else %}<div class="banner draft">No active incident policy. Severity decisions are refused and every incident stays unclassified (holds are still placed).</div>{% endif %}
+{% else %}<div class="notice warn">No active incident policy. Severity decisions are refused and every incident stays unclassified (holds are still placed).</div>{% endif %}
 <div class="tablewrap"><table>
 <thead><tr><th>Version</th><th>Status</th><th>Source</th><th>Approvals</th><th>Rules</th><th>Actions</th></tr></thead><tbody>
 {% for r in rows %}<tr>

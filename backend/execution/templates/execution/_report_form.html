@@ -1,4 +1,4 @@
-{% if can.report_incident %}
+{% load ui %}{% if can.report_incident %}
 <div class="card"><h2>Report incident</h2>
 <form method="post" action="/execution/incidents/report/">{% csrf_token %}
   <input type="hidden" name="idempotency_key" value="{{ report_key }}">
@@ -6,7 +6,7 @@
     <label>Robot <select name="robot">{% for r in robots %}<option {% if r.code == preselect %}selected{% endif %}>{{ r.code }}</option>{% endfor %}</select></label>
     <label>Type <select name="event_type">{% for k, lbl in event_types %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></label>
     <label>Knowledge source <select name="knowledge_source">{% for k, lbl in knowledge_sources %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></label>
-    <label>Occurred at (UTC) <input type="datetime-local" name="occurred_at" value="{{ now_utc }}"></label>
+    <label>Occurred at ({% workspace_tz_label %}) <input type="datetime-local" name="occurred_at" value="{{ now_local }}"></label>
   </div>
   <p><label>Description<br><textarea name="description" rows="2" cols="70"></textarea></label></p>
   <button class="primary">Report incident</button>

@@ -1,11 +1,10 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Readiness policies{% endblock %}
 {% block content %}
-{% include "readiness/_chrome.html" %}
-<h1>Readiness policies</h1>
+{% page_header title="Readiness policies" %}What a visit needs before it can be approved to leave.{% endpage_header %}
 <p class="muted">A policy is usable only when both the engineering and safety slots are approved and it is not withdrawn. The highest-version approved policy is current. A <b>synthetic demo</b> policy can never authorize outside demo mode.</p>
 {% if current %}<p>Current policy: <b>v{{ current.version }}</b> <span class="badge {% if current.source == 'synthetic_demo' %}synthetic{% else %}approved{% endif %}">{{ current.get_source_display }}</span></p>
-{% else %}<div class="banner draft">No approved readiness policy. Every departure authorization will be refused.</div>{% endif %}
+{% else %}<div class="notice warn">No approved readiness policy. Every departure authorization will be refused.</div>{% endif %}
 <div class="tablewrap"><table>
 <thead><tr><th>Version</th><th>Status</th><th>Source</th><th>Approvals</th><th>Requirements</th><th>Actions</th></tr></thead><tbody>
 {% for r in rows %}<tr>

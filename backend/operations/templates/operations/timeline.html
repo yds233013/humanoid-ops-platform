@@ -1,13 +1,13 @@
-{% extends "base.html" %}{% load tz %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Operations timeline{% endblock %}
-{% block content %}{% timezone "UTC" %}
+{% block content %}
 {% include "operations/_chrome.html" %}
-<h1>Operations timeline · next {{ window_min }} minutes</h1>
+{% page_header title="Timeline" %}The next {{ window_min }} minutes.{% endpage_header %}
 <form method="get" class="row"><label>Window (minutes) <input name="window_min" type="number" min="1" max="129600" value="{{ window_min }}"></label><button class="primary" type="submit">Show</button></form>
 <p class="muted" data-coverage-scope="1">Readiness coverage on this page: {{ readiness_coverage_scope }}. The exception inbox counts every qualifying visit in the readiness lookahead, so its numbers can differ.</p>
 {% if coverage %}<div class="banner op-partial" role="alert" data-coverage="partial"><b>Readiness exceptions are incomplete: {{ coverage.not_evaluated }} upcoming visit{{ coverage.not_evaluated|pluralize }} {{ coverage.not_evaluated|pluralize:"was,were" }} not evaluated</b> ({{ coverage.evaluated }} of {{ coverage.qualifying }} qualifying visits were checked with the readiness evaluator in this snapshot). Visits marked "Not evaluated" have no readiness result here; see the <a href="/readiness/">upcoming visits list</a>.</div>{% endif %}
 {% if timeline.unconfigured_thresholds %}<div class="banner op-partial" role="alert">Some time rules could not run because their setting is missing or invalid: {{ timeline.unconfigured_thresholds|join:", " }}. Their flags are not shown.</div>{% endif %}
-<p class="muted">Times are UTC. A readiness label comes only from the readiness evaluator run in this snapshot; it is not a departure decision.</p>
+<p class="muted">A readiness label comes only from the readiness evaluator run in this snapshot; it is not a departure decision.</p>
 <h2>Upcoming confirmed visits</h2>
 <div class="tablewrap"><table>
 <thead><tr><th>Visit</th><th>Robot</th><th>On site</th><th>Readiness (this snapshot)</th><th>Holds</th><th>Flags</th></tr></thead>
@@ -15,7 +15,7 @@
 {% for x in timeline.visits %}<tr data-visit="{{ x.visit }}">
   <td><a href="{{ x.url }}"><b>{{ x.visit }}</b></a></td>
   <td>{% if x.robot %}<a href="/fleet/{{ x.robot }}/">{{ x.robot }}</a>{% else %}<span class="muted">none</span>{% endif %}</td>
-  <td>{{ x.on_site_start|date:"D j M H:i" }}–{{ x.on_site_end|date:"H:i" }}</td>
+  <td>{{ x.on_site_start|local_dt }}–{{ x.on_site_end|local_time }}</td>
   <td>{% if x.in_lookahead %}<span class="badge neutral">{{ x.readiness_label }}</span>{% if x.readiness_blockers %}<div class="muted">{{ x.readiness_blockers|length }} blocker{{ x.readiness_blockers|length|pluralize }}</div>{% endif %}{% else %}<span class="muted">outside the readiness lookahead</span>{% endif %}</td>
   <td>{% for h in x.hold_codes %}<span class="badge attn">{{ h }}</span> {% empty %}<span class="muted">none</span>{% endfor %}</td>
   <td>{% for f in x.flags %}<span class="badge attn">{{ f.code }}</span> {% empty %}<span class="muted">none</span>{% endfor %}</td>
@@ -26,7 +26,7 @@
 <thead><tr><th>Run</th><th>Robot</th><th>Visit</th><th>Stage</th><th>Custody</th><th>Flags</th></tr></thead>
 <tbody>
 {% for x in timeline.runs %}<tr data-run="{{ x.run }}">
-  <td><a href="{{ x.url }}"><b>{{ x.run }}</b></a><div class="muted">departed {{ x.departed_at|date:"D j M H:i" }}</div></td>
+  <td><a href="{{ x.url }}"><b>{{ x.run }}</b></a><div class="muted">departed {{ x.departed_at|local_dt }}</div></td>
   <td><a href="/fleet/{{ x.robot }}/">{{ x.robot }}</a></td>
   <td><a href="/execution/visits/{{ x.visit }}/dossier/">{{ x.visit }}</a></td>
   <td>{{ x.stage }}<div class="muted">session {{ x.session_state }}{% if x.awaiting != "none" %} · waiting on {{ x.awaiting }}{% endif %}</div></td>
@@ -34,4 +34,4 @@
   <td>{% for f in x.flags %}<span class="badge attn">{{ f.code }}</span> {% empty %}<span class="muted">none</span>{% endfor %}</td>
 </tr>{% empty %}<tr><td colspan="6" class="muted">No active runs.</td></tr>{% endfor %}
 </tbody></table></div>
-{% endtimezone %}{% endblock %}
+{% endblock %}

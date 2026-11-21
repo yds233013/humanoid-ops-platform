@@ -1,0 +1,3 @@
+<div class="field{% if error %} has-error{% endif %}"><label for="{{ id }}">{{ label }}</label>
+<input id="{{ id }}" name="{{ name }}" type="{{ type|default:'text' }}" value="{{ value|default:'' }}"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if required %} required{% endif %}{% if help %} aria-describedby="{{ id }}-help"{% endif %}>
+{% if help %}<span class="help" id="{{ id }}-help">{{ help }}</span>{% endif %}{% if error %}<span class="err" role="alert">{{ error }}</span>{% endif %}</div>

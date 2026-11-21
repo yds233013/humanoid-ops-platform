@@ -15,10 +15,11 @@ import importlib
 import json
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import connection
@@ -383,7 +384,7 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
             "move_targets": [k for k in ("vehicle", "site", "hub") if k != summary["custody"].kind],
             "event_types": INCIDENT_EVENT_TYPES,
             "knowledge_sources": KNOWLEDGE_SOURCES,
-            "now_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M"),
+            "now_local": datetime.now(ZoneInfo(settings.TIME_ZONE)).strftime("%Y-%m-%dT%H:%M"),
             "report_key": uuid.uuid4().hex,
             **_base(request),
         },
@@ -600,7 +601,7 @@ def _report_context() -> dict[str, Any]:
         "robots": Robot.objects.order_by("code"),
         "event_types": INCIDENT_EVENT_TYPES,
         "knowledge_sources": KNOWLEDGE_SOURCES,
-        "now_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M"),
+        "now_local": datetime.now(ZoneInfo(settings.TIME_ZONE)).strftime("%Y-%m-%dT%H:%M"),
         "report_key": uuid.uuid4().hex,
     }
 
@@ -774,12 +775,15 @@ def report_view(request: HttpRequest) -> HttpResponse:
     raw = f.get("occurred_at", "").strip()
     try:
         if not raw:
-            raise Invalid("Occurred at is required (when it happened, UTC)")
+            raise Invalid("Occurred at is required (when it happened)")
         try:
             occurred = datetime.fromisoformat(raw)
         except ValueError:
             raise Invalid("Occurred at must be a date and time") from None
-        occurred = occurred.replace(tzinfo=UTC) if occurred.tzinfo is None else occurred
+        # a time typed in the form is workspace local time; the database stores UTC
+        occurred = (
+            occurred.replace(tzinfo=ZoneInfo(settings.TIME_ZONE)) if occurred.tzinfo is None else occurred
+        )
     except CommandError as exc:
         _refused(request, exc)
         return back

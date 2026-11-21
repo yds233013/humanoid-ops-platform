@@ -7,14 +7,13 @@ Assertions rely on contract behaviour only (labels, command outcomes), never on 
 import json
 import re
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import pytest
 from django.test import Client
 from django.urls import include, path
 
 from config.urls import urlpatterns as base_urlpatterns
-from planning.models import Visit
+from platform_core.templatetags.ui import local_dt
 from readiness import views
 from readiness.models import (
     AuthorizationRevocation,
@@ -33,7 +32,7 @@ from tests.readiness_world import EQUIPMENT_ALL_PRESENT, build_readiness
 urlpatterns = [*base_urlpatterns, path("readiness/", include("readiness.urls"))]
 pytestmark = pytest.mark.urls(__name__)
 
-BANNER = "SYNTHETIC DEMO - not real-world clearance"
+BANNER = "Demo workspace"  # the one persistent header badge (01A); no per-page banners
 SMALL_REQUIREMENTS = {
     "authorization_ttl_min": 60,
     "evidence": [{"kind": "battery_check", "max_age_min": 60}],
@@ -173,11 +172,10 @@ def test_csrf_enforced_on_posts(w):
 def test_authorize_shows_issued_label_with_local_expiry(w):
     a = _authorize(w)
     html = _html(_client(w.ops).get(_visit_url(w)))
-    tz = Visit.objects.get(code=w.visit).site.timezone
-    hhmm = a.expires_at.astimezone(ZoneInfo(tz)).strftime("%H:%M")
-    assert f"Authorization issued (expires {hhmm})" in html
+    label = f"Approved to leave, valid until {local_dt(a.expires_at)}"
+    assert label in html and f"Approved to leave by <b>{w.ops.username}</b>" in html
     assert a.code in html and f"Authorization {a.code} issued" in html  # history
-    assert f"Authorization issued (expires {hhmm})" in _html(_client(w.ops).get("/readiness/"))
+    assert label in _html(_client(w.ops).get("/readiness/"))
     assert not DepartureEvent.objects.exists()  # authorization is not departure
 
 

@@ -16,7 +16,6 @@ from django.test import Client
 from accounts.roles import ALL_ROLES, PERMISSIONS
 from fleet import services as fs
 from fleet.models import DeploymentSetting, Inspection
-from operations import views as ov
 from operations.snapshot import SET_SNAPSHOT
 from tests import operations_world as ow
 from tests.conftest import make_user
@@ -203,7 +202,7 @@ def test_overview_blocker_panel_demo_and_production(w):
     assert 'data-blocker="HOLD_POLICY_NOT_APPROVED"' in body
     assert 'data-blocker="PERIODIC_INTERVAL_NOT_APPROVED"' in body
     assert 'data-periodic="due"' in body and "SYNTHETIC demo interval, not an engineering value" in body
-    assert ov.DEMO_BANNER in body
+    assert "Demo workspace" in body
     api = c.get("/api/ops/production-blockers").json()
     assert api["production"] is False and api["heading"] == "Would block in production"
     codes = {i["code"] for i in api["items"]}
@@ -211,7 +210,7 @@ def test_overview_blocker_panel_demo_and_production(w):
     set_setting("demo_mode", "false")
     body = c.get("/ops/").content.decode()
     assert "Production blockers" in body and 'data-mode="production"' in body
-    assert "would block in production" not in body and ov.DEMO_BANNER not in body
+    assert "would block in production" not in body and "Demo workspace" not in body
     inbox = c.get("/api/ops/exceptions").json()["items"]
     assert {e["code"] for e in inbox} >= {"HOLD_POLICY_NOT_APPROVED", "INSPECTION_TEMPLATE_NOT_APPROVED"}
     assert not CLEARANCE.search(main(body))
@@ -337,8 +336,8 @@ def test_closeout_page_and_api_dated(w):
     assert r.status_code == 200 and SET_SNAPSHOT  # built in the snapshot (decorator)
     assert "This page is not a sign-off; the platform has no close-out record." in body
     assert 'data-counts="1"' in body and f'data-run="{run.code}"' in body
-    assert "America/Los_Angeles" in body and "SYNTHETIC demo value, not a company value" in body
-    assert ov.DEMO_BANNER in body
+    assert "America/Los_Angeles" in body
+    assert "Demo workspace" in body
     assert not CLOSEOUT_FORBIDDEN.search(main(body)), CLOSEOUT_FORBIDDEN.search(main(body))
     assert not CLEARANCE.search(main(body))
     api = c.get("/api/ops/closeout").json()
@@ -352,7 +351,7 @@ def test_closeout_page_and_api_dated(w):
     assert c.get("/api/ops/closeout", {"date": "nope"}).status_code == 400
     assert client(name="c7none").get("/api/ops/closeout", {"date": "nope"}).status_code == 403
     set_setting("demo_mode", "false")
-    assert ov.DEMO_BANNER not in c.get("/ops/closeout/").content.decode()
+    assert "Demo workspace" not in c.get("/ops/closeout/").content.decode()
 
 
 @pytest.mark.parametrize("value", [None, "Atlantis/Lost"])

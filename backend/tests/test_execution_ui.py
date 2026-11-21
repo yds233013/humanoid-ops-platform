@@ -7,10 +7,12 @@ releasing an incident hold (fleet hold-release workflow) and the post-visit insp
 """
 
 import re
-from datetime import UTC, timedelta
+from datetime import timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
+from django.conf import settings
 from django.test import Client
 from django.utils import timezone
 
@@ -41,7 +43,7 @@ from tests.conftest import make_user
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
-BANNER = "SYNTHETIC DEMO - not real-world clearance"
+BANNER = "Demo workspace"  # the one persistent header badge (01A); no per-page banners
 NOT_BACK = "Robot is NOT back: trip cannot close"
 READ_ROLES = ["ops", "field", "eng", "lead", "safety", "founder"]  # world users with execution.read
 RULES_JSON = (
@@ -97,7 +99,11 @@ def _run_url(w: Any, suffix: str = "") -> str:
 
 
 def _occurred(minutes: int = 5) -> str:
-    return (timezone.now() - timedelta(minutes=minutes)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M")
+    return (
+        (timezone.now() - timedelta(minutes=minutes))
+        .astimezone(ZoneInfo(settings.TIME_ZONE))
+        .strftime("%Y-%m-%dT%H:%M")
+    )
 
 
 def _report(w: Any, user: Any = None, *, from_run: bool = True, **over: Any) -> str:

@@ -1,0 +1,1 @@
+<div class="page-head"><div>{% if back_url %}<a class="back" href="{{ back_url }}">&larr; {{ back_label|default:"Back" }}</a>{% endif %}<h1>{{ title }}</h1>{% if sub %}<div class="sub">{{ sub }}</div>{% endif %}{% if body %}<div class="sub">{{ body|safe }}</div>{% endif %}</div>{% if actions %}<div class="actions">{{ actions }}</div>{% endif %}</div>

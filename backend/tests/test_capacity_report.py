@@ -430,7 +430,7 @@ def test_page_200_for_metrics_roles(role):
     r = client(role).get(URL)
     assert r.status_code == 200
     body = r.content.decode()
-    assert R.BANNER in body and "As of <b>" in body
+    assert "Capacity forecast" in body and "As of <b>" in body
     assert 'data-fleet="5" data-staffing="current"' in body
     assert "67,232.44" in body and "124,406.44" in body and "1,939.40" in body and "1,688.78" in body
     for key in (
@@ -462,7 +462,7 @@ def test_page_bad_assumption_is_400_without_data():
     r = client("founder").get(URL, {"assumption": "nope"})
     assert r.status_code == 400
     body = r.content.decode()
-    assert "assumption must be one of" in body and R.BANNER in body
+    assert "assumption must be one of" in body and "Capacity forecast" in body
     assert 'data-table="comparison"' not in body
 
 

@@ -1,12 +1,10 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}{{ visit.code }} dossier{% endblock %}
 {% block content %}
-{% include "execution/_chrome.html" %}
-<p>{% if run %}<a href="/execution/runs/{{ run.code }}/">&larr; Run {{ run.code }}</a> · {% endif %}<a href="/readiness/visits/{{ visit.code }}/">Readiness view</a> · <a href="/planning/visits/{{ visit.code }}/">Planner view</a></p>
-<h1>{{ visit.code }} dossier <span class="muted">{{ visit.site.code }}</span></h1>
-<p class="muted">Every planning, readiness and execution record for this visit in time order, with the plan revision and robot manifest in force at each step. Times are site time ({{ tz }}). A record of what people reported, not a verification of what physically happened.</p>
+{% with ptitle=visit.code|add:" dossier" %}{% page_header title=ptitle back_url="/readiness/visits/"|add:visit.code|add:"/" back_label="Readiness view" %}{{ visit.site.code }}{% if run %} · <a href="/execution/runs/{{ run.code }}/">Run {{ run.code }}</a>{% endif %} · <a href="/planning/visits/{{ visit.code }}/">Planner view</a>{% endpage_header %}{% endwith %}
+<p class="muted">Every planning, readiness and execution record for this visit in time order, with the plan revision and robot manifest in force at each step. A record of what people reported, not a verification of what physically happened.</p>
 <div class="tablewrap"><table><thead><tr><th>When</th><th>Kind</th><th>What</th><th>Revision</th><th>Manifest</th><th>Ref</th></tr></thead><tbody>
-{% for x in entries %}<tr><td class="muted">{{ x.local|date:"Y-m-d H:i:s" }}</td><td>{{ x.e.kind }}</td><td>{{ x.e.text }}</td>
+{% for x in entries %}<tr><td class="muted">{{ x.local|local_dt }}</td><td>{{ x.e.kind }}</td><td>{{ x.e.text }}</td>
   <td>{% if x.e.revision_no %}r{{ x.e.revision_no }}{% else %}-{% endif %}</td><td>{% if x.e.manifest_id %}#{{ x.e.manifest_id }}{% else %}-{% endif %}</td><td>{{ x.e.ref }}</td></tr>
 {% empty %}<tr><td colspan="6" class="muted">No records for this visit.</td></tr>{% endfor %}
 </tbody></table></div>

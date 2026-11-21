@@ -1,15 +1,13 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Sites{% endblock %}
 {% block content %}
-<p><a href="/planning/">&larr; Planner</a></p>
-<h1>Sites</h1>
-<p class="muted">Homes are opaque codes. Names, addresses and contacts live in the CRM, not here.</p>
-<table><thead><tr><th>Site</th><th>Zone / timezone</th><th>Assessment</th><th>Consent</th><th>Consent records</th></tr></thead><tbody>
+{% page_header title="Customers and sites" %}Homes are shown by code. Names, addresses and contacts live in the CRM, not here.{% endpage_header %}
+<div class="tablewrap"><table><thead><tr><th>Site</th><th>Zone / timezone</th><th>Assessment</th><th>Consent</th><th>Consent records</th></tr></thead><tbody>
 {% for row in rows %}<tr>
 <td><b>{{ row.site.code }}</b><div class="muted">{{ row.site.crm_ref }}</div></td>
 <td>{{ row.site.zone }}<div class="muted">{{ row.site.timezone }}</div></td>
-<td>{% if row.assessment %}{{ row.assessment.get_decision_display }}<div class="muted">valid until {{ row.assessment.valid_until }}</div>{% else %}<span class="badge no">No current approved assessment</span>{% endif %}</td>
-<td><span class="badge {% if row.consent_level == 'ok' %}elig{% else %}no{% endif %}">{{ row.consent_level }}</span><div class="muted">{{ row.consent }}</div></td>
-<td>{% for c in row.consents %}<div>{{ c.participant_ref }} · {{ c.form_version }} · {{ c.scope|join:"+" }}{% if c.withdrawn_at %} · <span class="stale">withdrawn {{ c.withdrawn_at|date:"Y-m-d" }}</span>{% endif %}</div>{% endfor %}</td>
-</tr>{% endfor %}</tbody></table>
+<td>{% if row.assessment %}{{ row.assessment.get_decision_display }}<div class="muted">valid until {{ row.assessment.valid_until|local_date }}</div>{% else %}<span class="badge no">No current approved assessment</span>{% endif %}</td>
+<td><span class="chip badge {% if row.consent_level == 'ok' %}chip-info elig{% else %}chip-bad no{% endif %}">{{ row.consent_level }}</span><div class="muted">{{ row.consent }}</div></td>
+<td>{% for c in row.consents %}<div>{{ c.participant_ref }} · {{ c.form_version }} · {{ c.scope|join:"+" }}{% if c.withdrawn_at %} · <span class="stale">withdrawn {{ c.withdrawn_at|local_date }}</span>{% endif %}</div>{% endfor %}</td>
+</tr>{% endfor %}</tbody></table></div>
 {% endblock %}

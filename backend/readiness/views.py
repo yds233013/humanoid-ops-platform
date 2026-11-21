@@ -26,6 +26,7 @@ from fleet.services import demo_mode
 from planning import services as planning_services
 from planning.models import Person, Visit
 from platform_core.commands import CommandError, Invalid
+from platform_core.templatetags.ui import local_dt
 from readiness import commands as rc
 from readiness import evidence as rx
 from readiness.authorization import authorization_status
@@ -93,16 +94,12 @@ def _base(request: HttpRequest) -> dict[str, Any]:
     }
 
 
-def _hhmm(dt: datetime, tz: str) -> str:
-    return dt.astimezone(ZoneInfo(tz)).strftime("%H:%M")
-
-
 def _auth_row(a: DepartureAuthorization, tz: str) -> dict[str, Any]:
     st = authorization_status(a)
     state = st["state"]
     reasons = [str(r) for r in st.get("reasons", [])]
     if state == "usable":
-        label = f"Authorization issued (expires {_hhmm(a.expires_at, tz)})"
+        label = f"Approved to leave, valid until {local_dt(a.expires_at)}"
     elif state == "invalidated":
         label = "Authorization invalidated (" + ("; ".join(reasons) or "guard changed") + ")"
     else:
@@ -263,7 +260,7 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     auths = [
         _auth_row(a, tz)
         for a in v.authorizations.select_related(
-            "policy", "issued_by", "revision", "revocation", "revocation__revoked_by", "departure"
+            "policy", "issued_by", "revision", "robot", "revocation", "revocation__revoked_by", "departure"
         ).order_by("-issued_at", "-pk")
     ]
     departures = (
@@ -334,6 +331,7 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "equipment": equipment,
             "persons": Person.objects.order_by("code"),
             "authorize_key": uuid.uuid4().hex,
+            "valid_auth": next((a for a in auths if a["state"] == "usable"), None),
             **_base(request),
         },
     )

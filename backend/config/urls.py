@@ -1,12 +1,12 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
-from django.views.generic import RedirectView
 
 from accounts import api as accounts_api
 from fleet import api as fleet_api
 from fleet import views as fleet_views
 from planning import views as planning_views
 from platform_core import api as core_api
+from platform_core import views as core_views
 
 urlpatterns = [
     # JSON API
@@ -22,7 +22,7 @@ urlpatterns = [
     path("api/fleet/robots/<str:code>", fleet_api.robot_detail),
     path("api/fleet/<str:name>", fleet_api.command),
     # Minimal fleet UI
-    path("", RedirectView.as_view(url="/fleet/")),
+    path("", core_views.landing, name="landing"),
     path("login/", auth_views.LoginView.as_view()),
     path("logout/", auth_views.LogoutView.as_view(next_page="/login/")),
     path("fleet/", fleet_views.fleet_list, name="fleet-list"),

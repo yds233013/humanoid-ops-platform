@@ -75,7 +75,6 @@ def week(request: HttpRequest) -> HttpResponse:
             "next": monday + timedelta(days=7),
             "tz": PLANNER_TZ,
             "roles": sorted(active_roles(request.user)),
-            "demo_mode": True,
             "unplanned": [_card(v) for v in Visit.objects.filter(status="requested").select_related("site")],
         },
     )
@@ -101,7 +100,10 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "vehicles": Vehicle.objects.order_by("code"),
             "site_tz": v.site.timezone,
             "roles": sorted(active_roles(request.user)),
-            "demo_mode": True,
+            "can": {
+                "plan": has_permission(request.user, "planning.plan"),
+                "confirm": has_permission(request.user, "planning.confirm"),
+            },
         },
     )
 
@@ -126,7 +128,7 @@ def sites(request: HttpRequest) -> HttpResponse:
     return render(
         request,
         "planning/sites.html",
-        {"rows": rows, "roles": sorted(active_roles(request.user)), "demo_mode": True},
+        {"rows": rows, "roles": sorted(active_roles(request.user))},
     )
 
 

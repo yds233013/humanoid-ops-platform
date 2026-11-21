@@ -69,7 +69,7 @@ TEMPLATES = [
     }
 ]
 LOGIN_URL = "/login/"
-LOGIN_REDIRECT_URL = "/fleet/"
+LOGIN_REDIRECT_URL = "/"  # the landing view sends people to Today (/ops/) or, without access, to /fleet/
 
 DB_APP_ROLE = env("DB_APP_USER", "ops_app")
 _identity = env("DJANGO_DB_IDENTITY", "app")
