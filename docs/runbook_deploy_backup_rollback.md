@@ -149,3 +149,15 @@ initialized, so the live demo can never be claimed.
 | 2026-11-21 | `backup_restore_check.sh` on the local Docker PostgreSQL 16: source database migrated to head with `seed_dev` and `seed_fleet` data (53 migrations, 7 users, 7 role grants, 40 audit events, 5 robots), restored into a second empty database | PASSED: every row count equal, audit append-only triggers and workspace singleton constraint present in the restored copy; refused a second run against the now non-empty target (exit 2); the app started on the restored database as the restricted `ops_app` role: `/healthz` 200 `{"status":"ok","database":"ok","migrations":"ok"}`, login and `/fleet/` 200 |
 | (pending) | Restore of a Railway backup into the staging database | not done; needs the owner's Railway access |
 | (pending) | Rollback rehearsal on staging (section 6) | not done; needs the staging environment |
+
+## Staging rollback rehearsal (2026-11-21, Railway staging)
+
+| Step | Railway deployment | Code | Login + /ops/, /fleet/R-01/, /readiness/visits/V-0001/, /planning/ | /healthz | 01A CSP header |
+|---|---|---|---|---|---|
+| Start | e0980a4f (SUCCESS) | v2/phase01 6ed7a2e | all 200 | 200 | present |
+| Roll back | d3db9fdb (SUCCESS) | previous release main 5ea5f09, on the database already migrated by 01A (`platform_core.0003`) | all 200 | 404 (old code has none) | absent |
+| Roll forward | 657c07b6 (SUCCESS) | v2/phase01 6ed7a2e | all 200 | 200 | present |
+
+Result: the 01A migration is additive and backward compatible: the previous release starts and serves every core
+page on the migrated database, and rolling forward again works. Note: `railway up` from a directory that is not
+linked to the project deploys nothing; pass `--project <id> --environment <env> --service web` explicitly.
