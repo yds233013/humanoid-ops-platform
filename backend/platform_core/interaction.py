@@ -21,7 +21,7 @@ from typing import Any
 
 from django import forms
 from django.contrib import messages
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import redirect, render
 from django.utils import timezone
 
@@ -138,14 +138,20 @@ def spend_form_token(request: HttpRequest) -> bool:
 
 def one_time_form(
     back: Callable[..., HttpResponse],
+    permission: str | None = None,
 ) -> Callable[[Callable[..., HttpResponse]], Callable[..., HttpResponse]]:
     """View decorator for POST-redirect-GET views: spends the one-time token first. A replayed, expired or
     missing token runs nothing and sends the person back (``back(request, *args, **kwargs)``) with a toast.
-    Put it under ``@login_required`` and ``@require_POST`` so the token is checked for a known user."""
+    Put it under ``@login_required`` and ``@require_POST`` so the token is checked for a known user. Pass the
+    view's ``permission`` so a person without it is refused (403) before the token is looked at."""
 
     def decorate(view: Callable[..., HttpResponse]) -> Callable[..., HttpResponse]:
         @functools.wraps(view)
         def wrapper(request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
+            # The role check comes BEFORE the token: a person without the permission gets the same 403 as
+            # before the token existed, whatever they posted (and spends nothing).
+            if permission is not None and not has_permission(request.user, permission):
+                return HttpResponseForbidden("You do not have permission for this action.")
             if not spend_form_token(request):
                 return back(request, *args, **kwargs)
             return view(request, *args, **kwargs)

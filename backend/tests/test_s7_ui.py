@@ -292,8 +292,18 @@ def test_deadline_set_lifecycle_through_the_page(w):
     """Walkthrough regression (2026-11-20): the deadline page called command names this build never had, so it
     could not record, approve or withdraw a set. Create (ops_lead), approve safety + founder, active, withdraw."""
     import json as _json
+    import secrets
+
+    from django.contrib.auth import get_user_model
 
     from execution.models import EscalationDeadlineSet, IncidentPolicy
+    from platform_core.models import FormToken
+
+    def tok(username: str) -> str:
+        """The one-time form token the page renders for this person (01C double-submit protection)."""
+        t = secrets.token_urlsafe(24)
+        FormToken.objects.create(token=t, user=get_user_model().objects.get(username=username))
+        return t
 
     policy = IncidentPolicy.objects.order_by("-version").first()
     levels = (policy.rules or {}).get("severity_scale", [])
@@ -303,7 +313,12 @@ def test_deadline_set_lifecycle_through_the_page(w):
     ops = client("ops_lead", name="dl_ops")
     r = ops.post(
         "/execution/escalation-deadlines/create/",
-        {"source": "synthetic_demo", "notes": "SYNTHETIC", "deadlines": _json.dumps(deadlines)},
+        {
+            "source": "synthetic_demo",
+            "notes": "SYNTHETIC",
+            "deadlines": _json.dumps(deadlines),
+            "_form_token": tok("dl_ops"),
+        },
         follow=True,
     )
     body = r.content.decode()
@@ -315,13 +330,17 @@ def test_deadline_set_lifecycle_through_the_page(w):
     approvers = {role: client(role, name=f"dl_{role}") for role in ("safety_reviewer", "founder")}
     for role, slot in (("safety_reviewer", "safety"), ("founder", "founder")):
         r = approvers[role].post(
-            f"/execution/escalation-deadlines/{d.pk}/approve/", {"slot": slot}, follow=True
+            f"/execution/escalation-deadlines/{d.pk}/approve/",
+            {"slot": slot, "_form_token": tok(f"dl_{role}")},
+            follow=True,
         )
         assert "Deadline set approval recorded" in r.content.decode(), (role, main(r.content.decode())[:600])
     page = ops.get("/execution/escalation-deadlines/").content.decode()
     assert "<b>Active</b>" in page
     r = approvers["safety_reviewer"].post(
-        f"/execution/escalation-deadlines/{d.pk}/withdraw/", {"reason": "SYNTHETIC"}, follow=True
+        f"/execution/escalation-deadlines/{d.pk}/withdraw/",
+        {"reason": "SYNTHETIC", "_form_token": tok("dl_safety_reviewer")},
+        follow=True,
     )
     assert "Deadline set withdrawn" in r.content.decode(), main(r.content.decode())[:600]
     from execution.models import EscalationDeadlineSetWithdrawal

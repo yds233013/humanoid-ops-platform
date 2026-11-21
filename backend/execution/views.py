@@ -1150,7 +1150,7 @@ def _deadline_action(request: HttpRequest, permission: str, name: str, ok: str, 
 
 @login_required
 @require_POST
-@one_time_form(_back_deadlines)
+@one_time_form(_back_deadlines, permission="execution.manage_escalation_deadlines")
 def deadline_set_create_view(request: HttpRequest) -> HttpResponse:
     if not has_permission(request.user, "execution.manage_escalation_deadlines"):
         return HttpResponseForbidden("You do not have permission for this action.")
@@ -1187,7 +1187,7 @@ def deadline_set_create_view(request: HttpRequest) -> HttpResponse:
 
 @login_required
 @require_POST
-@one_time_form(_back_deadlines)
+@one_time_form(_back_deadlines, permission="execution.approve_escalation_deadlines")
 def deadline_set_approve_view(request: HttpRequest, set_id: int) -> HttpResponse:
     # Engineer B: approve_deadline_set(actor, *, set_id, slot)
     return _deadline_action(
@@ -1202,7 +1202,7 @@ def deadline_set_approve_view(request: HttpRequest, set_id: int) -> HttpResponse
 
 @login_required
 @require_POST
-@one_time_form(_back_deadlines)
+@one_time_form(_back_deadlines, permission="execution.withdraw_escalation_deadlines")
 def deadline_set_withdraw_view(request: HttpRequest, set_id: int) -> HttpResponse:
     # Engineer B: withdraw_deadline_set(actor, *, set_id, reason)
     return _deadline_action(
