@@ -13,6 +13,7 @@ No JavaScript is needed anywhere. Nothing here approves anything.
 
 from __future__ import annotations
 
+import functools
 import secrets
 from collections.abc import Callable, Iterable
 from datetime import timedelta
@@ -123,6 +124,47 @@ def consume_form_token(request: HttpRequest) -> str:
     if FormToken.objects.filter(token=token, user=user, consumed_at__isnull=False).exists():
         return "used"
     return "invalid"
+
+
+def spend_form_token(request: HttpRequest) -> bool:
+    """Spend the posted token; if it was a replay or expired, queue the friendly toast and return False.
+    The caller must then do nothing and redirect."""
+    spent = consume_form_token(request)
+    if spent == "ok":
+        return True
+    messages.info(request, REPLAY_TEXT if spent == "used" else EXPIRED_TEXT)
+    return False
+
+
+def one_time_form(
+    back: Callable[..., HttpResponse],
+) -> Callable[[Callable[..., HttpResponse]], Callable[..., HttpResponse]]:
+    """View decorator for POST-redirect-GET views: spends the one-time token first. A replayed, expired or
+    missing token runs nothing and sends the person back (``back(request, *args, **kwargs)``) with a toast.
+    Put it under ``@login_required`` and ``@require_POST`` so the token is checked for a known user."""
+
+    def decorate(view: Callable[..., HttpResponse]) -> Callable[..., HttpResponse]:
+        @functools.wraps(view)
+        def wrapper(request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
+            if not spend_form_token(request):
+                return back(request, *args, **kwargs)
+            return view(request, *args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
+def refused_message(exc: CommandError, kinds: dict[str, str] | None = None) -> str:
+    """``Refused (permission denied): Only the ops lead can do this. Nothing was changed.`` for a permission
+    refusal (the role comes from the permission table); other refusals keep their own text. The prefix keeps
+    the list-with-Details layout of the toast."""
+    kind = (kinds or {}).get(exc.code, exc.code.replace("_", " "))
+    text = str(exc)
+    if isinstance(exc, PermissionDenied) and text.startswith("Not allowed:"):
+        perm = text.split(":", 1)[1].strip()
+        return f"Refused ({kind}): {refusal_text(perm)} Nothing was changed."
+    return f"Refused ({kind}): {explain(exc)}"
 
 
 # ------------------------------------------------------------------ forms

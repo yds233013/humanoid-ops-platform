@@ -2,17 +2,13 @@
 
 Nothing here decides anything. Eligibility, consent and feasibility all come from planning.services; this
 module only (a) turns the blocker codes it returns into sentences with what to do, (b) turns refusals into
-plain words that name the responsible role, and (c) issues the per-form one-time tokens that stop a double
-submit.
+plain words that name the responsible role, and (c) holds the double-submit message.
 """
 
 from __future__ import annotations
 
 import re
-import secrets
 from datetime import UTC, datetime
-
-from django.http import HttpRequest
 
 from accounts.roles import PERMISSIONS
 from platform_core.commands import CommandError, PermissionDenied
@@ -166,29 +162,10 @@ def plain_blockers(blockers: list[dict[str, str]]) -> list[dict[str, str]]:
     return [plain_blocker(b) for b in blockers]
 
 
-# ------------------------------------------------------------------ one-time form tokens
-SESSION_KEY = "planning_form_tokens"
-MAX_TOKENS = 200
+# ------------------------------------------------------------------ double-submit message
+# The one-time token itself is the shared database-backed one (platform_core.interaction,
+# ``{% form_token %}``).
 ALREADY_DONE = (
     "This form was already submitted, or the page is out of date. Nothing was changed this time. "
     "Check the record below before trying again."
 )
-
-
-def issue_token(request: HttpRequest) -> str:
-    tokens: list[str] = list(request.session.get(SESSION_KEY, []))
-    token = secrets.token_urlsafe(16)
-    tokens.append(token)
-    request.session[SESSION_KEY] = tokens[-MAX_TOKENS:]
-    return token
-
-
-def consume_token(request: HttpRequest) -> bool:
-    """True exactly once per issued token. A replayed or forged POST gets False and must do nothing."""
-    token = request.POST.get("form_token", "")
-    tokens: list[str] = list(request.session.get(SESSION_KEY, []))
-    if not token or token not in tokens:
-        return False
-    tokens.remove(token)
-    request.session[SESSION_KEY] = tokens
-    return True

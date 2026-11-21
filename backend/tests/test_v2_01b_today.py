@@ -298,7 +298,18 @@ def test_actions_are_shown_only_to_roles_that_may_take_them(role, can_triage):
 def test_the_server_still_refuses_what_the_page_hides():
     w = _attention_world()
     founder = client("founder")
-    r = founder.post(f"/execution/incidents/{w.incident}/status/", {"to_status": "triaged"}, follow=True)
+    from django.contrib.auth import get_user_model
+
+    from platform_core.models import FormToken
+
+    FormToken.objects.create(
+        token="tk-founder-today", user=get_user_model().objects.get(username="t_founder")
+    )
+    r = founder.post(
+        f"/execution/incidents/{w.incident}/status/",
+        {"to_status": "triaged", "_form_token": "tk-founder-today"},
+        follow=True,
+    )
     assert "Refused" in r.content.decode() or r.status_code == 403
     # nothing changed: the incident is still untriaged on the next Today
     body = page(client("ops_lead"))
@@ -493,7 +504,8 @@ def test_roles_without_operations_read_are_refused_or_sent_to_fleet():
     assert client(name="t_norole").get("/ops/").status_code == 403
     field = client("field_operator", name="t_field_land")
     assert field.get("/")["Location"] == "/ops/"  # field operators hold operations.read in this build
-    assert client("admin", name="t_admin_land").get("/")["Location"] == "/fleet/"
+    # 01C ruling: an admin (no operations.read) lands on workspace setup, not on the fleet list
+    assert client("admin", name="t_admin_land").get("/")["Location"] == "/settings/setup/"
 
 
 def test_layout_is_built_for_a_375px_phone():

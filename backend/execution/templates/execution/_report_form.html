@@ -1,6 +1,6 @@
 {% load ui %}{% if can.report_incident %}
 <div class="card"><h2>Report incident</h2>
-<form method="post" action="/execution/incidents/report/">{% csrf_token %}
+<form method="post" action="/execution/incidents/report/">{% csrf_token %}{% form_token %}
   <input type="hidden" name="idempotency_key" value="{{ report_key }}">
   <div class="row">
     <label>Robot <select name="robot">{% for r in robots %}<option {% if r.code == preselect %}selected{% endif %}>{{ r.code }}</option>{% endfor %}</select></label>

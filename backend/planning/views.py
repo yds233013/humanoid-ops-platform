@@ -28,8 +28,9 @@ from planning.forms import (
     WithdrawForm,
 )
 from planning.models import Person, Reservation, Site, SiteAssessment, Vehicle, Visit
-from planning.plain import ALREADY_DONE, consume_token, plain_blockers, refusal_text, role_words, who_can
+from planning.plain import ALREADY_DONE, plain_blockers, refusal_text, role_words, who_can
 from platform_core.commands import CommandError
+from platform_core.interaction import consume_form_token
 
 PLANNER_TZ = "America/Los_Angeles"  # display default; each visit also shows its site's own timezone
 
@@ -149,7 +150,7 @@ def _run(
 ) -> dict[str, Any] | None:
     """The one place a view calls a service command: one-time token first (a replay does nothing and says so),
     then exactly ONE existing command. Returns its result, or None after queueing a plain-words message."""
-    if not consume_token(request):
+    if consume_form_token(request) != "ok":
         messages.warning(request, ALREADY_DONE)
         return None
     try:

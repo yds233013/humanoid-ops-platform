@@ -274,11 +274,11 @@ def test_planner_pages_render_and_plan_form_works(w):
     assert "S-3" in c.get("/planning/sites/").content.decode()
     import re
 
-    token = re.search(r'name="form_token" value="([^"]+)"', c.get(f"/planning/visits/{v}/").content.decode())
+    token = re.search(r'name="_form_token" value="([^"]+)"', c.get(f"/planning/visits/{v}/").content.decode())
     assert token, "01C: every state-changing form carries a one-time token"
     r = c.post(
         f"/planning/visits/{v}/plan/",
-        {"robot": "R-01", "lead": "P-1", "second": "P-2", "vehicle": "VAN-1", "form_token": token.group(1)},
+        {"robot": "R-01", "lead": "P-1", "second": "P-2", "vehicle": "VAN-1", "_form_token": token.group(1)},
     )
     assert r.status_code == 302
     page = c.get(f"/planning/visits/{v}/").content.decode()

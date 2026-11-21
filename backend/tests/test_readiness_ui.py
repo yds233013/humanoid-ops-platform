@@ -6,6 +6,7 @@ Assertions rely on contract behaviour only (labels, command outcomes), never on 
 
 import json
 import re
+import secrets
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ from django.test import Client
 from django.urls import include, path
 
 from config.urls import urlpatterns as base_urlpatterns
+from platform_core.models import FormToken
 from platform_core.templatetags.ui import local_dt
 from readiness import views
 from readiness.models import (
@@ -61,8 +63,15 @@ def _visit_url(w: Any) -> str:
     return f"/readiness/visits/{w.visit}/"
 
 
+def _issue(user: Any) -> str:
+    """A shared one-time form token for this user, as the page would have rendered it."""
+    token = secrets.token_urlsafe(24)
+    FormToken.objects.create(token=token, user=user)
+    return token
+
+
 def _post(user: Any, url: str, data: dict[str, Any] | None = None) -> str:
-    resp = _client(user).post(url, data or {}, follow=True)
+    resp = _client(user).post(url, {**(data or {}), "_form_token": _issue(user)}, follow=True)
     assert resp.status_code == 200
     return _html(resp)
 
@@ -163,7 +172,7 @@ def test_csrf_enforced_on_posts(w):
     assert not DepartureAuthorization.objects.exists()
     c.get(_visit_url(w))  # sets the csrftoken cookie
     token = c.cookies["csrftoken"].value
-    resp = c.post(_visit_url(w) + "authorize/", {"csrfmiddlewaretoken": token})
+    resp = c.post(_visit_url(w) + "authorize/", {"csrfmiddlewaretoken": token, "_form_token": _issue(w.ops)})
     assert resp.status_code == 302
     assert DepartureAuthorization.objects.filter(visit__code=w.visit).count() == 1
 
@@ -182,7 +191,7 @@ def test_authorize_shows_issued_label_with_local_expiry(w):
 def test_authorize_is_idempotent_per_form_key(w):
     c = _client(w.ops)
     for _ in range(2):
-        c.post(_visit_url(w) + "authorize/", {"idempotency_key": "rui-key-1"})
+        c.post(_visit_url(w) + "authorize/", {"idempotency_key": "rui-key-1", "_form_token": _issue(w.ops)})
     assert DepartureAuthorization.objects.filter(visit__code=w.visit).count() == 1
 
 
@@ -194,8 +203,8 @@ def test_authorize_refused_when_not_ready_shows_conflict(w):
 
 
 def test_authorize_permission_error_and_hidden_button(w):
-    assert "Request departure authorization" in _html(_client(w.ops).get(_visit_url(w)))
-    assert "Request departure authorization" not in _html(_client(w.field).get(_visit_url(w)))
+    assert "Request approval to leave" in _html(_client(w.ops).get(_visit_url(w)))
+    assert "Request approval to leave" not in _html(_client(w.field).get(_visit_url(w)))
     html = _post(w.field, _visit_url(w) + "authorize/")
     assert "Refused (permission denied)" in html
     assert not DepartureAuthorization.objects.exists()

@@ -34,13 +34,22 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 
 {% for n in t.notices %}<div class="notice {{ n.tone }}" role="alert" data-notice="{{ n.key }}">{{ n.text }}</div>{% endfor %}
 
-<div class="tilegroup" data-counts="visits"><h2>Visits today</h2>
+<div class="tilegroup" data-counts="coverage"><h2>Readiness coverage, today and tomorrow</h2>
+{% if t.visits_ok %}<div class="tiles">
+  <div class="tile" data-coverage="all"><b class="n">{{ t.coverage_counts.all }}</b><span>All visits: {{ t.coverage_counts.all }}</span></div>
+  <div class="tile" data-coverage="assessed"><b class="n">{{ t.coverage_counts.assessed }}</b><span>Readiness assessed: {{ t.coverage_counts.assessed }}</span></div>
+  <div class="tile{% if t.coverage_counts.unassessed %} warn{% endif %}" data-coverage="unassessed"><b class="n">{{ t.coverage_counts.unassessed }}</b><span>Not yet assessed: {{ t.coverage_counts.unassessed }}</span></div>
+</div>
+<p class="muted" style="margin:var(--s1) 0 0" data-coverage-note="1">Only {{ t.coverage_counts.assessed }} of {{ t.coverage_counts.all }} visit{{ t.coverage_counts.all|pluralize }} {{ t.coverage_counts.assessed|pluralize:"has,have" }} a readiness result. The counts below describe those {{ t.coverage_counts.assessed }} only, not the whole fleet. Open a visit that is not yet assessed to see its checklist.</p>
+{% else %}<div class="tiles"><div class="tile off" data-count-unavailable="coverage"><b class="n">&ndash;</b><span>Could not load</span></div></div>{% endif %}</div>
+
+<div class="tilegroup" data-counts="visits"><h2>Visits today, of {{ t.coverage_counts.today_assessed }} assessed</h2>
 {% if t.visits_ok %}<div class="tiles">
   <a class="tile" href="/ops/timeline/" data-count="visits"><b class="n">{{ t.visit_counts.visits }}</b><span>Visits</span></a>
-  <a class="tile" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="ready"><b class="n">{{ t.visit_counts.ready }}</b><span>Ready, waiting for approval</span></a>
-  <a class="tile info" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="approved"><b class="n">{{ t.visit_counts.approved }}</b><span>Approved to leave</span></a>
-  <a class="tile{% if t.visit_counts.at_risk %} warn{% endif %}" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="at_risk"><b class="n">{{ t.visit_counts.at_risk }}</b><span>At risk</span></a>
-  <a class="tile{% if t.visit_counts.blocked %} bad{% endif %}" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="blocked"><b class="n">{{ t.visit_counts.blocked }}</b><span>Blocked</span></a>
+  <a class="tile" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="ready"><b class="n">{{ t.visit_counts.ready }}</b><span>Ready, waiting for approval <em>of {{ t.coverage_counts.today_assessed }} assessed</em></span></a>
+  <a class="tile info" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="approved"><b class="n">{{ t.visit_counts.approved }}</b><span>Approved to leave <em>of {{ t.coverage_counts.today_assessed }} assessed</em></span></a>
+  <a class="tile{% if t.visit_counts.at_risk %} warn{% endif %}" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="at_risk"><b class="n">{{ t.visit_counts.at_risk }}</b><span>At risk <em>of {{ t.coverage_counts.today_assessed }} assessed</em></span></a>
+  <a class="tile{% if t.visit_counts.blocked %} bad{% endif %}" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="blocked"><b class="n">{{ t.visit_counts.blocked }}</b><span>Blocked <em>of {{ t.coverage_counts.today_assessed }} assessed</em></span></a>
 </div>{% else %}<div class="tiles"><div class="tile off" data-count-unavailable="visits"><b class="n">&ndash;</b><span>Could not load</span></div></div>{% endif %}</div>
 
 <div class="tilegroup" data-counts="robots"><h2>Robots and issues</h2>

@@ -199,7 +199,7 @@ def test_landing_after_login_by_role():
     c.force_login(ops)
     assert c.get("/")["Location"] == "/ops/"
     c.force_login(admin)
-    assert c.get("/")["Location"] == "/fleet/"
+    assert c.get("/")["Location"] == "/settings/setup/"  # 01C ruling: an admin lands on workspace setup
     assert Client().get("/")["Location"].startswith("/login/")
     login = Client().post("/login/", {"username": "ui_ops4", "password": "test-pass-123456"})
     assert login["Location"] == "/"

@@ -180,6 +180,11 @@ class Today:
     visits_ok: bool = False
     visits: list[VisitRow] = field(default_factory=list)
     visit_counts: dict[str, int] = field(default_factory=dict)
+    # Coverage of today + tomorrow (EM ruling): ``all`` is every visit from the database (never capped);
+    # ``assessed`` is those with a known readiness position; the rest are ``unassessed``. The ready /
+    # at-risk /
+    # blocked tiles are only ever shown "of K assessed", never as the status of the fleet.
+    coverage_counts: dict[str, int] = field(default_factory=dict)
     coverage: dict[str, Any] | None = None
     robots_ok: bool = False
     robot_counts: dict[str, int] = field(default_factory=dict)
@@ -343,6 +348,16 @@ def _read_visits(t: Today) -> None:
     today_rows = [r for r in rows if r.day == "today"]
     cov = tl.readiness_coverage
     # assign only when everything above worked, so a failure never leaves half a section behind
+    visit_rows = [r for r in rows if r.kind == "visit"]
+    assessed_rows = [r for r in visit_rows if r.status != "scheduled"]
+    today_visit_rows = [r for r in visit_rows if r.day == "today"]
+    t.coverage_counts = {
+        "all": len(visit_rows),
+        "assessed": len(assessed_rows),
+        "unassessed": len(visit_rows) - len(assessed_rows),
+        "today_assessed": sum(1 for r in today_visit_rows if r.status != "scheduled"),
+        "today_all": len(today_visit_rows),
+    }
     t.visit_counts = {
         "visits": len(today_rows),
         "ready": sum(1 for r in today_rows if r.status == "ready"),

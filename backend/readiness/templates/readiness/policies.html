@@ -14,16 +14,16 @@
       {% if r.withdrawal %}<div class="muted">Withdrawn by {{ r.withdrawal.withdrawn_by.username }}: {{ r.withdrawal.reason }}</div>{% endif %}</td>
   <td>{% if r.synthetic %}<span class="badge synthetic">Synthetic demo</span>{% else %}{{ r.policy.get_source_display }}{% endif %}</td>
   <td>{% for a in r.approvals %}<div>{{ a.label }}: {% if a.approval %}{{ a.approval.approver.username }}{% else %}<span class="muted">pending</span>
-      {% if can.approve_policy and r.status == 'draft' %}<form method="post" action="/readiness/policies/{{ r.policy.version }}/approve/" class="inline">{% csrf_token %}
+      {% if can.approve_policy and r.status == 'draft' %}<form method="post" action="/readiness/policies/{{ r.policy.version }}/approve/" class="inline">{% csrf_token %}{% form_token %}
         <input type="hidden" name="slot" value="{{ a.slot }}"><button class="primary">Approve {{ a.slot }}</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
   <td><pre>{{ r.requirements }}</pre></td>
-  <td>{% if can.withdraw_policy and r.status != 'withdrawn' %}<form method="post" action="/readiness/policies/{{ r.policy.version }}/withdraw/" class="inline">{% csrf_token %}
+  <td>{% if can.withdraw_policy and r.status != 'withdrawn' %}<form method="post" action="/readiness/policies/{{ r.policy.version }}/withdraw/" class="inline">{% csrf_token %}{% form_token %}
       <input name="reason" placeholder="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
 </tr>{% empty %}<tr><td colspan="6" class="muted">No readiness policies yet.</td></tr>{% endfor %}
 </tbody></table></div>
 {% if can.manage_policy %}
 <div class="card"><h2>Create a policy (starts as a draft)</h2>
-<form method="post" action="/readiness/policies/create/">{% csrf_token %}
+<form method="post" action="/readiness/policies/create/">{% csrf_token %}{% form_token %}
   <div class="row"><label>Source <select name="source">{% for s, lbl in sources %}<option value="{{ s }}">{{ lbl }}</option>{% endfor %}</select></label>
   <label>Notes <input name="notes" size="40"></label></div>
   <p><label>Requirements (JSON)<br><textarea name="requirements" rows="14" cols="70">{{ example }}</textarea></label></p>

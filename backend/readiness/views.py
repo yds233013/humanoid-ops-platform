@@ -22,15 +22,25 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from accounts.permissions import active_roles, has_permission
+from fleet import services as fleet_services
+from fleet.models import Inspection, InspectionTemplate, Robot
 from fleet.services import demo_mode
 from planning import services as planning_services
 from planning.models import Person, Visit
 from platform_core.commands import CommandError, Invalid
+from platform_core.interaction import (
+    command_page,
+    one_time_form,
+    refusal_text,
+    refused_message,
+    who_can,
+)
 from platform_core.templatetags.ui import local_dt
 from readiness import commands as rc
 from readiness import evidence as rx
 from readiness.authorization import authorization_status
 from readiness.evaluator import ReadinessResult, evaluate_readiness
+from readiness.forms import InspectionForm
 from readiness.models import (
     EVIDENCE_KINDS,
     POLICY_SLOTS,
@@ -142,6 +152,50 @@ def _gates(result: ReadinessResult) -> list[dict[str, Any]]:
     return rows
 
 
+# What a blocker needs and who may do it (the permission whose role names are shown). Wording of the roles
+# comes from accounts.roles; nothing here decides readiness.
+BLOCKER_PERMISSION: list[tuple[tuple[str, ...], str]] = [
+    (("VISIT_NOT_CONFIRMED",), "planning.confirm"),
+    (("PLANNING_", "RESERVATIONS_"), "planning.plan"),
+    (("POLICY_MISSING",), "readiness.manage_policy"),
+    (("POLICY_",), "readiness.approve_policy"),
+    (("INSPECTOR_NOT_QUALIFIED",), "planning.grant_inspector_qualification"),
+    (("INSPECTION_TEMPLATE_NOT_APPROVED",), "fleet.approve_inspection_template"),
+    (("PERIODIC_INSPECTION_INTERVAL_UNKNOWN",), "fleet.manage_periodic_rule"),
+    (("PERIODIC_INSPECTION_",), "fleet.submit_inspection"),
+    (("BATTERY_MIN_UNKNOWN",), "fleet.publish_capability"),
+    (("EVIDENCE_", "BATTERY_", "EQUIPMENT_"), "readiness.record_evidence"),
+    (("RECOVERY_",), "readiness.record_recovery_plan"),
+    (("ROBOT_NOT_AT_HUB",), "readiness.record_departure"),
+]
+
+
+def blocker_permission(code: str) -> str:
+    for prefixes, perm in BLOCKER_PERMISSION:
+        if code.startswith(prefixes):
+            return perm
+    return "readiness.authorize_departure"
+
+
+def missing_requirements(result: ReadinessResult) -> list[dict[str, str]]:
+    """The plain list shown on the visit page: what is missing, what to do, who can do it."""
+    out = []
+    for b in result.blockers:
+        code = str(b.get("code", ""))
+        perm = blocker_permission(code)
+        out.append(
+            {
+                "message": str(b.get("message", "")),
+                "action": str(b.get("action", "")),
+                "who": who_can(perm),
+                "permission": perm,
+                "code": code,
+                "level": str(b.get("level", "")),
+            }
+        )
+    return out
+
+
 def _summary(v: Visit) -> dict[str, Any]:
     """Planning label, readiness label and the latest authorization / departure label for one visit."""
     tz = v.site.timezone
@@ -165,8 +219,7 @@ def _summary(v: Visit) -> dict[str, Any]:
 
 
 def _refused(request: HttpRequest, exc: CommandError) -> None:
-    kind = ERROR_KINDS.get(exc.code, exc.code.replace("_", " "))
-    messages.error(request, f"Refused ({kind}): {exc}")
+    messages.error(request, refused_message(exc, ERROR_KINDS))
 
 
 def _run(request: HttpRequest, fn: Any, ok: str, **kw: Any) -> bool:
@@ -181,6 +234,19 @@ def _run(request: HttpRequest, fn: Any, ok: str, **kw: Any) -> bool:
 
 def _to_visit(code: str) -> HttpResponse:
     return redirect("readiness:visit", code=code)
+
+
+def _back_visit(request: HttpRequest, code: str, **kw: Any) -> HttpResponse:
+    return _to_visit(code)
+
+
+def _back_auth(request: HttpRequest, code: str, **kw: Any) -> HttpResponse:
+    a = get_object_or_404(DepartureAuthorization.objects.select_related("visit"), code=code)
+    return _to_visit(a.visit.code)
+
+
+def _back_policies(request: HttpRequest, **kw: Any) -> HttpResponse:
+    return redirect("readiness:policies")
 
 
 # ------------------------------------------------------------------ pages
@@ -238,6 +304,13 @@ def inspection_warnings(inspection_ids: list[int]) -> dict[int, dict[str, Any]]:
             warnings.append(f"Template {version}: {UNUSABLE_TEMPLATE_WARNING}")
         out[iid] = {"code": icode, "signer_problem": signer_problem, "warnings": warnings}
     return out
+
+
+def _robot_inspections(v: Visit) -> list[Inspection]:
+    r = v.current_revision
+    if r is None or r.robot_id is None:
+        return []
+    return list(Inspection.objects.filter(robot_id=r.robot_id).order_by("-id")[:10])
 
 
 @login_required
@@ -331,6 +404,10 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "equipment": equipment,
             "persons": Person.objects.order_by("code"),
             "authorize_key": uuid.uuid4().hex,
+            "missing": missing_requirements(summary["result"]),
+            "robot_inspections": _robot_inspections(v),
+            "who_inspect": refusal_text("fleet.submit_inspection"),
+            "who_authorize": who_can("readiness.authorize_departure"),
             "valid_auth": next((a for a in auths if a["state"] == "usable"), None),
             **_base(request),
         },
@@ -360,6 +437,7 @@ def _equipment_items(post: Any, names: list[str]) -> dict[str, str]:
 
 @login_required
 @require_POST
+@one_time_form(_back_visit)
 def record_evidence_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     v = get_object_or_404(Visit.objects.select_related("site"), code=code)
@@ -392,6 +470,7 @@ def record_evidence_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_visit)
 def void_evidence_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     ev_code = f.get("evidence", "")
@@ -410,6 +489,7 @@ def void_evidence_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_visit)
 def recovery_plan_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     equipment = [
@@ -430,6 +510,7 @@ def recovery_plan_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_visit)
 def authorize_view(request: HttpRequest, code: str) -> HttpResponse:
     try:
         out = rc.authorize_departure(
@@ -438,16 +519,23 @@ def authorize_view(request: HttpRequest, code: str) -> HttpResponse:
     except CommandError as exc:
         _refused(request, exc)
     else:
-        messages.success(
+        auth = DepartureAuthorization.objects.select_related("issued_by", "robot", "visit").get(
+            code=out.get("entity_id", "")
+        )
+        # Never green: an approval is a time-limited decision, shown as information.
+        messages.info(
             request,
-            f"Authorization {out.get('entity_id', '')} issued. This is a time-limited decision; "
-            "record the departure separately when the robot actually leaves.",
+            f"Approved to leave by {auth.issued_by.username} at {local_dt(auth.issued_at)}, valid until "
+            f"{local_dt(auth.expires_at)}, for visit {auth.visit.code} with robot {auth.robot.code}. "
+            "This is a time-limited decision; record the departure separately when the robot "
+            "actually leaves.",
         )
     return _to_visit(code)
 
 
 @login_required
 @require_POST
+@one_time_form(_back_auth)
 def depart_view(request: HttpRequest, code: str) -> HttpResponse:
     a = get_object_or_404(DepartureAuthorization.objects.select_related("visit"), code=code)
     _run(
@@ -462,6 +550,7 @@ def depart_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_auth)
 def revoke_view(request: HttpRequest, code: str) -> HttpResponse:
     a = get_object_or_404(DepartureAuthorization.objects.select_related("visit"), code=code)
     _run(
@@ -530,6 +619,7 @@ def _to_policies() -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_policies)
 def policy_create_view(request: HttpRequest) -> HttpResponse:
     f = request.POST
     raw = f.get("requirements", "")
@@ -557,6 +647,7 @@ def policy_create_view(request: HttpRequest) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_policies)
 def policy_approve_view(request: HttpRequest, version: int) -> HttpResponse:
     slot = request.POST.get("slot", "")
     _run(
@@ -571,6 +662,7 @@ def policy_approve_view(request: HttpRequest, version: int) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_policies)
 def policy_withdraw_view(request: HttpRequest, version: int) -> HttpResponse:
     _run(
         request,
@@ -580,3 +672,105 @@ def policy_withdraw_view(request: HttpRequest, version: int) -> HttpResponse:
         reason=request.POST.get("reason", ""),
     )
     return _to_policies()
+
+
+# ------------------------------------------------------------------ submit an inspection (01C.5)
+QUALIFICATION_NOTE = (
+    "Only people who are qualified inspectors can sign an inspection. Only {who} can confirm someone's "
+    "inspector qualification."
+)
+
+
+def _inspection_templates(robot: Robot) -> list[dict[str, Any]]:
+    """Templates for the robot's configuration, newest first, each marked usable or not for pre-departure
+    evidence by the existing SQL rule (a template that is not usable can still be recorded against)."""
+    m = robot.current_manifest
+    if m is None:
+        return []
+    rows = list(InspectionTemplate.objects.filter(pattern_id=m.pattern_id).order_by("-id"))
+    usable: dict[int, bool] = {}
+    if rows:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT t.id, fleet_template_usable(t.id, 'pre_departure', fleet_production_mode()) "
+                "FROM fleet_inspectiontemplate t WHERE t.id = ANY(%s)",
+                [[t.pk for t in rows]],
+            )
+            usable = {tid: bool(u) for tid, u in cur.fetchall()}
+    return [{"t": t, "usable": usable.get(t.pk, False)} for t in rows]
+
+
+def _inspection_page(
+    request: HttpRequest, robot: Robot, *, visit: Visit | None, back_url: str
+) -> HttpResponse:
+    rows = _inspection_templates(robot)
+    wanted = request.POST.get("template_version") or request.GET.get("template") or ""
+    chosen = next((r for r in rows if r["t"].version == wanted), rows[0] if rows else None)
+    template = chosen["t"] if chosen else None
+
+    def call(actor: Any, d: dict[str, Any]) -> dict[str, Any]:
+        form_answers = {k[5:]: v for k, v in d.items() if k.startswith("item_") and v}
+        try:
+            return fleet_services.submit_inspection(
+                actor,
+                robot_code=robot.code,
+                template_version=d["template_version"],
+                answers=form_answers,
+                performer=d.get("performer") or None,
+                verifier=d.get("verifier") or None,
+                visit_ref=visit.code if visit else "",
+            )
+        except Invalid as exc:
+            if "not qualified to sign inspections" in str(exc):
+                raise Invalid(
+                    f"{exc}. "
+                    + QUALIFICATION_NOTE.format(who=who_can("planning.grant_inspector_qualification"))
+                ) from None
+            raise
+
+    def ok(out: dict[str, Any]) -> str:
+        result = str(out.get("result", ""))
+        word = {"PASS": "passed", "FAIL": "failed", "INCOMPLETE": "is incomplete"}.get(result, "recorded")
+        return f"Inspection {out.get('entity_id', '')} recorded: it {word}."
+
+    return command_page(
+        request,
+        permission="fleet.submit_inspection",
+        form_class=InspectionForm,
+        template="readiness/inspection_new.html",
+        call=call,
+        ok=ok,
+        success_url=back_url,
+        form_kwargs={"template": template},
+        initial={"template_version": template.version} if template else None,
+        context={
+            "robot": robot,
+            "visit": visit,
+            "templates": rows,
+            "chosen": chosen,
+            "back_url": back_url,
+            "base_path": request.path,
+        },
+    )
+
+
+@login_required
+def visit_inspection(request: HttpRequest, code: str) -> HttpResponse:
+    if (deny := _deny(request)) is not None:
+        return deny
+    v = get_object_or_404(Visit.objects.select_related("current_revision__robot"), code=code)
+    rev = v.current_revision
+    if rev is None or rev.robot is None:
+        messages.error(
+            request, "This visit has no robot yet, so there is nothing to inspect. Plan the visit first."
+        )
+        return _to_visit(code)
+    return _inspection_page(request, rev.robot, visit=v, back_url=f"/readiness/visits/{code}/")
+
+
+@login_required
+def robot_inspection(request: HttpRequest, code: str) -> HttpResponse:
+    if not has_permission(request.user, "fleet.read"):
+        return HttpResponseForbidden("No fleet access")
+    robot = get_object_or_404(Robot.objects.select_related("current_manifest"), code=code)
+    return _inspection_page(request, robot, visit=None, back_url=f"/fleet/{code}/")

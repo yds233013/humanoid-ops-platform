@@ -29,7 +29,7 @@
   {% empty %}<tr><td colspan="5" class="muted">Unclassified: no severity decision recorded.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.change_severity %}{% if policy %}
-  <form method="post" action="/execution/incidents/{{ i.code }}/severity/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/severity/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <label>Level <select name="level">{% for l in scale %}<option>{{ l }}</option>{% endfor %}</select></label>
     <label>Reason <input name="reason" size="40"></label>
     <button class="primary">Record severity decision</button><span class="muted">Under incident policy v{{ policy.version }}.</span>
@@ -43,7 +43,7 @@
   {% for s in statuses %}<tr><td>{{ s.s.to_status }}</td><td>{{ s.s.recorded_by.username }}</td><td>{{ s.local|local_dt }}</td></tr>{% endfor %}
   </tbody></table></div>
   {% if next_status %}{% if next_status == "closed" and can.close_incident or next_status != "closed" and can.triage_incident %}
-  <form method="post" action="/execution/incidents/{{ i.code }}/status/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/status/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <input type="hidden" name="to_status" value="{{ next_status }}">
     <button class="primary">Move to {{ next_status }}</button>
     <span class="muted">One step at a time. Closing needs every escalation acknowledged. The robot's hold is unchanged.</span>
@@ -65,11 +65,11 @@
   {% for x in escalations %}<tr><td>{{ x.e.to_role }}{% if x.e.to_person %} ({{ x.e.to_person.code }}){% endif %}</td><td>{{ x.e.requested_action }}</td><td>{{ x.e.recorded_by.username }}</td>
     <td>{% if x.ack %}Acknowledged by {{ x.ack.acknowledged_by.username }} <span class="muted">{{ x.ack.recorded_at|local_dt }}</span>
       {% else %}<span class="badge unresolved">Not acknowledged</span>
-      {% if x.can_ack %}<form method="post" action="/execution/incidents/{{ i.code }}/ack/" class="inline">{% csrf_token %}<input type="hidden" name="escalation" value="{{ x.e.pk }}"><button class="primary">Acknowledge</button></form>{% endif %}{% endif %}</td></tr>
+      {% if x.can_ack %}<form method="post" action="/execution/incidents/{{ i.code }}/ack/" class="inline">{% csrf_token %}{% form_token %}<input type="hidden" name="escalation" value="{{ x.e.pk }}"><button class="primary">Acknowledge</button></form>{% endif %}{% endif %}</td></tr>
   {% empty %}<tr><td colspan="4" class="muted">No escalations.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.triage_incident %}
-  <form method="post" action="/execution/incidents/{{ i.code }}/escalate/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/escalate/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <label>To role <select name="to_role">{% for r in roles_all %}<option>{{ r }}</option>{% endfor %}</select></label>
     <label>Person (optional) <select name="to_person"><option value="">-</option>{% for p in persons %}<option>{{ p.code }}</option>{% endfor %}</select></label>
     <label>Requested action <input name="requested_action" size="40"></label>
@@ -84,7 +84,7 @@
   {% empty %}<tr><td colspan="5" class="muted">No fault observations.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.triage_incident %}
-  <form method="post" action="/execution/incidents/{{ i.code }}/fault/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/fault/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <label>Component <input name="component"></label>
     <label>Status <select name="status"><option value="suspected">Suspected</option><option value="confirmed">Confirmed</option></select></label>
     <label>Evidence ref <input name="evidence_ref"></label>
@@ -96,7 +96,7 @@
 <div class="card">
   <h2>Record recovery (no open run)</h2>
   <p class="muted">The robot is unaccounted for and has no open run. Recording that it was received at the hub does not resolve this incident or release its hold.</p>
-  <form method="post" action="/execution/incidents/{{ i.code }}/recover/" class="row">{% csrf_token %}
+  <form method="post" action="/execution/incidents/{{ i.code }}/recover/" class="row">{% csrf_token %}{% form_token %}
     <label>Received by <select name="received_by">{% for p in persons %}<option>{{ p.code }}</option>{% endfor %}</select></label>
     <label>Recovery acknowledgment <input name="note" size="40"></label>
     <button class="primary">Record recovery to hub</button>

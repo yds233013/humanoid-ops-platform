@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% load ui planning_forms %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}{{ visit.code }}{% endblock %}
 {% block content %}
 {% page_header title=visit.code back_url="/planning/" back_label="Planner" %}{{ visit.site.code }} ({{ visit.site.zone }}) · {{ visit.get_status_display }} · revision {{ rev.revision_no }} · <a href="/readiness/visits/{{ visit.code }}/">Departure readiness</a>{% endpage_header %}

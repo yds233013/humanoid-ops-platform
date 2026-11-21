@@ -12,14 +12,14 @@
   <td>{{ r.status }}{% if r.withdrawal %}<div class="muted">Withdrawn by {{ r.withdrawal.withdrawn_by.username }}: {{ r.withdrawal.reason }}</div>{% endif %}</td>
   <td>{% if r.synthetic %}<span class="badge synthetic">SYNTHETIC demo, not a company value</span>{% else %}{{ r.set.get_source_display }}{% endif %}</td>
   <td>{% for sl in r.slots %}<div>{{ sl.label }}: {% if sl.approval %}{{ sl.approval.approver.username }}{% else %}<span class="muted">pending</span>{% if can.approve_escalation_deadlines and not r.withdrawal %}
-    <form method="post" action="/execution/escalation-deadlines/{{ r.set.pk }}/approve/" class="inline">{% csrf_token %}<input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve {{ sl.slot }}</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
+    <form method="post" action="/execution/escalation-deadlines/{{ r.set.pk }}/approve/" class="inline">{% csrf_token %}{% form_token %}<input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve {{ sl.slot }}</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
   <td><pre>{{ r.deadlines }}</pre></td>
-  <td>{% if can.withdraw_escalation_deadlines and not r.withdrawal %}<form method="post" action="/execution/escalation-deadlines/{{ r.set.pk }}/withdraw/" class="inline">{% csrf_token %}<input name="reason" placeholder="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
+  <td>{% if can.withdraw_escalation_deadlines and not r.withdrawal %}<form method="post" action="/execution/escalation-deadlines/{{ r.set.pk }}/withdraw/" class="inline">{% csrf_token %}{% form_token %}<input name="reason" placeholder="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
 </tr>{% empty %}<tr><td colspan="6" class="muted">No escalation deadline set has been recorded.</td></tr>{% endfor %}
 </tbody></table></div>
 {% if can.manage_escalation_deadlines %}
 <div class="card"><h2>Record a deadline set for the active incident policy</h2>
-<form method="post" action="/execution/escalation-deadlines/create/">{% csrf_token %}
+<form method="post" action="/execution/escalation-deadlines/create/">{% csrf_token %}{% form_token %}
   <div class="row"><label>Source <select name="source">{% for v, lbl in sources %}<option value="{{ v }}">{{ lbl }}</option>{% endfor %}</select></label>
   <label>Notes <input name="notes" size="40"></label></div>
   <p><label>Deadlines (JSON: level -> list of {"to_role", "within_min"})<br><textarea name="deadlines" rows="8" cols="70">{{ example }}</textarea></label></p>

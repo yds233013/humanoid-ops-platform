@@ -22,7 +22,8 @@ from accounts.roles import ALL_ROLES, PERMISSIONS
 from planning import forms as pforms
 from planning import services as p
 from planning.models import ConsentRecord, Reservation, Site, SiteAssessment, Visit
-from planning.plain import SESSION_KEY, plain_blocker, role_words
+from planning.plain import plain_blocker, role_words
+from platform_core.models import FormToken
 from tests.conftest import make_user
 from tests.planning_world import DAY, TZ, add_site, build_planning, new_visit, plan
 
@@ -43,18 +44,20 @@ def client_as(user) -> Client:
     return c
 
 
-def seed_token(c: Client, token: str = "tok-test") -> str:
-    session = c.session
-    session[SESSION_KEY] = [*session.get(SESSION_KEY, []), token]
-    session.save()
+_SEEDED = [0]
+
+
+def seed_token(c: Client, token: str | None = None) -> str:
+    """Issue a shared (database) form token for the signed-in user of this client."""
+    if token is None:
+        _SEEDED[0] += 1
+        token = f"seed-{_SEEDED[0]}"
+    FormToken.objects.create(token=token, user_id=int(c.session["_auth_user_id"]))
     return token
 
 
 def post(c: Client, url: str, data: dict[str, Any], *, token: str | None = None, follow: bool = True):
-    data = {
-        **data,
-        "form_token": token or seed_token(c, f"t{len(c.session.get(SESSION_KEY, []))}-{id(data)}"),
-    }
+    data = {**data, "_form_token": token or seed_token(c)}
     return c.post(url, data, follow=follow)
 
 
@@ -66,7 +69,7 @@ def page_tokens(html: str, action: str) -> list[str]:
     """Tokens inside the form(s) posting to ``action`` on a rendered page."""
     out = []
     for m in re.finditer(r'<form[^>]*action="' + re.escape(action) + r'"[^>]*>(.*?)</form>', html, re.S):
-        out += re.findall(r'name="form_token" value="([^"]+)"', m.group(1))
+        out += re.findall(r'name="_form_token" value="([^"]+)"', m.group(1))
     return out
 
 
@@ -406,7 +409,7 @@ def test_site_page_shows_history_and_only_actions_the_viewer_may_take(w):
 
 def test_forms_pages_carry_one_token_per_form(w):
     html = text(client_as(w.ops).get("/planning/sites/S-3/"))
-    toks = re.findall(r'name="form_token" value="([^"]+)"', html)
+    toks = re.findall(r'name="_form_token" value="([^"]+)"', html)
     assert len(toks) == len(set(toks)) >= 3
     assert page_tokens(html, "/planning/sites/S-3/adults/")
 
@@ -512,9 +515,9 @@ def test_rendered_token_works_once_end_to_end(w):
     c = client_as(w.ops)
     html = text(c.get("/planning/sites/S-3/"))
     tok = page_tokens(html, "/planning/sites/S-3/adults/")[0]
-    r1 = c.post("/planning/sites/S-3/adults/", {"expected_adults": "4", "form_token": tok}, follow=True)
+    r1 = c.post("/planning/sites/S-3/adults/", {"expected_adults": "4", "_form_token": tok}, follow=True)
     assert "Number of adults saved" in text(r1)
-    r2 = c.post("/planning/sites/S-3/adults/", {"expected_adults": "5", "form_token": tok}, follow=True)
+    r2 = c.post("/planning/sites/S-3/adults/", {"expected_adults": "5", "_form_token": tok}, follow=True)
     assert "already submitted" in text(r2)
     assert Site.objects.get(code="S-3").expected_adults == 4
 
@@ -772,7 +775,7 @@ def test_two_concurrent_confirms_exactly_one_wins():
         seed_token(c, f"cc{i}")
 
     def confirm(i: int) -> Callable[[], Any]:
-        return lambda: clients[i].post(f"/planning/visits/{v}/confirm/", {"form_token": f"cc{i}"})
+        return lambda: clients[i].post(f"/planning/visits/{v}/confirm/", {"_form_token": f"cc{i}"})
 
     res = _run_threads([confirm(0), confirm(1)])
     assert all(getattr(r, "status_code", None) == 302 for r in res), res
@@ -797,7 +800,7 @@ def test_two_bookings_for_the_same_robot_slot_exactly_one_wins():
         lead, second, van = crews[i]
         return lambda: clients[i].post(
             f"/planning/visits/{v}/plan/",
-            {"robot": "R-01", "lead": lead, "second": second, "vehicle": van, "form_token": f"bb{i}"},
+            {"robot": "R-01", "lead": lead, "second": second, "vehicle": van, "_form_token": f"bb{i}"},
         )
 
     res = _run_threads([book(0, v1), book(1, v2)])

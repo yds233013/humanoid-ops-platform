@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% load ui planning_forms %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}Cancel {{ visit.code }}{% endblock %}
 {% block content %}
 {% url "planning-visit" visit.code as visit_url %}{% page_header title="Cancel this visit?" back_url=visit_url back_label=visit.code %}{{ visit.code }} at {{ visit.site.code }} · {{ visit.get_status_display }}{% endpage_header %}

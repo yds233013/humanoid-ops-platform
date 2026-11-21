@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% load ui planning_forms %}
+{% extends "base.html" %}{% load ui %}
 {% block title %}{{ site.code }}{% endblock %}
 {% block content %}
 {% page_header title=site.code back_url="/planning/sites/" back_label="Customers" %}{{ site.zone }} · {{ site.timezone }} · CRM {{ site.crm_ref }}{% endpage_header %}

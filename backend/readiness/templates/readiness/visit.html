@@ -23,15 +23,17 @@
     <td><span class="badge {{ g.state }}">{% if g.state == "clear" %}No blockers{% elif g.state == "review" %}Needs review{% else %}Blocked{% endif %}</span></td>
     <td>{% for b in g.blockers %}<div class="blocker"><b>{{ b.message }}</b><div>What to do: {{ b.action }}</div><details class="fold"><summary>Details</summary><span class="muted">{{ b.level }} · {{ b.code }}</span></details></div>{% empty %}<span class="muted">-</span>{% endfor %}</td></tr>
   {% endfor %}</tbody></table></div>
+  {% if missing %}<h3 style="margin-top:14px">What is still missing</h3>
+  <ul class="reasons" data-missing-list="1">{% for m in missing %}<li><b>{{ m.message }}</b><div>What to do: {{ m.action }}</div><div class="muted">Who can do it: {{ m.who }}.</div></li>{% endfor %}</ul>{% endif %}
   {% if valid_auth %}<p class="waiting" style="margin-top:10px">This visit already has a valid leave approval ({{ valid_auth.auth.code }}); no new request is needed.</p>
   {% elif result.ready and planning_state != "blocked" %}
     {% if can.authorize_departure %}
-  <form method="post" action="/readiness/visits/{{ visit.code }}/authorize/" style="margin-top:10px" class="row">{% csrf_token %}
+  <form method="post" action="/readiness/visits/{{ visit.code }}/authorize/" style="margin-top:10px" class="row">{% csrf_token %}{% form_token %}
     <input type="hidden" name="idempotency_key" value="{{ authorize_key }}">
-    <button class="primary">Request departure authorization</button>
-    <span class="muted">Issues a time-limited approval to leave; it does not record a departure.</span>
-  </form>{% else %}<p class="waiting" style="margin-top:10px">Waiting for the ops lead to approve.</p>{% endif %}
-  {% else %}<p class="waiting" style="margin-top:10px">Departure can be requested once every checklist item is clear.</p>{% endif %}
+    <button class="primary">Request approval to leave</button>
+    <span class="muted">Records a time-limited decision to leave; it does not record a departure.</span>
+  </form>{% else %}<p class="waiting" style="margin-top:10px" data-waiting="1">Waiting for {{ who_authorize }} to approve.</p>{% endif %}
+  {% else %}<p class="waiting" style="margin-top:10px">Approval to leave can be requested once every checklist item is clear.</p>{% endif %}
 </div>
 
 <div class="card">
@@ -47,11 +49,11 @@
     <td>v{{ a.auth.policy.version }} · {{ a.auth.get_mode_display }}<div class="muted">revision {{ a.auth.revision.revision_no }}</div></td>
     <td>
       {% if can.record_departure and a.state == "usable" %}
-      <form method="post" action="/readiness/authorizations/{{ a.auth.code }}/depart/" class="inline">{% csrf_token %}
+      <form method="post" action="/readiness/authorizations/{{ a.auth.code }}/depart/" class="inline">{% csrf_token %}{% form_token %}
         <input type="hidden" name="idempotency_key" value="{{ a.depart_key }}"><button class="primary">Record departure</button></form>
       {% endif %}
       {% if can.revoke_authorization and a.state != "revoked" and a.state != "used" %}
-      <form method="post" action="/readiness/authorizations/{{ a.auth.code }}/revoke/" class="inline">{% csrf_token %}
+      <form method="post" action="/readiness/authorizations/{{ a.auth.code }}/revoke/" class="inline">{% csrf_token %}{% form_token %}
         <input name="reason" placeholder="Revocation reason (required)"><button class="primary">Revoke</button></form>
       {% endif %}
     </td></tr>
@@ -79,28 +81,39 @@
     <td>{{ e.observed_local|local_dt }}</td><td>{{ e.ev.recorded_by.username }}</td>
     <td class="keep">{% if e.void %}<span class="badge revoked">Voided</span><div class="muted">{{ e.void.voided_by.username }}: {{ e.void.reason }}</div>
         {% else %}{% if e.current %}Active{% else %}<span class="muted">Earlier revision r{{ e.ev.revision.revision_no }}</span>{% endif %}
-        {% if can.record_evidence %}<form method="post" action="/readiness/visits/{{ visit.code }}/void/" class="inline">{% csrf_token %}
+        {% if can.record_evidence %}<form method="post" action="/readiness/visits/{{ visit.code }}/void/" class="inline">{% csrf_token %}{% form_token %}
           <input type="hidden" name="evidence" value="{{ e.ev.code }}"><input name="reason" placeholder="Void reason (required)"><button class="primary">Void</button></form>{% endif %}
         {% endif %}</td></tr>
   {% empty %}<tr><td colspan="7" class="muted">No evidence recorded.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_evidence %}
-  <form method="post" action="/readiness/visits/{{ visit.code }}/evidence/" style="margin-top:10px">{% csrf_token %}
-    <h2>Record evidence</h2>
+  <h3 style="margin-top:14px">Record readiness evidence</h3>
+  <p class="muted" data-inspector-note="1">{{ inspector_note }}</p>
+  <form method="post" action="/readiness/visits/{{ visit.code }}/evidence/" class="card" data-evidence-form="pre_departure_inspection">{% csrf_token %}{% form_token %}
+    <input type="hidden" name="kind" value="pre_departure_inspection"><h4>Pre-departure inspection</h4>
     <div class="row">
-      <label>Kind <select name="kind">{% for k, lbl in kinds %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></label>
+      <label>Inspection <select name="inspection_code"><option value="">Choose a submitted inspection</option>{% for i in robot_inspections %}<option value="{{ i.code }}">{{ i.code }} ({{ i.get_result_display }}{% if i.visit_ref %}, visit {{ i.visit_ref }}{% endif %})</option>{% endfor %}</select></label>
       <label>Result <select name="result"><option value="pass">Pass</option><option value="fail">Fail</option></select></label>
       <label>Observed at ({% workspace_tz_label %}, optional) <input type="datetime-local" name="observed_at"></label>
-    </div>
-    <fieldset><legend>Pre-departure inspection</legend><label>Inspection code <input name="inspection_code" placeholder="e.g. INS-0001"></label>
-      <div class="muted" data-inspector-note="1">{{ inspector_note }}</div></fieldset>
-    <fieldset><legend>Battery check</legend><label>Battery % <input name="soc_pct" type="number" min="1" max="100"></label></fieldset>
-    <fieldset><legend>Equipment check</legend><div class="row">
-      {% for name in equipment %}<input type="hidden" name="item_names" value="{{ name }}">
+      <button class="primary">Record inspection evidence</button></div>
+    {% can "fleet.submit_inspection" as may_inspect %}{% if may_inspect %}<p><a href="/readiness/visits/{{ visit.code }}/inspection/">Submit a new inspection for this robot</a></p>{% else %}<p class="waiting">New inspections: {{ who_inspect }}</p>{% endif %}
+  </form>
+  <form method="post" action="/readiness/visits/{{ visit.code }}/evidence/" class="card" data-evidence-form="equipment_check">{% csrf_token %}{% form_token %}
+    <input type="hidden" name="kind" value="equipment_check"><h4>Equipment check</h4>
+    <div class="row">{% for name in equipment %}<input type="hidden" name="item_names" value="{{ name }}">
       <label>{{ name }} <select name="item_{{ name }}"><option value="">not checked</option><option value="present">present</option><option value="missing">missing</option></select></label>{% endfor %}
-      <label>Other items <input name="extra_items" placeholder="name=present, name=missing"></label></div></fieldset>
-    <button class="primary">Record evidence</button>
-  </form>{% endif %}
+      <label>Other items <input name="extra_items" placeholder="name=present, name=missing"></label>
+      <label>Result <select name="result"><option value="pass">Pass</option><option value="fail">Fail</option></select></label>
+      <label>Observed at (optional) <input type="datetime-local" name="observed_at"></label>
+      <button class="primary">Record equipment check</button></div>
+  </form>
+  <form method="post" action="/readiness/visits/{{ visit.code }}/evidence/" class="card" data-evidence-form="battery_check">{% csrf_token %}{% form_token %}
+    <input type="hidden" name="kind" value="battery_check"><h4>Battery check</h4>
+    <div class="row"><label>Battery % <input name="soc_pct" type="number" min="1" max="100" required></label>
+      <label>Result <select name="result"><option value="pass">Pass</option><option value="fail">Fail</option></select></label>
+      <label>Observed at (optional) <input type="datetime-local" name="observed_at"></label>
+      <button class="primary">Record battery check</button></div>
+  </form>{% else %}<p class="waiting" style="margin-top:10px">Recording evidence: {% refusal_note "readiness.record_evidence" %}</p>{% endif %}
 </div>
 
 <div class="card">
@@ -112,13 +125,13 @@
   {% empty %}<tr><td colspan="6" class="muted">No recovery plan recorded.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_recovery_plan %}
-  <form method="post" action="/readiness/visits/{{ visit.code }}/recovery-plan/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/readiness/visits/{{ visit.code }}/recovery-plan/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <label>On-call engineer <select name="on_call"><option value="">-</option>{% for x in persons %}<option>{{ x.code }}</option>{% endfor %}</select></label>
     <label>Escalation contact <select name="escalation"><option value="">-</option>{% for x in persons %}<option>{{ x.code }}</option>{% endfor %}</select></label>
     <label>Escalation path <input name="escalation_path" size="40"></label>
     <label>Equipment <input name="required_equipment" placeholder="recovery_kit, charger"></label>
     <button class="primary">Record recovery plan</button>
-  </form>{% endif %}
+  </form>{% else %}<p class="waiting" style="margin-top:10px">Recording a recovery plan: {% refusal_note "readiness.record_recovery_plan" %}</p>{% endif %}
 </div>
 
 <div class="card">

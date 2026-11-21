@@ -69,6 +69,7 @@ from fleet.models import Robot
 from fleet.services import demo_mode
 from planning.models import Person, Visit
 from platform_core.commands import CommandError, Invalid
+from platform_core.interaction import one_time_form, refused_message
 from platform_core.models import AuditEvent
 
 DEMO_BANNER = "SYNTHETIC DEMO - not real-world clearance"
@@ -137,8 +138,7 @@ def _recover_robot() -> Callable[..., dict[str, Any]] | None:
 
 
 def _refused(request: HttpRequest, exc: CommandError) -> None:
-    kind = ERROR_KINDS.get(exc.code, exc.code.replace("_", " "))
-    messages.error(request, f"Refused ({kind}): {exc}")
+    messages.error(request, refused_message(exc, ERROR_KINDS))
 
 
 def _run(
@@ -303,6 +303,26 @@ def _to_run(code: str) -> HttpResponse:
     return redirect("execution:run", code=code)
 
 
+def _back_run(request: HttpRequest, code: str, **kw: Any) -> HttpResponse:
+    return _to_run(code)
+
+
+def _back_incident(request: HttpRequest, code: str, **kw: Any) -> HttpResponse:
+    return _to_incident(code)
+
+
+def _back_incidents(request: HttpRequest, **kw: Any) -> HttpResponse:
+    return redirect("execution:incidents")
+
+
+def _back_policies(request: HttpRequest, **kw: Any) -> HttpResponse:
+    return _to_policies()
+
+
+def _back_deadlines(request: HttpRequest, **kw: Any) -> HttpResponse:
+    return _to_deadlines()
+
+
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
     if (deny := _deny(request)) is not None:
@@ -393,6 +413,7 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def verify_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     try:
@@ -415,6 +436,7 @@ def verify_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def trip_event_view(request: HttpRequest, code: str) -> HttpResponse:
     kind = request.POST.get("kind", "")
 
@@ -428,6 +450,7 @@ def trip_event_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def transfer_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     _run(
@@ -448,6 +471,7 @@ def transfer_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def site_check_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     version = f.get("template", "")
@@ -481,6 +505,7 @@ def site_check_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def reconcile_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     discrepancies = [d.strip() for d in f.get("discrepancies", "").splitlines() if d.strip()]
@@ -503,6 +528,7 @@ def reconcile_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def close_view(request: HttpRequest, code: str) -> HttpResponse:
     _run(request, recon.close_trip, f"Trip closed; run {code} is closed", run_code=code)
     return _to_run(code)
@@ -510,6 +536,7 @@ def close_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def session_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     kind = f.get("kind", "")
@@ -533,6 +560,7 @@ def session_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def interruption_open_view(request: HttpRequest, code: str) -> HttpResponse:
     _run(
         request,
@@ -546,6 +574,7 @@ def interruption_open_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def interruption_resolve_view(request: HttpRequest, code: str) -> HttpResponse:
     ic = request.POST.get("interruption", "")
     if not Interruption.objects.filter(code=ic, run__code=code).exists():
@@ -563,6 +592,7 @@ def interruption_resolve_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_run)
 def disposition_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     decision = f.get("decision", "")
@@ -768,6 +798,7 @@ def _to_incident(code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_incidents)
 def report_view(request: HttpRequest) -> HttpResponse:
     f = request.POST
     back_run = f.get("run", "").strip()
@@ -810,6 +841,7 @@ def report_view(request: HttpRequest) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_incident)
 def fault_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     _run(
@@ -826,6 +858,7 @@ def fault_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_incident)
 def severity_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     level = f.get("level", "")
@@ -842,6 +875,7 @@ def severity_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_incident)
 def status_view(request: HttpRequest, code: str) -> HttpResponse:
     to = request.POST.get("to_status", "")
     _run(
@@ -856,6 +890,7 @@ def status_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_incident)
 def escalate_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
     _run(
@@ -872,6 +907,7 @@ def escalate_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_incident)
 def ack_view(request: HttpRequest, code: str) -> HttpResponse:
     raw = request.POST.get("escalation", "")
     try:
@@ -887,6 +923,7 @@ def ack_view(request: HttpRequest, code: str) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_incident)
 def recover_view(request: HttpRequest, code: str) -> HttpResponse:
     i = get_object_or_404(Incident.objects.select_related("robot"), code=code)
     f = request.POST
@@ -952,6 +989,7 @@ def _to_policies() -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_policies)
 def policy_create_view(request: HttpRequest) -> HttpResponse:
     f = request.POST
     raw = f.get("rules", "")
@@ -982,6 +1020,7 @@ def policy_create_view(request: HttpRequest) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_policies)
 def policy_approve_view(request: HttpRequest, version: int) -> HttpResponse:
     slot = request.POST.get("slot", "")
     _run(
@@ -996,6 +1035,7 @@ def policy_approve_view(request: HttpRequest, version: int) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_policies)
 def policy_withdraw_view(request: HttpRequest, version: int) -> HttpResponse:
     _run(
         request,
@@ -1110,6 +1150,7 @@ def _deadline_action(request: HttpRequest, permission: str, name: str, ok: str, 
 
 @login_required
 @require_POST
+@one_time_form(_back_deadlines)
 def deadline_set_create_view(request: HttpRequest) -> HttpResponse:
     if not has_permission(request.user, "execution.manage_escalation_deadlines"):
         return HttpResponseForbidden("You do not have permission for this action.")
@@ -1146,6 +1187,7 @@ def deadline_set_create_view(request: HttpRequest) -> HttpResponse:
 
 @login_required
 @require_POST
+@one_time_form(_back_deadlines)
 def deadline_set_approve_view(request: HttpRequest, set_id: int) -> HttpResponse:
     # Engineer B: approve_deadline_set(actor, *, set_id, slot)
     return _deadline_action(
@@ -1160,6 +1202,7 @@ def deadline_set_approve_view(request: HttpRequest, set_id: int) -> HttpResponse
 
 @login_required
 @require_POST
+@one_time_form(_back_deadlines)
 def deadline_set_withdraw_view(request: HttpRequest, set_id: int) -> HttpResponse:
     # Engineer B: withdraw_deadline_set(actor, *, set_id, reason)
     return _deadline_action(

@@ -31,13 +31,13 @@
   </tbody></table></div>
   {% if can.record_field_event and not closed %}
   {% for ev in unverified %}
-  <form method="post" action="/execution/runs/{{ run.code }}/verify/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/verify/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <input type="hidden" name="custody_seq" value="{{ ev.seq }}">
     <span>Custody #{{ ev.seq }} is an administrative assignment - not verified.</span>
     <label>Verifier (crew) <select name="verifier">{% for p in crew %}<option>{{ p.code }}</option>{% endfor %}</select></label>
     <button class="primary">Record crew verification of #{{ ev.seq }}</button>
   </form>{% endfor %}
-  <form method="post" action="/execution/runs/{{ run.code }}/custody/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/custody/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <b>Record a custody move</b>
     <label>To <select name="to_kind">{% for k in move_targets %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></label>
     <label>Custodian <select name="custodian">{% for p in persons %}<option>{{ p.code }}</option>{% endfor %}</select></label>
@@ -55,7 +55,7 @@
   {% empty %}<tr><td colspan="4" class="muted">No trip events yet (in transit to the site).</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_field_event and not closed and next_trip %}
-  <form method="post" action="/execution/runs/{{ run.code }}/trip-event/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/trip-event/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <input type="hidden" name="kind" value="{{ next_trip }}">
     <button class="primary">Record: {% if next_trip == "arrived_site" %}Vehicle arrived at site{% elif next_trip == "departed_site" %}Vehicle departed site{% else %}Vehicle arrived at hub{% endif %}</button>
     {% if next_trip == "arrived_hub" %}<span class="muted">Records the vehicle only; the robot's return is a separate custody receipt.</span>{% endif %}
@@ -75,7 +75,7 @@
   {% empty %}<tr><td colspan="7" class="muted">No site check recorded. A session cannot start without a Go check.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_field_event and not closed and templates %}
-  <form method="post" action="/execution/runs/{{ run.code }}/site-check/" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/site-check/" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <h2>Record a site check</h2>
     {% for t in templates %}<fieldset><legend><label><input type="radio" name="template" value="{{ t.version }}" {% if forloop.first %}checked{% endif %}> Template {{ t.version }}{% if t.source == "synthetic_demo" %} (synthetic demo){% endif %}</label></legend>
       <div class="row">{% for i in t.items %}<label>{{ i.label }} <select name="cond_{{ i.id }}"><option value="">not checked</option><option value="ok">ok</option><option value="not_ok">not ok</option></select></label>{% endfor %}</div></fieldset>{% endfor %}
@@ -95,7 +95,7 @@
   {% empty %}<tr><td colspan="6" class="muted">No session events.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_field_event and not closed %}
-  <form method="post" action="/execution/runs/{{ run.code }}/session/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/session/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <label>Event <select name="kind">{% for k in session_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></label>
     <label>Site check (start/resume) <select name="site_check_id"><option value="">-</option>{% if latest_check %}<option value="{{ latest_check.pk }}" selected>#{{ latest_check.pk }} ({{ latest_check.get_result_display }})</option>{% endif %}</select></label>
     <label>Note <input name="note"></label>
@@ -112,13 +112,13 @@
     <td>{{ it.reason }}</td>
     <td>{% if it.resolution %}<span class="badge resolved">Resolved</span> <span class="muted">{{ it.resolution.recorded_by.username }}: {{ it.resolution.note }}</span>
         {% else %}<span class="badge unresolved">Open</span>
-        {% if can.triage_incident and not closed %}<form method="post" action="/execution/runs/{{ run.code }}/interruptions/resolve/" class="inline">{% csrf_token %}
+        {% if can.triage_incident and not closed %}<form method="post" action="/execution/runs/{{ run.code }}/interruptions/resolve/" class="inline">{% csrf_token %}{% form_token %}
           <input type="hidden" name="interruption" value="{{ it.code }}"><input name="note" placeholder="Resolution note (required)"><button class="primary">Resolve</button></form>
           {% if it.incident %}<div class="muted">Refused while the incident hold is unreleased. Resolving does not resume the session.</div>{% endif %}{% endif %}{% endif %}</td></tr>
   {% empty %}<tr><td colspan="4" class="muted">No interruptions.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_field_event and not closed %}
-  <form method="post" action="/execution/runs/{{ run.code }}/interruptions/open/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/interruptions/open/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <label>Reason <input name="reason" size="40"></label><button class="primary">Open interruption</button>
   </form>{% endif %}
 </div>
@@ -132,7 +132,7 @@
   {% empty %}<tr><td colspan="5" class="muted">No incidents on this run.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.report_incident %}
-  <form method="post" action="/execution/incidents/report/" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/incidents/report/" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <h2>Report incident</h2>
     <input type="hidden" name="robot" value="{{ run.robot.code }}"><input type="hidden" name="run" value="{{ run.code }}">
     <input type="hidden" name="idempotency_key" value="{{ report_key }}">
@@ -155,7 +155,7 @@
   {% empty %}<tr><td colspan="4" class="muted">No dispositions.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_disposition and not closed %}
-  <form method="post" action="/execution/runs/{{ run.code }}/disposition/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/disposition/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <label>Decision <select name="decision">{% for k, lbl in decisions %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></label>
     <label>Reason <input name="reason" size="30"></label>
     <label>Incident (left on site / unaccounted) <select name="incident_code"><option value="">-</option>{% for x in incidents %}<option>{{ x.i.code }}</option>{% endfor %}</select></label>
@@ -178,14 +178,14 @@
   {% if closure %}<p><span class="badge closed">Trip closed</span> <span class="muted">{{ closure.recorded_at|local_dt }} by {{ closure.recorded_by.username }} (reconciliation {{ closure.reconciliation_id }}). Holds on the robot, if any, still need the fleet hold-release workflow.</span></p>
   {% else %}
   {% if can.reconcile %}
-  <form method="post" action="/execution/runs/{{ run.code }}/reconcile/" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/reconcile/" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <div class="row"><label>Post-visit inspection code <input name="inspection_code" placeholder="e.g. INS-0002"></label>
     <label>Discrepancies (one per line)<br><textarea name="discrepancies" rows="2" cols="40"></textarea></label>
     <button class="primary">Record return reconciliation</button></div>
     <span class="muted">Reconciled only with a verified hub receipt by a field user, matching cargo, verified custody throughout, a post-visit inspection after the receipt, and no discrepancies; otherwise unresolved.</span>
   </form>{% endif %}
   {% if can.close_trip %}
-  <form method="post" action="/execution/runs/{{ run.code }}/close/" class="row" style="margin-top:10px">{% csrf_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/close/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
     <button class="primary">Close trip</button><span class="muted">Refused unless the vehicle arrived at the hub and the latest reconciliation is reconciled.</span>
   </form>{% endif %}{% endif %}
 </div>

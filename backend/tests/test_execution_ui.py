@@ -7,6 +7,7 @@ releasing an incident hold (fleet hold-release workflow) and the post-visit insp
 """
 
 import re
+import secrets
 from datetime import timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -38,6 +39,7 @@ from execution.models import (
 )
 from fleet.models import Hold, Inspection
 from platform_core import testhooks
+from platform_core.models import FormToken
 from tests import execution_world as ew
 from tests.conftest import make_user
 
@@ -86,8 +88,15 @@ def _get(user: Any, url: str) -> str:
     return html
 
 
+def _issue(user: Any) -> str:
+    """A shared one-time form token for this user, as the page would have rendered it."""
+    token = secrets.token_urlsafe(24)
+    FormToken.objects.create(token=token, user=user)
+    return token
+
+
 def _post(user: Any, url: str, data: dict[str, Any] | None = None) -> str:
-    resp = _client(user).post(url, data or {}, follow=True)
+    resp = _client(user).post(url, {**(data or {}), "_form_token": _issue(user)}, follow=True)
     assert resp.status_code == 200
     html = _html(resp)
     _assert_safe(html)

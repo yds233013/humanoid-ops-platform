@@ -307,8 +307,13 @@ def workspace_demo_mode(request: HttpRequest) -> bool:
 
 
 def landing_url(roles: set[str]) -> str:
-    """Where a person lands after login: Today when they may read it, else Fleet."""
-    return "/ops/" if _allowed(roles, "operations.read") else "/fleet/"
+    """Where a person lands after login: Today when they may read it; an admin (who manages the workspace but
+    reads no operations) lands on workspace setup; everyone else on Fleet."""
+    if _allowed(roles, "operations.read"):
+        return "/ops/"
+    if _allowed(roles, "platform_core.manage_workspace"):
+        return "/settings/setup/"
+    return "/fleet/"
 
 
 @register.inclusion_tag("ui/header.html", takes_context=True)
