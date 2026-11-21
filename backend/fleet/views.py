@@ -404,6 +404,9 @@ def robot_detail(request: HttpRequest, code: str) -> HttpResponse:
             "templates": templates,
             "recent_inspections": signer_rows(recent),
             "synthetic_interval": SYNTHETIC_INTERVAL,
+            "base_auth": r.base_authorizations.filter(revoked_at__isnull=True)
+            .select_related("pattern", "granted_by")
+            .first(),
             "can": _can(request),
             **_banner(),
         },
@@ -450,6 +453,7 @@ def pattern_detail(request: HttpRequest, code: str) -> HttpResponse:
             "synthetic_interval": SYNTHETIC_INTERVAL,
             "unusable_warning": UNUSABLE_TEMPLATE_WARNING,
             "can": _can(request),
+            "decision": s.pattern_status(pattern),
             "roles": sorted(active_roles(request.user)),
             **_banner(),
         },

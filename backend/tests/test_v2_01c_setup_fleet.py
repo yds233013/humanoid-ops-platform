@@ -492,7 +492,7 @@ def test_refusal_wording_helpers():
 def test_first_run_checklist_progress_and_who_approves(w):
     client = _client(w.admin)
     html = _html(client.get("/settings/setup/"))
-    assert "1 of 5 steps done" in html  # people: the fixture users already hold roles
+    assert "1 of 6 steps done" in html  # people: the fixture users already hold roles
     assert "never approves anything" in html and "Production readiness" in html
     assert "the safety reviewer" in html  # who must approve
     _post(
@@ -513,7 +513,9 @@ def test_first_run_checklist_progress_and_who_approves(w):
     assert not RoleGrant.objects.filter(user=maria).exists()  # an invitation gives no role
     _post(client, f"/settings/users/{maria.pk}/", {"role": "ops_lead"})
     html = _html(client.get("/settings/setup/"))
-    assert "5 of 5 steps done" in html
+    assert (
+        "5 of 6 steps done" in html and "Operating settings incomplete" in html
+    )  # owner provisions the rest
     assert maria.check_password("Temp-pass-8842!")
     # the temporary password never reaches the audit log
     assert "Temp-pass" not in str(list(AuditEvent.objects.values_list("payload", "result")))

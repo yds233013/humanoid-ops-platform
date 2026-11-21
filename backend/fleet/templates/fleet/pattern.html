@@ -4,6 +4,13 @@
 {% with ptitle="Configuration "|add:pattern.code %}{% page_header title=ptitle back_url="/fleet/" back_label="Fleet" %}hardware {{ pattern.hardware_rev }} · release {{ pattern.release }} · Mode: <b>{% if production %}production{% else %}demo{% endif %}</b>{% endpage_header %}{% endwith %}
 <p class="muted">A template or an interval is usable in production only through approval records by distinct people holding the right role, none of them its author. A synthetic item is usable in demo only and can never be approved for production. The platform records company decisions; it never supplies a checklist, an interval or an approval.</p>
 
+<div class="card" id="home-decision">
+  <h2>Home-use decision</h2>
+  {% can "fleet.decide_pattern" as may_decide %}
+  <p>Current decision: <b data-decision="{{ decision }}">{% if decision == "none" %}none yet{% else %}{{ decision }}{% endif %}</b>. Nothing is approved until the engineering lead records it here.</p>
+  {% if may_decide %}<a class="btn primary" href="/fleet/patterns/{{ pattern.code }}/decision/">Decide on home use</a>{% else %}<p>{% waiting_note "fleet.decide_pattern" "decision" %}</p>{% endif %}
+</div>
+
 <div class="card">
   <h2>Inspection templates</h2>
   <div class="tablewrap"><table><thead><tr><th>Template</th><th>Source</th><th>Pre-departure</th><th>Periodic</th><th>Actions</th></tr></thead><tbody>

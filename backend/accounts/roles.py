@@ -18,6 +18,7 @@ PERMISSIONS: dict[str, set[str]] = {
     "accounts.create_user": {ADMIN},
     "platform_core.manage_workspace": {ADMIN},
     "platform_core.manage_hubs": {ADMIN},
+    "platform_core.read_operating_settings": {ADMIN, OPS_LEAD},
     "audit.read": {ADMIN, OPS_LEAD, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     # Slice 1: fleet core
     "fleet.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},

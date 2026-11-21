@@ -111,6 +111,9 @@ def setup_steps(ws: Workspace) -> list[dict[str, Any]]:
     )
     hubs = Hub.objects.count()
     named = ws.name.strip() not in DEFAULT_NAMES
+    from fleet import provisioning
+
+    operating_ok = provisioning.required_complete()
     return [
         {
             "title": "Company name",
@@ -147,6 +150,15 @@ def setup_steps(ws: Workspace) -> list[dict[str, Any]]:
             "url": "/settings/users/new/",
             "action": "Invite someone",
         },
+        {
+            "title": "Operating settings",
+            "done": operating_ok,
+            "detail": "All required values are set"
+            if operating_ok
+            else "Operating settings incomplete: the deployment owner must provision the required values",
+            "url": "/settings/operating/",
+            "action": "View",
+        },
     ]
 
 
@@ -168,7 +180,25 @@ def setup_checklist(request: HttpRequest) -> HttpResponse:
             "robots": Robot.objects.count(),
             "patterns": ManifestPattern.objects.count(),
             "workspace": ws,
+            "operating_incomplete": not steps[-1]["done"],
         },
+    )
+
+
+# ------------------------------------------------------------------ operating settings (read only)
+@login_required
+@require_http_methods(["GET", "HEAD"])
+def operating_settings(request: HttpRequest) -> HttpResponse:
+    """Read-only. There is no form and no POST handler: only the deployment owner provisions these."""
+    perm = "platform_core.read_operating_settings"
+    if not has_permission(request.user, perm):
+        return denied(request, perm)
+    from fleet import provisioning
+
+    return render(
+        request,
+        "settings/operating.html",
+        {"rows": provisioning.rows(), "complete": provisioning.required_complete()},
     )
 
 

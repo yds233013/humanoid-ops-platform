@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Approve capability profile{% endblock %}
+{% block content %}
+{% with t="Approve capability profile v"|add:profile.version_no|stringformat:"s"|add:" for "|add:pattern.code %}{% page_header title=t back_url=profile_url back_label="Capability profile" %}Profile id {{ profile.pk }}, version {{ profile.version_no }}. It needs two approvals from two different people: the engineering lead and the safety reviewer.{% endpage_header %}{% endwith %}
+<section class="card"><h2>What is being approved</h2>
+<dl>
+<dt>Stop behaviour</dt><dd>{{ profile.stop_behaviour|default:"Unknown" }}</dd>
+<dt>People needed to lift</dt><dd>{{ profile.lift_crew|default:"Unknown" }}</dd>
+<dt>Transport posture</dt><dd>{{ profile.transport_posture|default:"Unknown" }}</dd>
+<dt>Maximum runtime (minutes)</dt><dd>{{ profile.max_runtime_min|default:"Unknown" }}</dd>
+<dt>Minimum battery at departure (%)</dt><dd>{{ profile.min_departure_soc_pct|default:"Unknown" }}</dd>
+<dt>Charge turnaround (minutes)</dt><dd>{{ profile.charge_turnaround_min|default:"Unknown" }}</dd>
+<dt>Load or unload time (minutes)</dt><dd>{{ profile.load_unload_min|default:"Unknown" }}</dd>
+<dt>Source</dt><dd>{{ profile.get_source_display }}</dd>
+</dl></section>
+<section class="card"><h2>Approvals</h2>
+{% for r in slot_rows %}<p data-slot="{{ r.slot }}"><b>{{ r.label }}</b>: {% if r.approval %}{% chip "info" "Approved" %} by {{ r.approval.approver.username }}, {{ r.approval.approved_at|local_dt }}{% else %}{% chip "warn" "Not yet" %} <span class="waiting" data-waiting="1">Waiting for {{ r.role_words }}'s approval</span>{% endif %}</p>{% endfor %}</section>
+{% if not pending %}<section class="card"><p>Both approvals are recorded. Nothing more to do on this profile.</p></section>
+{% elif mine_pending %}<section class="card">
+{% include "ui/confirm_box.html" with headline="You are about to approve this capability profile." detail="Approve only after you have checked the values above. This cannot be taken back, and the same person cannot fill both slots." %}
+{% include "ui/form.html" with form=form submit="Approve" cancel_url=profile_url %}</section>
+{% else %}<section class="card"><p>You cannot approve the open slot{{ pending|length|pluralize }} here: {% for r in slot_rows %}{% if not r.approval %}{{ r.role_words }} must approve the {{ r.label|lower }} slot. {% endif %}{% endfor %}</p></section>{% endif %}
+{% endblock %}

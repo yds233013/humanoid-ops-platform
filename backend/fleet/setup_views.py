@@ -3,8 +3,12 @@ and capability profiles.
 
 Every state change goes through ``platform_core.interaction.command_page`` and calls ONE existing service
 command in ``fleet.services`` (register_robot, record_manifest, transition_lifecycle, create_pattern,
-publish_capability_profile). Approvals are NOT done here: they stay on their own screens and with their own
-roles. Registering a robot or publishing a profile never makes anything eligible or approved.
+publish_capability_profile). Registering a robot or publishing a profile never makes anything eligible or
+approved.
+
+01C approval screens (each calls ONE existing guarded command, never auto-approves, and shows its
+button only to the roles the command requires):
+decide_pattern, approve_capability_profile, grant_base_authorization and revoke_base_authorization.
 """
 
 from typing import Any
@@ -14,10 +18,18 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
 
-from accounts.permissions import has_permission
+from accounts.permissions import active_roles, has_permission
 from fleet import services as s
-from fleet.models import CapabilityProfile, ConfigurationManifest, ManifestPattern, Robot
-from platform_core.interaction import ConfirmForm, UIForm, command_page, denied
+from fleet.models import (
+    BaseAuthorization,
+    CapabilityProfile,
+    ConfigurationManifest,
+    ManifestPattern,
+    PatternApproval,
+    Robot,
+)
+from platform_core.commands import Conflict
+from platform_core.interaction import ROLE_WORDS, ConfirmForm, UIForm, command_page, denied
 
 FLEET_READ = "fleet.read"
 
@@ -112,6 +124,43 @@ class ProfileForm(UIForm):
         if v is not None and v > 100:
             raise forms.ValidationError("A percentage cannot be above 100.")
         return v  # type: ignore[no-any-return]
+
+
+class PatternDecisionForm(ConfirmForm):
+    status = forms.ChoiceField(
+        label="Decision",
+        choices=PatternApproval.STATUS,
+        help_text="Approved for home use lets robots on this configuration be considered for customer homes. "
+        "Withdrawn takes that away again.",
+    )
+    reason = forms.CharField(max_length=300, label="Reason", help_text="Kept in the audit log.")
+
+
+SLOT_ROLES = {"engineering": "engineering_lead", "safety": "safety_reviewer"}
+SLOT_LABELS = {"engineering": "Engineering lead", "safety": "Safety reviewer"}
+
+
+class ProfileApprovalForm(ConfirmForm):
+    slot = forms.ChoiceField(
+        label="Approve as",
+        choices=[(k, SLOT_LABELS[k]) for k in SLOT_ROLES],
+        help_text="Each slot is approved by its own role, and one person cannot fill both.",
+    )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        offered = kwargs.pop("offered", None)
+        super().__init__(*args, **kwargs)
+        if offered is not None:
+            # only the slots this person may fill are offered; the command still decides on a posted value
+            self.fields["slot"].widget.choices = [(k, SLOT_LABELS[k]) for k in SLOT_ROLES if k in offered]  # type: ignore[attr-defined]
+
+
+class GrantAuthorizationForm(ConfirmForm):
+    pass
+
+
+class RevokeAuthorizationForm(ConfirmForm):
+    reason = forms.CharField(max_length=300, label="Reason", help_text="Kept in the audit log.")
 
 
 # ------------------------------------------------------------------ pages
@@ -247,3 +296,133 @@ def profile_new(request: HttpRequest, code: str) -> HttpResponse:
             "profiles": [{"p": p, "slots": sorted(a.slot for a in p.approvals.all())} for p in profiles],
         },
     )
+
+
+@login_required
+def pattern_decision(request: HttpRequest, code: str) -> HttpResponse:
+    pattern = get_object_or_404(ManifestPattern, code=code)
+    return command_page(
+        request,
+        permission="fleet.decide_pattern",
+        form_class=PatternDecisionForm,
+        template="fleet/setup_pattern_decision.html",
+        call=lambda actor, d: s.decide_pattern(
+            actor, pattern_code=code, status=d["status"], reason=d["reason"].strip()
+        ),
+        ok=lambda r: (
+            f"Decision recorded for configuration {code}: "
+            f"{dict(PatternApproval.STATUS)[r['status']].lower()}."
+        ),
+        success_url=f"/fleet/patterns/{code}/",
+        context={
+            "pattern": pattern,
+            "pattern_url": f"/fleet/patterns/{code}/",
+            "decision": s.pattern_status(pattern),
+            "history": list(pattern.approvals.select_related("decided_by").order_by("-id")[:5]),
+        },
+    )
+
+
+def _slot_roles_of(request: HttpRequest) -> set[str]:
+    roles = set(active_roles(request.user))
+    return {slot for slot, role in SLOT_ROLES.items() if role in roles}
+
+
+@login_required
+def profile_approve(request: HttpRequest, code: str, profile_id: int) -> HttpResponse:
+    pattern = get_object_or_404(ManifestPattern, code=code)
+    profile = get_object_or_404(
+        CapabilityProfile.objects.prefetch_related("approvals__approver"), pk=profile_id
+    )
+    if profile.pattern_id != pattern.pk:
+        return render(request, "404.html", status=404)
+    done = {a.slot: a for a in profile.approvals.all()}
+    mine = _slot_roles_of(request)
+
+    def call(actor: Any, d: dict[str, Any]) -> dict[str, Any]:
+        slot = d["slot"]
+        try:
+            return s.approve_capability_profile(actor, profile_id=profile_id, slot=slot)
+        except Conflict as exc:
+            if "requires role" in str(exc):  # the database's slot-role guard, in plain words
+                raise Conflict(
+                    f"Only {ROLE_WORDS[SLOT_ROLES[slot]]} can approve the {SLOT_LABELS[slot].lower()} slot. "
+                    "Nothing was changed."
+                ) from exc
+            raise
+
+    return command_page(
+        request,
+        permission="fleet.approve_capability",
+        form_class=ProfileApprovalForm,
+        template="fleet/setup_profile_approve.html",
+        call=call,
+        ok=lambda r: f"Approval recorded for capability profile v{profile.version_no} ({r['slot']} slot).",
+        success_url=f"/fleet/patterns/{code}/profile/approve/{profile_id}/",
+        context={
+            "pattern": pattern,
+            "profile": profile,
+            "slot_rows": [
+                {
+                    "slot": k,
+                    "label": SLOT_LABELS[k],
+                    "role_words": ROLE_WORDS[SLOT_ROLES[k]],
+                    "approval": done.get(k),
+                    "mine": k in mine,
+                }
+                for k in SLOT_ROLES
+            ],
+            "profile_url": f"/fleet/patterns/{code}/profile/",
+            "pending": [k for k in SLOT_ROLES if k not in done],
+            "mine_pending": [k for k in SLOT_ROLES if k not in done and k in mine],
+        },
+        form_kwargs={"offered": [k for k in mine if k not in done]},
+    )
+
+
+@login_required
+def robot_authorize(request: HttpRequest, code: str) -> HttpResponse:
+    robot = get_object_or_404(Robot, code=code)
+    return command_page(
+        request,
+        permission="fleet.base_authorization",
+        form_class=GrantAuthorizationForm,
+        template="fleet/setup_authorize.html",
+        call=lambda actor, d: s.grant_base_authorization(actor, robot_code=code),
+        ok=f"Home-use authorization granted for {code}. The robot still needs everything else on its "
+        "readiness list.",
+        success_url=f"/fleet/{code}/",
+        context=_auth_context(robot, revoking=False),
+    )
+
+
+@login_required
+def robot_deauthorize(request: HttpRequest, code: str) -> HttpResponse:
+    robot = get_object_or_404(Robot, code=code)
+    return command_page(
+        request,
+        permission="fleet.base_authorization",
+        form_class=RevokeAuthorizationForm,
+        template="fleet/setup_authorize.html",
+        call=lambda actor, d: s.revoke_base_authorization(actor, robot_code=code, reason=d["reason"].strip()),
+        ok=f"Home-use authorization revoked for {code}.",
+        success_url=f"/fleet/{code}/",
+        context=_auth_context(robot, revoking=True),
+    )
+
+
+def _auth_context(robot: Robot, *, revoking: bool) -> dict[str, Any]:
+    manifest = robot.current_manifest
+    pattern = manifest.pattern if manifest is not None else None
+    active = (
+        BaseAuthorization.objects.filter(robot=robot, revoked_at__isnull=True)
+        .select_related("granted_by", "pattern")
+        .first()
+    )
+    return {
+        "robot": robot,
+        "robot_url": f"/fleet/{robot.code}/",
+        "pattern": pattern,
+        "active": active,
+        "revoking": revoking,
+    }

@@ -2,6 +2,7 @@
 {% block title %}Workspace setup{% endblock %}
 {% block content %}
 {% page_header title="Set up your workspace" %}{{ done_count }} of {{ steps|length }} steps done. Setup records facts about your company. It never approves anything: approvals stay with the people who own them.{% endpage_header %}
+{% if operating_incomplete %}<div class="msg warning" role="status" data-incomplete="1"><b>Operating settings incomplete.</b> Setup is not finished: the deployment owner must provision the required operating settings. <a href="/settings/operating/">See which</a>.</div>{% endif %}
 <section class="card"><h2>Steps</h2>
 <ol class="steps">{% for s in steps %}<li><div>{% if s.done %}{% chip "info" "Done" %}{% else %}{% chip "warn" "To do" %}{% endif %}</div>
 <div class="what"><b>{{ s.title }}</b><div class="muted">{{ s.detail }}</div></div><a class="btn" href="{{ s.url }}">{{ s.action }}</a></li>{% endfor %}</ol></section>

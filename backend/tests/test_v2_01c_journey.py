@@ -8,12 +8,13 @@ model write, no seed command, no fixture: the only inputs are an empty migrated 
 WORKSPACE_BOOTSTRAP_TOKEN setting. Models are READ (never written) to assert state and to find an id no screen
 shows.
 
-Where the product has no screen for a required step, the step is logged as ``GAP: no screen`` and done with the
-smallest existing mechanism (the JSON command API over HTTP, or one deployment-setting row); each such step is
-listed in the evidence file so the EM sees what is still missing. The log is written to
-docs/evidence/01c_journey_walkthrough.md.
+The ONLY non-HTTP step is the deployment owner's provisioning of the operating settings
+(``manage.py provision_settings``, "OWNER PROVISIONING (before setup)"): those values belong to the deployment
+owner, not to any screen. There are no manual API steps and no direct model writes: the test asserts it. The log
+is written to docs/evidence/01c_journey_walkthrough.md.
 """
 
+import io
 import json
 import re
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import Client
 
 from accounts.models import RoleGrant
@@ -32,7 +34,6 @@ from fleet.models import (
     BaseAuthorization,
     CapabilityApproval,
     CapabilityProfile,
-    DeploymentSetting,
     HoldPolicyApproval,
     InspectionTemplateApproval,
     PatternApproval,
@@ -287,25 +288,6 @@ class Journey:
         self.record(actor.role, f"GET {url}", "(look at the page)", what)
         return body
 
-    def api(
-        self, actor: Actor, command: str, payload: dict[str, Any], gap: str, approves: int = 0
-    ) -> dict[str, Any]:
-        """GAP step: no screen exists. The JSON command API over HTTP, as the signed-in role."""
-        self.gap(gap)
-        before = approval_snapshot()
-        r = actor.client.post(f"/api/fleet/{command}", json.dumps(payload), content_type="application/json")
-        after = approval_snapshot()
-        assert sum(after[k] - before[k] for k in after) == approves, f"api {command}: approval count"
-        self.record(
-            actor.role,
-            f"POST /api/fleet/{command}",
-            f"GAP: no screen. {json.dumps(payload)}",
-            f"HTTP {r.status_code}",
-        )
-        assert r.status_code == 201, f"api {command} -> {r.status_code} {r.content[:300]!r}"
-        out: dict[str, Any] = r.json()
-        return out
-
 
 def tomorrow_la() -> datetime:
     return datetime.now(LA) + timedelta(days=1)
@@ -318,6 +300,24 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         "the journey starts from an empty database"
     )
     assert not Workspace.objects.filter(initialized=True).exists()
+
+    # ================================================================== 0. owner provisioning (before setup)
+    out = io.StringIO()
+    call_command(
+        "provision_settings",
+        consent_form_version="CF-v1",
+        pre_visit_inspection_min="30",
+        with_defaults=True,
+        stdout=out,
+    )
+    assert "set ops_readiness_lookahead_min = 2880" in out.getvalue()
+    j.record(
+        "deployment owner",
+        "manage.py provision_settings",
+        "consent_form_version=CF-v1, pre_visit_inspection_min=30, --with-defaults (ops_readiness_lookahead_min=2880)",
+        "OWNER PROVISIONING (before setup): " + short(" / ".join(out.getvalue().split("\n")), 120),
+    )
+    assert approval_snapshot() == dict.fromkeys(approval_snapshot(), 0), "provisioning approved nothing"
 
     # ================================================================== 1. first-run setup
     visitor = Client()
@@ -443,12 +443,19 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         expect="Configuration P-J added.",
         what="configuration pattern P-J (a proposal)",
     )
-    j.api(
+    j.view(
         lead,
-        "decide-pattern",
-        {"pattern_code": "P-J", "status": "approved_home", "reason": "Journey: approve for home use"},
-        "Approve a configuration for home use (engineering lead): no screen, only POST /api/fleet/decide-pattern",
+        "/fleet/patterns/P-J/",
+        "Configuration page: no decision yet, the engineering lead gets the decide button",
+        expect=("none yet", "/fleet/patterns/P-J/decision/"),
+    )
+    j.submit(
+        lead,
+        "/fleet/patterns/P-J/decision/",
+        {"status": "approved_home", "reason": "Journey: approve for home use", "confirm": "on"},
         approves=1,
+        expect="Decision recorded for configuration P-J",
+        what="approve configuration P-J for home use (confirm step)",
     )
     j.submit(
         eng,
@@ -465,25 +472,29 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         expect="published as a draft",
         what="publish the capability profile (draft)",
     )
-    profile = CapabilityProfile.objects.get(
-        pattern__code="P-J", version_no=1
-    )  # READ: no screen shows the profile id
-    j.gap(
-        "The capability profile page shows a draft but no approve button and no profile id; approving is API only"
-    )
-    j.api(
+    profile = CapabilityProfile.objects.get(pattern__code="P-J", version_no=1)  # READ: to assert the id
+    body = j.view(
         lead,
-        "approve-capability-profile",
-        {"profile_id": profile.pk, "slot": "engineering"},
-        "Approve a capability profile (engineering lead / safety reviewer): no screen, only POST /api/fleet/approve-capability-profile",
-        approves=1,
+        "/fleet/patterns/P-J/profile/",
+        "Capability profile page shows the draft with its id and a link to the approval screen",
+        expect=(f"profile id {profile.pk}", f"/fleet/patterns/P-J/profile/approve/{profile.pk}/"),
     )
-    j.api(
-        safety,
-        "approve-capability-profile",
-        {"profile_id": profile.pk, "slot": "safety"},
-        "Approve a capability profile (engineering lead / safety reviewer): no screen, only POST /api/fleet/approve-capability-profile",
+    approve_url = f"/fleet/patterns/P-J/profile/approve/{profile.pk}/"
+    j.submit(
+        lead,
+        approve_url,
+        {"slot": "engineering", "confirm": "on"},
         approves=1,
+        expect="Approval recorded for capability profile v1",
+        what="capability profile v1: engineering approval (engineering lead)",
+    )
+    j.submit(
+        safety,
+        approve_url,
+        {"slot": "safety", "confirm": "on"},
+        approves=1,
+        expect="Approval recorded for capability profile v1",
+        what="capability profile v1: safety approval (safety reviewer)",
     )
     j.view(lead, "/fleet/patterns/", "Configurations list: P-J has an approved profile", expect=("P-J",))
     j.submit(
@@ -520,12 +531,13 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         expect="moved to in service",
         what="lifecycle: in service",
     )
-    j.api(
+    j.submit(
         lead,
-        "grant-base-authorization",
-        {"robot_code": "R-J1"},
-        "Base home-use authorization of a robot (engineering lead): no screen, only POST /api/fleet/grant-base-authorization",
+        "/fleet/R-J1/authorize/",
+        {"confirm": "on"},
         approves=1,
+        expect="Home-use authorization granted for R-J1",
+        what="grant R-J1's base home-use authorization (confirm step)",
     )
     assert Robot.objects.get(code="R-J1").lifecycle == "in_service"
 
@@ -653,20 +665,11 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         expect="safety approval recorded",
         what="readiness policy v1: safety approval",
     )
-    j.gap(
-        "No screen sets deployment settings: consent_form_version and pre_visit_inspection_min (needed for consent and planning)"
-    )
-    DeploymentSetting.objects.update_or_create(
-        key="consent_form_version", defaults={"value": "CF-v1"}
-    )  # GAP: no screen
-    DeploymentSetting.objects.update_or_create(
-        key="pre_visit_inspection_min", defaults={"value": "30"}
-    )  # GAP: no screen
-    j.record(
-        "(no screen)",
-        "GAP: no screen",
-        "deployment settings consent_form_version=CF-v1, pre_visit_inspection_min=30",
-        "Written with one existing setting row each (non-HTTP step, GAP)",
+    j.view(
+        admin,
+        "/settings/operating/",
+        "Operating settings (read only): the owner's provisioned values are shown",
+        expect=("CF-v1", "2880", "the deployment owner (via provision_settings)"),
     )
 
     # ================================================================== 6. periodic inspection through the form
@@ -859,33 +862,10 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         absent=("Approved to leave by",),
     )
     assert "data-approved-to-leave" not in page
-    j.view(
-        ops,
-        "/ops/",
-        "Today, readiness lookahead not configured: the complete checklist is NOT shown (visit stays 'Scheduled / Checklist not checked yet')",
-        expect=(f'data-visit="{visit}" data-status="scheduled"', "Checklist not checked yet"),
-        absent=("data-approved-to-leave",),
-    )
-    j.findings.append(
-        "Today shows a visit whose checklist is complete as 'Scheduled / Checklist not checked yet' until the deployment threshold "
-        "ops_readiness_lookahead_min is set, and no screen sets it (Today also lists THRESHOLD_NOT_CONFIGURED cards for it). GAP: no screen."
-    )
-    j.gap(
-        "No screen sets the Today thresholds (ops_readiness_lookahead_min, ops_closeout_timezone, ...): until set, Today shows 'Checklist not checked yet'"
-    )
-    DeploymentSetting.objects.update_or_create(
-        key="ops_readiness_lookahead_min", defaults={"value": "2880"}
-    )  # GAP: no screen
-    j.record(
-        "(no screen)",
-        "GAP: no screen",
-        "deployment setting ops_readiness_lookahead_min=2880",
-        "Written with one existing setting row",
-    )
     today_before = j.view(
         ops,
         "/ops/",
-        "Today after the lookahead is set: 'Checklist complete, waiting for approval' (neutral, not green)",
+        "Today (lookahead provisioned by the owner): 'Checklist complete, waiting for approval' (neutral, not green)",
         expect=(f'data-visit="{visit}" data-status="ready"', "Checklist complete, waiting for approval"),
         absent=("data-approved-to-leave",),
     )
@@ -942,6 +922,10 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
     def role_of(user: Any) -> set[str]:
         return {g.role for g in RoleGrant.objects.filter(user=user, revoked_at__isnull=True)}
 
+    assert not j.gaps and not any("GAP" in s["submitted"] or "/api/" in s["url"] for s in j.log), (
+        "no manual API step and no GAP step: every step is a screen (or the one owner provisioning step)"
+    )
+    assert sum(1 for s in j.log if s["url"] == "manage.py provision_settings") == 1
     for a in PatternApproval.objects.all():
         assert "engineering_lead" in role_of(a.decided_by)
     for a in CapabilityApproval.objects.all():
@@ -963,7 +947,6 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
 
     j.findings += [
         "Readiness policy: the author cannot approve it, so a second engineering lead user is needed for the engineering slot (the journey creates two).",
-        "The capability profile page says approval happens 'on the approval screen', but no such screen exists (approve-capability-profile is API only).",
         "No screen shows or sets demo mode; the journey therefore ran under production rules (approved procedure policy, engineering-document template and rule).",
         "Today still lists two 'Needs your attention' setup cards for the new workspace (escalation deadlines not set up, closeout time zone not set); both are deployment/owner settings with no screen.",
     ]
@@ -979,7 +962,7 @@ def write_evidence(j: Journey, visit: str, counts: dict[str, int]) -> None:
         "ops lead approved to leave. Production rules apply (workspace is NOT in demo mode): the inspection template,",
         "periodic rule and readiness policy are approved records, not synthetic demo items.",
         "",
-        f"Result: **PASS**. {len(j.log)} steps (the GAP steps marked in the log are the only ones not done through a screen; two of them are not even HTTP). Final visit: `{visit}` with robot R-J1, approved to leave by the ops lead.",
+        f"Result: **PASS**. {len(j.log)} steps (every step is a screen, except the one OWNER PROVISIONING step before setup, which is a management command). Final visit: `{visit}` with robot R-J1, approved to leave by the ops lead.",
         "",
         "Approval records at the end (created only by the approval steps below, never by a setup screen; the test asserts",
         "that every non-approval step added zero):",

@@ -14,6 +14,16 @@
   {% if can.check_eligibility %}<form method="post" action="check/" style="margin-top:10px">{% csrf_token %}<button class="primary">Record a locked eligibility check</button></form>{% endif %}
 </div>
 
+<div class="card" id="home-authorization">
+  <h2>Home-use authorization</h2>
+  {% can "fleet.base_authorization" as may_auth %}
+  {% if base_auth %}<p>{% chip "info" "Authorized" %} for {{ base_auth.pattern.code }}, granted by {{ base_auth.granted_by.username }}, {{ base_auth.granted_at|local_dt }}.</p>
+  {% if may_auth %}<a class="btn" href="/fleet/{{ robot.code }}/authorize/revoke/">Revoke authorization</a>{% endif %}
+  {% else %}<p>{% chip "warn" "Not authorized" %} Engineering has not authorized this robot for home use.</p>
+  {% if may_auth %}{% if manifest %}<a class="btn primary" href="/fleet/{{ robot.code }}/authorize/">Grant authorization</a>{% else %}<p class="muted">Record a configuration first.</p>{% endif %}{% endif %}{% endif %}
+  {% if not may_auth %}<p>{% waiting_note "fleet.base_authorization" "authorization" %}</p>{% endif %}
+</div>
+
 <div class="card">
   <h2>Current configuration</h2>
   {% if manifest %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Home-use authorization{% endblock %}
+{% block content %}
+{% with t="Home-use authorization for "|add:robot.code %}{% page_header title=t back_url=robot_url back_label=robot.code %}{% if pattern %}Configuration {{ pattern.code }}.{% else %}No configuration recorded yet.{% endif %} {% if active %}Currently authorized (granted by {{ active.granted_by.username }}, {{ active.granted_at|local_dt }}).{% else %}Currently not authorized.{% endif %}{% endpage_header %}{% endwith %}
+<section class="card">
+{% if revoking %}{% include "ui/confirm_box.html" with headline="Revoking takes away this robot's home-use authorization." detail="The robot stops being eligible for planning until engineering grants it again. Only the engineering lead can do this." %}
+{% include "ui/form.html" with form=form submit="Revoke authorization" danger=True cancel_url=robot_url %}
+{% else %}{% include "ui/confirm_box.html" with headline="This authorizes the robot for home use on its current configuration." detail="Engineering is saying this robot may be used in customer homes. The robot is still not ready until the configuration is approved, the capability profile is approved and the other checks pass. Only the engineering lead can do this." %}
+{% include "ui/form.html" with form=form submit="Grant authorization" cancel_url=robot_url %}{% endif %}</section>
+{% endblock %}

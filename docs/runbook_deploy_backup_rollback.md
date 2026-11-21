@@ -142,6 +142,29 @@ right token, and the token can be removed from the environment. Setup creates no
 (`seed_dev`) marks the workspace initialized, and the migration marks any existing database that already has users as
 initialized, so the live demo can never be claimed.
 
+## 8a. Provision a new workspace (operating settings)
+
+Some settings are not on any screen: only the deployment owner sets them, with a management command (never an
+HTTP endpoint). Run it as the schema owner, before the first admin signs in:
+
+```
+DJANGO_DB_IDENTITY=owner python manage.py provision_settings \
+  --consent-form-version CF-v1 --pre-visit-inspection-min 30 --with-defaults
+```
+
+- Allowlist: `consent_form_version`, `pre_visit_inspection_min`, `ops_readiness_lookahead_min` (these three are
+  required), `ops_closeout_timezone`, `ops_custody_verify_grace_min`, `ops_return_grace_min`,
+  `ops_inspection_grace_min`, `ops_periodic_due_lookahead_min`. Anything else is refused; `demo_mode` and
+  `allow_draft_policies` can never be set this way.
+- Values come from options or `PROVISION_<KEY>` environment variables (`PROVISION_CONSENT_FORM_VERSION=CF-v1`).
+  `deploy/start.sh` runs the command after migrations when any `PROVISION_*` variable is present.
+- `--with-defaults` offers `ops_readiness_lookahead_min = 2880` (today and tomorrow) when it is not given or set.
+- It is idempotent: the same value is reported as unchanged. Replacing a different existing value needs
+  `--allow-change`. If a required value is missing the command lists it and changes nothing.
+- It takes the settings advisory lock exclusively, validates everything before writing, and records one audit
+  event. Settings > Operating settings (read-only) shows what is set; /settings/setup/ shows
+  "Operating settings incomplete" until the required values exist.
+
 ## 9. Rehearsal log
 
 | Date | What | Result |

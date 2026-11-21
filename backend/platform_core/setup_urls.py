@@ -12,6 +12,7 @@ urlpatterns = [
     path("settings/company/", setup.company_settings, name="settings-company"),
     path("settings/hubs/", setup.hub_list, name="settings-hubs"),
     path("settings/hubs/new/", setup.hub_new, name="settings-hub-new"),
+    path("settings/operating/", setup.operating_settings, name="settings-operating"),
     path("settings/users/", setup.user_list, name="settings-users"),
     path("settings/users/new/", setup.user_new, name="settings-user-new"),
     path("settings/users/<int:user_id>/", setup.user_detail, name="settings-user"),
@@ -23,6 +24,14 @@ urlpatterns = [
     path("fleet/patterns/", fleet_setup.pattern_list, name="fleet-patterns"),
     path("fleet/patterns/new/", fleet_setup.pattern_new, name="fleet-pattern-new"),
     path("fleet/patterns/<str:code>/profile/", fleet_setup.profile_new, name="fleet-profile-new"),
+    path("fleet/patterns/<str:code>/decision/", fleet_setup.pattern_decision, name="fleet-pattern-decision"),
+    path(
+        "fleet/patterns/<str:code>/profile/approve/<int:profile_id>/",
+        fleet_setup.profile_approve,
+        name="fleet-profile-approve",
+    ),
+    path("fleet/<str:code>/authorize/", fleet_setup.robot_authorize, name="fleet-authorize"),
+    path("fleet/<str:code>/authorize/revoke/", fleet_setup.robot_deauthorize, name="fleet-deauthorize"),
     path("fleet/<str:code>/manifest/", fleet_setup.robot_manifest, name="fleet-manifest"),
     path("fleet/<str:code>/lifecycle/", fleet_setup.robot_lifecycle, name="fleet-lifecycle"),
     # 01C.2 people, vehicles, crews

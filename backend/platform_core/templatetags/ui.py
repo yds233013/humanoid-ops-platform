@@ -232,6 +232,7 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("Company", "/settings/company/", "accounts.grant_role"),
         ("Hubs", "/settings/hubs/", "accounts.grant_role"),
         ("People and roles", "/settings/users/", "accounts.grant_role"),
+        ("Operating settings", "/settings/operating/", "platform_core.read_operating_settings"),
         ("Hold release policies", "/fleet/hold-policies/", "fleet.read"),
         ("Readiness policies", "/readiness/policies/", "readiness.read"),
         ("Incident policies", "/execution/policies/", "execution.read"),

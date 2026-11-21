@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Decide on a configuration{% endblock %}
+{% block content %}
+{% with t="Decision for configuration "|add:pattern.code %}{% page_header title=t back_url=pattern_url back_label=pattern.code %}Hardware {{ pattern.hardware_rev }}, release {{ pattern.release }}, firmware {{ pattern.firmware_set }}. Current decision: <b data-decision="{{ decision }}">{% if decision == "none" %}none yet{% else %}{{ decision }}{% endif %}</b>.{% endpage_header %}{% endwith %}
+<section class="card">
+{% include "ui/confirm_box.html" with headline="This is the company's decision about home use." detail="Approving for home use does not make any robot ready by itself: each robot still needs its own authorization, an approved capability profile and the other checks. Only the engineering lead can decide. The decision is kept in the audit log." %}
+{% include "ui/form.html" with form=form submit="Record decision" cancel_url=pattern_url %}</section>
+{% if history %}<section class="card"><h2>Earlier decisions</h2>{% for h in history %}<p>{{ h.get_status_display }} · {{ h.decided_at|local_dt }} · {{ h.decided_by.username }}{% if h.reason %}<br><span class="muted">{{ h.reason }}</span>{% endif %}</p>{% endfor %}</section>{% endif %}
+{% endblock %}
