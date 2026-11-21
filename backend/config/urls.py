@@ -4,7 +4,6 @@ from django.urls import include, path
 from accounts import api as accounts_api
 from fleet import api as fleet_api
 from fleet import views as fleet_views
-from planning import views as planning_views
 from platform_core import api as core_api
 from platform_core import views as core_views
 
@@ -53,15 +52,10 @@ urlpatterns = [
     path("fleet/<str:code>/rebase/", fleet_views.rebase_request_view),
     path("fleet/<str:code>/rebase/approve/", fleet_views.rebase_approve_view),
     # Slice 2: planner
-    path("planning/", planning_views.week, name="planning-week"),
     path("readiness/", include("readiness.urls")),
     path("execution/", include("execution.urls")),
     path("ops/capacity/", include("capacity.urls")),
     path("ops/", include("operations.urls")),
+    path("planning/", include("planning.urls")),
     path("api/ops/", include("operations.api")),
-    path("planning/sites/", planning_views.sites),
-    path("planning/visits/<str:code>/", planning_views.visit_detail, name="planning-visit"),
-    path("planning/visits/<str:code>/plan/", planning_views.plan_view),
-    path("planning/visits/<str:code>/confirm/", planning_views.confirm_view),
-    path("planning/visits/<str:code>/cancel/", planning_views.cancel_view),
 ]

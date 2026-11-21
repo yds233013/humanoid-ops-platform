@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% load ui planning_forms %}
+{% block title %}Add customer home{% endblock %}
+{% block content %}
+{% page_header title="Add customer home" back_url="/planning/sites/" back_label="Customers" %}Only a code, an area, a time zone and the CRM reference are stored. Never type names, addresses or contact details.{% endpage_header %}
+{% if can_add %}<div class="card"><form method="post" action="/planning/sites/new/">{% csrf_token %}{% form_token %}
+{% for f in form %}{% include "planning/_field.html" %}{% endfor %}
+<button class="primary">Add home</button></form></div>
+{% else %}<p class="waiting">{{ who_add }}</p>{% endif %}
+{% endblock %}
