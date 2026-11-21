@@ -202,14 +202,17 @@ NAV: list[tuple[str, str, str, str | None, tuple[str, ...]]] = [
 # Section links shown under the header (the "pages" of each section).
 SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     "today": [
-        ("Robot status", "/ops/", "operations.read"),
+        ("Today", "/ops/", "operations.read"),
         ("Timeline", "/ops/timeline/", "operations.read"),
     ],
     "dispatch": [
         ("Planner", "/planning/", "planning.read"),
         ("Departure readiness", "/readiness/", "readiness.read"),
     ],
-    "fleet": [("Robots", "/fleet/", "fleet.read")],
+    "fleet": [
+        ("Robots", "/fleet/", "fleet.read"),
+        ("Robot status", "/ops/robots/", "operations.read"),
+    ],
     "customers": [("Sites", "/planning/sites/", "planning.read")],
     "hub": [
         ("Daily close-out", "/ops/closeout/", "operations.read"),
@@ -225,6 +228,7 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("Readiness policies", "/readiness/policies/", "readiness.read"),
         ("Incident policies", "/execution/policies/", "execution.read"),
         ("Escalation deadlines", "/execution/escalation-deadlines/", "execution.read"),
+        ("Production readiness", "/ops/production-readiness/", "operations.read"),
     ],
     "reports": [
         ("Metrics", "/ops/metrics/", "operations.metrics"),
@@ -238,6 +242,8 @@ SECTION_PREFIXES: list[tuple[str, str]] = [
     ("/readiness/policies/", "settings"),
     ("/execution/policies/", "settings"),
     ("/execution/escalation-deadlines/", "settings"),
+    ("/ops/production-readiness/", "settings"),
+    ("/ops/robots/", "fleet"),
     ("/ops/metrics/", "reports"),
     ("/ops/capacity/", "reports"),
     ("/planning/sites/", "customers"),

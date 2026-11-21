@@ -39,8 +39,9 @@ READ_ROLES = sorted(PERMISSIONS["operations.read"])
 METRICS_ROLES = sorted(PERMISSIONS["operations.metrics"])
 READ_ONLY_ROLES = sorted(PERMISSIONS["operations.read"] - PERMISSIONS["operations.metrics"])
 PAGES = ["/ops/", "/ops/exceptions/", "/ops/incidents/", "/ops/timeline/"]
+V2_PAGES = ["/ops/robots/", "/ops/production-readiness/"]  # v2 01B: split out of the old /ops/ page
 APIS = ["/api/ops/overview", "/api/ops/exceptions", "/api/ops/incidents", "/api/ops/timeline"]
-ALL_ENDPOINTS = [*PAGES, "/ops/metrics/", *APIS, "/api/ops/metrics"]
+ALL_ENDPOINTS = [*PAGES, *V2_PAGES, "/ops/metrics/", *APIS, "/api/ops/metrics"]
 FORBIDDEN_WORDS = re.compile(r"\b(cleared|safe|ready to deploy|available to deploy)\b", re.IGNORECASE)
 # Requests that are fully handled before any read model runs (invalid parameter -> 400 inside the snapshot).
 BAD_PARAM_PAGES = [
@@ -225,7 +226,9 @@ def test_atomic_requests_true_still_403_without_permission(atomic_requests, url)
 @pytest.mark.parametrize(
     "view",
     [
-        views.overview,
+        views.today_page,
+        views.robot_status_page,
+        views.production_readiness_page,
         views.exceptions_page,
         views.incidents_page,
         views.timeline_page,
@@ -251,7 +254,9 @@ def test_nested_transaction_fails_closed_with_503_and_no_data(view):
 
 def test_views_are_marked_non_atomic():
     for v in [
-        views.overview,
+        views.today_page,
+        views.robot_status_page,
+        views.production_readiness_page,
         views.exceptions_page,
         views.incidents_page,
         views.timeline_page,
@@ -366,7 +371,7 @@ def test_every_read_role_renders_every_page_with_as_of_banner_and_wording():
     world()
     for role in READ_ROLES:
         c = client(role, name=f"u_{role}")
-        urls = [*PAGES, "/ops/metrics/"] if role in METRICS_ROLES else PAGES
+        urls = [*PAGES, *V2_PAGES, "/ops/metrics/"] if role in METRICS_ROLES else [*PAGES, *V2_PAGES]
         for url in urls:
             r = c.get(url)
             assert r.status_code == 200, (role, url, r.status_code)
@@ -386,7 +391,7 @@ def test_every_read_role_renders_every_page_with_as_of_banner_and_wording():
 def test_rows_and_content_present():
     w = world()
     c = client("ops_lead")
-    overview = c.get("/ops/").content.decode()
+    overview = c.get("/ops/robots/").content.decode()
     assert {"R-01", "R-02", "R-03"} <= set(_rows(overview, "data-robot"))
     assert "Ready to deploy" not in overview and "Available to deploy" not in overview
     exc = c.get("/ops/exceptions/").content.decode()
@@ -446,7 +451,7 @@ def test_api_and_page_have_the_same_order_as_of_and_coverage():
     assert set(data) >= {"as_of", "items", "readiness_coverage", "next_cursor", "page"}
     assert data["readiness_coverage"]["complete"] is True and "data-coverage" not in page
     pairs = [
-        ("/ops/", "/api/ops/overview", "data-robot", lambda d: [r["robot"] for r in d["robots"]]),
+        ("/ops/robots/", "/api/ops/overview", "data-robot", lambda d: [r["robot"] for r in d["robots"]]),
         (
             "/ops/incidents/",
             "/api/ops/incidents",
@@ -618,8 +623,15 @@ def test_statement_budget_per_endpoint_constant_in_fleet_size():
 
     w = world()
     c = client("ops_lead")
-    plain = ["/ops/", "/ops/incidents/", "/api/ops/overview", "/api/ops/incidents"]
+    plain = [
+        "/ops/robots/",
+        "/ops/production-readiness/",
+        "/ops/incidents/",
+        "/api/ops/overview",
+        "/api/ops/incidents",
+    ]
     evaluating = [
+        "/ops/",  # v2 01B: Today runs the readiness evaluator through the timeline
         "/ops/exceptions/",
         "/api/ops/exceptions",
         "/ops/timeline/",
@@ -640,7 +652,9 @@ def test_statement_budget_per_endpoint_constant_in_fleet_size():
     report(w, "R-02")
     big = {u: _count(c, u) for u in plain + evaluating}
     for u, n in small.items():
-        assert n <= 12, (u, n)
+        # Today (v2 01B) has a fixed floor of its own: one savepoint per section plus the timeline, inbox,
+        # fleet, blockers and approval reads; with the evaluator off it is still constant in fleet size
+        assert n <= (30 if u == "/ops/" else 12), (u, n)
     assert small == big, (small, big)
 
 

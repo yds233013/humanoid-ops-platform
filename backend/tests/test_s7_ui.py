@@ -196,19 +196,21 @@ def test_every_new_form_carries_a_csrf_token_and_posts_without_it_are_refused(w)
 # ------------------------------------------------------------------ labels
 def test_overview_blocker_panel_demo_and_production(w):
     c = client("ops_lead", name="o7")
-    body = c.get("/ops/").content.decode()
+    # v2 01B: the blocker panel lives on Settings > Production readiness, the robot table on /ops/robots/
+    body = c.get("/ops/production-readiness/").content.decode()
     assert "Would block in production" in body and 'data-mode="demo"' in body
     assert "would block in production" in body
     assert 'data-blocker="HOLD_POLICY_NOT_APPROVED"' in body
     assert 'data-blocker="PERIODIC_INTERVAL_NOT_APPROVED"' in body
-    assert 'data-periodic="due"' in body and "SYNTHETIC demo interval, not an engineering value" in body
+    robots = c.get("/ops/robots/").content.decode()
+    assert 'data-periodic="due"' in robots and "SYNTHETIC demo interval, not an engineering value" in robots
     assert "Demo workspace" in body
     api = c.get("/api/ops/production-blockers").json()
     assert api["production"] is False and api["heading"] == "Would block in production"
     codes = {i["code"] for i in api["items"]}
     assert {"HOLD_POLICY_NOT_APPROVED", "INSPECTION_TEMPLATE_NOT_APPROVED"} <= codes
     set_setting("demo_mode", "false")
-    body = c.get("/ops/").content.decode()
+    body = c.get("/ops/production-readiness/").content.decode()
     assert "Production blockers" in body and 'data-mode="production"' in body
     assert "would block in production" not in body and "Demo workspace" not in body
     inbox = c.get("/api/ops/exceptions").json()["items"]
@@ -404,7 +406,8 @@ def _count(c: Client, url: str) -> int:
 def test_new_ops_endpoints_statement_budget_constant_in_fleet_size(w):
     c = client("ops_lead", name="b7")
     urls = [
-        "/ops/",
+        "/ops/robots/",
+        "/ops/production-readiness/",
         "/api/ops/overview",
         "/ops/closeout/",
         "/api/ops/closeout",

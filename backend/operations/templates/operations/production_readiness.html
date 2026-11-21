@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Production readiness{% endblock %}
+{% block content %}
+{% include "operations/_chrome.html" %}
+{% page_header title="Production readiness" back_url="/ops/" back_label="Today" %}Company decisions still needed before this can be used for real.{% endpage_header %}
+{% with pb=production_blockers %}<div class="card op-blockers{% if pb.production %} prod{% endif %}" data-blockers="{{ pb.items|length }}" data-mode="{% if pb.production %}production{% else %}demo{% endif %}">
+<h2>{{ pb.heading }}</h2>
+<p class="muted">{{ pb.note }} These are checked as for production in every mode; no setting hides them. An empty list is not an approval or a sign-off.</p>
+{% if pb.items %}<div class="tablewrap"><table><thead><tr><th>Item</th><th>About</th><th>What is missing</th><th>Review</th></tr></thead><tbody>
+{% for b in pb.items %}<tr data-blocker="{{ b.code }}" data-ref="{{ b.entity_ref }}"><td><b>{{ b.label }}</b><details class="fold"><summary>Details</summary><span class="muted">{{ b.code }}</span></details></td><td>{{ b.entity_ref }}</td><td>{% if not pb.production %}<span class="badge p2">would block in production</span> {% endif %}{{ b.detail }}</td><td><a href="{{ b.url }}">Open</a></td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p class="muted">No production blocker rows in this snapshot.</p>{% endif %}
+</div>
+{% endwith %}
+{% endblock %}

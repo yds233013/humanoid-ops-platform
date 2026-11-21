@@ -7,7 +7,9 @@ from operations import views
 app_name = "operations"
 
 urlpatterns = [
-    path("", views.overview, name="overview"),
+    path("", views.today_page, name="today"),
+    path("robots/", views.robot_status_page, name="robot-status"),
+    path("production-readiness/", views.production_readiness_page, name="production-readiness"),
     path("exceptions/", views.exceptions_page, name="exceptions"),
     path("incidents/", views.incidents_page, name="incidents"),
     path("timeline/", views.timeline_page, name="timeline"),

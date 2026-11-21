@@ -1,0 +1,91 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Today{% endblock %}
+{% block extra_css %}
+.today-head{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--s3);flex-wrap:wrap;margin:var(--s2) 0 var(--s4)}
+.today-head .op-asof{margin:var(--s1) 0 0}
+.tilegroup{margin:0 0 var(--s4)} .tilegroup h2{font-size:var(--fs-sm);color:var(--soft);text-transform:uppercase;letter-spacing:.4px;margin:0 0 var(--s2)}
+.tiles{display:flex;gap:var(--s2);flex-wrap:wrap}
+.tile{display:flex;flex-direction:column;min-width:104px;flex:1 1 104px;max-width:190px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s2) var(--s3);text-decoration:none;color:var(--ink)}
+a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-height:1.15;font-variant-numeric:tabular-nums} .tile span{font-size:var(--fs-sm);color:var(--soft)}
+.tile.warn{background:var(--amberbg);border-color:var(--amberline)} .tile.bad{background:var(--redbg);border-color:var(--redline)} .tile.info{background:var(--bluebg);border-color:var(--blueline)}
+.tile.off{border-style:dashed;color:var(--soft)}
+.sec{margin:0 0 var(--s5)} .sec>h2{font-size:var(--fs-lg);margin:0 0 var(--s2)} .sec>h2 small{font-weight:400;color:var(--soft);font-size:var(--fs-sm)}
+.vlist{list-style:none;margin:0 0 var(--s3);padding:0;display:flex;flex-direction:column;gap:var(--s2)}
+.vrow{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--s1) var(--s3);align-items:start}
+.vrow .vcode{font-weight:700} .vrow .vstatus{text-align:right} .vrow .vdetail{grid-column:1 / -1;font-size:var(--fs-sm)}
+.vrow ul{margin:var(--s1) 0 0;padding-left:18px} .vrow .decision{margin:var(--s1) 0 0;font-size:var(--fs-sm)}
+.vrow[data-status=blocked]{border-left:4px solid var(--red)} .vrow[data-status=at_risk]{border-left:4px solid var(--amberline)} .vrow[data-status=approved]{border-left:4px solid var(--blue)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--s3)}
+.acard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);display:flex;flex-direction:column;gap:var(--s2)}
+.acard.p1{border-left:4px solid var(--red)} .acard.p2{border-left:4px solid var(--amberline)} .acard.p3{border-left:4px solid var(--blueline)}
+.acard .btn{text-decoration:none;display:inline-block} .acard h3{margin:0;font-size:var(--fs-base)} .acard p{margin:0;font-size:var(--fs-sm)} .acard .next{margin-top:auto;padding-top:var(--s1)}
+.strip{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--neutralbg);border:1px solid var(--line);margin:0 0 var(--s2)}
+.strip i{display:block;min-width:4px} .strip .g-available{background:var(--blue)} .strip .g-assigned{background:#8FB2D6} .strip .g-out{background:#5B6B80} .strip .g-on_hold{background:var(--amberline)} .strip .g-not_in_service{background:var(--red)}
+.legend{display:flex;gap:var(--s3);flex-wrap:wrap;font-size:var(--fs-sm)} .legend a{color:var(--ink)}
+.prodline{margin:var(--s4) 0 0;padding:var(--s3) var(--s4);border:1px solid var(--line);border-radius:var(--radius);background:var(--card);font-size:var(--fs-sm)}
+@media (max-width:700px){
+  .tile{min-width:calc(50% - var(--s2));max-width:none} .cards{grid-template-columns:1fr}
+  .vrow{grid-template-columns:1fr} .vrow .vstatus{text-align:left;grid-row:2}
+  .today-head h1{font-size:var(--fs-lg)} .acard .btn{width:100%;text-align:center}
+}
+{% endblock %}
+{% block content %}
+<div class="today-head"><div><h1>Today, {{ t.local_date_text }}</h1><div class="sub muted op-asof" data-as-of="{{ as_of_iso }}">As of <b>{{ as_of_iso|local_dt }}</b> · one consistent snapshot; reload for a newer one</div></div></div>
+
+{% for n in t.notices %}<div class="notice {{ n.tone }}" role="alert" data-notice="{{ n.key }}">{{ n.text }}</div>{% endfor %}
+
+<div class="tilegroup" data-counts="visits"><h2>Visits today</h2>
+{% if t.visits_ok %}<div class="tiles">
+  <a class="tile" href="/ops/timeline/" data-count="visits"><b class="n">{{ t.visit_counts.visits }}</b><span>Visits</span></a>
+  <a class="tile" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="ready"><b class="n">{{ t.visit_counts.ready }}</b><span>Ready, waiting for approval</span></a>
+  <a class="tile info" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="approved"><b class="n">{{ t.visit_counts.approved }}</b><span>Approved to leave</span></a>
+  <a class="tile{% if t.visit_counts.at_risk %} warn{% endif %}" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="at_risk"><b class="n">{{ t.visit_counts.at_risk }}</b><span>At risk</span></a>
+  <a class="tile{% if t.visit_counts.blocked %} bad{% endif %}" href="{% if can.readiness_read %}/readiness/{% else %}/ops/timeline/{% endif %}" data-count="blocked"><b class="n">{{ t.visit_counts.blocked }}</b><span>Blocked</span></a>
+</div>{% else %}<div class="tiles"><div class="tile off" data-count-unavailable="visits"><b class="n">&ndash;</b><span>Could not load</span></div></div>{% endif %}</div>
+
+<div class="tilegroup" data-counts="robots"><h2>Robots and issues</h2>
+{% if t.robots_ok or t.issues_ok %}<div class="tiles">
+{% if t.robots_ok %}{% for key, label, n in robot_groups %}<a class="tile{% if key == 'on_hold' and n %} warn{% endif %}" href="/ops/robots/?group={{ key }}" data-count="robots-{{ key }}"><b class="n">{{ n }}</b><span>{{ label }}</span></a>{% endfor %}
+{% else %}<div class="tile off" data-count-unavailable="robots"><b class="n">&ndash;</b><span>Robots: could not load</span></div>{% endif %}
+{% if t.issues_ok %}<a class="tile{% if t.issue_count %} warn{% endif %}" href="/ops/exceptions/" data-count="issues"><b class="n">{{ t.issue_count }}{% if not t.issue_count_exact %}+{% endif %}</b><span>Open issues</span></a>
+{% else %}<div class="tile off" data-count-unavailable="issues"><b class="n">&ndash;</b><span>Issues: could not load</span></div>{% endif %}
+</div>{% else %}<div class="tiles"><div class="tile off" data-count-unavailable="robots"><b class="n">&ndash;</b><span>Could not load</span></div></div>{% endif %}</div>
+
+<section class="sec" id="attention" data-section="attention"><h2>Needs your attention</h2>
+{% if t.cards %}<div class="cards">
+{% for c in t.cards %}<article class="acard p{{ c.priority }}" data-card="{{ c.code }}" data-ref="{{ c.ref }}">
+  <h3>{{ c.what|localize_utc_text }}</h3>
+  <p><b>Why it matters:</b> {{ c.why }}</p>
+  <p><b>Owner:</b> {{ c.owner }} <span class="muted">· since {{ c.since|local_dt }}</span></p>
+  <div class="next">{% if c.can_act and c.url %}<a class="btn primary" href="{{ c.url }}" data-action="1">{{ c.action }}</a>
+  {% elif c.read_only and c.url %}<a class="btn" href="{{ c.url }}" data-action="1">{{ c.action }}</a>
+  {% else %}<span class="waiting" data-waiting="1">Waiting for the {{ c.owner }}</span>{% if c.url %} <a href="{{ c.url }}">View</a>{% endif %}{% endif %}</div>
+  <details class="fold"><summary>Details</summary><p class="muted">{{ c.code }} · {{ c.ref }}</p><p class="muted">{{ c.detail|localize_utc_text }}</p></details>
+</article>{% endfor %}
+</div>
+{% if t.more_cards %}<p class="muted" style="margin-top:var(--s3)">{{ t.more_cards }} more on the <a href="/ops/exceptions/">Issues page</a>.</p>{% endif %}
+{% elif t.issues_ok %}{% include "ui/empty.html" with title="Nothing needs your attention" text="No open issues were found." %}{% if t.coverage %}<p class="muted">Readiness was only checked for some visits (see the notice above), so this is not a full all-clear.</p>{% endif %}
+{% else %}<div class="empty"><b>Could not load the list of issues</b>It is not shown instead of showing an empty list that might be wrong.</div>{% endif %}
+</section>
+
+<section class="sec" id="visits" data-section="visits"><h2>Today and tomorrow <small>(visits that have not been closed yet)</small></h2>
+{% if t.visits_ok %}
+<h3>Today, {{ t.local_date_text }}</h3>
+{% if today_rows %}{% include "operations/_visit_rows.html" with rows=today_rows %}
+{% else %}<div class="empty" data-empty="today"><b>No visits today</b>Nothing is booked for today. {% if can.planning_read %}<a href="/planning/">Open the planner to book one</a>.{% endif %}</div>{% endif %}
+<h3>Tomorrow</h3>
+{% if tomorrow_rows %}{% include "operations/_visit_rows.html" with rows=tomorrow_rows %}
+{% else %}<div class="empty" data-empty="tomorrow"><b>No visits tomorrow</b>Nothing is booked yet. {% if can.planning_read %}<a href="/planning/">Open the planner</a>.{% endif %}</div>{% endif %}
+{% else %}<div class="empty"><b>Could not load the visits</b>They are not shown instead of showing an empty list that might be wrong.</div>{% endif %}
+</section>
+
+<section class="sec" id="fleet" data-section="fleet"><h2>Fleet</h2>
+{% if t.robots_ok %}
+{% if robot_groups %}<div class="strip" role="img" aria-label="Robots by status">{% for key, label, n in robot_groups %}{% if n %}<i class="g-{{ key }}" style="flex:{{ n }}" title="{{ label }}: {{ n }}"></i>{% endif %}{% endfor %}</div>
+<div class="legend">{% for key, label, n in robot_groups %}<a href="/ops/robots/?group={{ key }}" title="{{ robot_group_notes|get_item:key }}"><b>{{ n }}</b> {{ label|lower }}</a>{% endfor %}</div>{% endif %}
+<p class="muted" style="margin-top:var(--s2)"><a href="/ops/robots/">Detailed robot status</a></p>
+{% else %}<div class="empty"><b>Could not load the fleet</b>It is not shown instead of showing zero robots.</div>{% endif %}
+</section>
+
+{% if t.blockers_ok %}<p class="prodline" data-production-readiness="{{ t.blocker_count }}"><a href="/ops/production-readiness/">Production readiness: {% if t.blocker_count %}{{ t.blocker_count }} item{{ t.blocker_count|pluralize }} need{{ t.blocker_count|pluralize:"s," }} a company decision{% else %}no items listed{% endif %}</a></p>{% endif %}
+{% endblock %}

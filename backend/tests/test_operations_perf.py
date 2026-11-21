@@ -298,7 +298,11 @@ HTTP_CASES = {
     "/api/ops/metrics": FAST_MS,
     "/api/ops/exceptions": READINESS_MS,  # the inbox runs the readiness evaluator
     "/api/ops/timeline": READINESS_MS,
-    "/ops/": FAST_MS,
+    # v2 01B: Today runs the readiness evaluator for the visits of today and tomorrow (the timeline's cap of 10),
+    # so it has the readiness budget (contract docs/09 section 4: complex operational views < 2 s)
+    "/ops/": READINESS_MS,
+    "/ops/robots/": FAST_MS,  # the old Today page: one row per robot
+    "/ops/production-readiness/": FAST_MS,
     "/ops/incidents/": FAST_MS,
     "/ops/metrics/": FAST_MS,
     "/ops/exceptions/": READINESS_MS,

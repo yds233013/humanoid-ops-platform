@@ -370,14 +370,63 @@ def coverage_view(coverage: Any) -> dict[str, Any] | None:
 
 # ------------------------------------------------------------------ pages
 @ops_view("operations.read")
-def overview(request: HttpRequest, at: datetime) -> HttpResponse:
-    data = overview_data(at)
+def today_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    """The landing page (v2 01B): built only from the existing read models, see operations.today."""
+    from operations import today
+
+    t = today.build_today(at, request.user)
+    roles = active_roles(request.user)
+    can = {
+        perm.replace(".", "_"): bool(roles & PERMISSIONS[perm])
+        for perm in ("planning.read", "readiness.read", "fleet.read", "execution.read", "operations.read")
+    }
+    ctx = {
+        **_base(request, at, "today"),
+        "t": t,
+        "can": can,
+        "robot_groups": [(key, label, t.robot_counts.get(key, 0)) for key, label in today.ROBOT_GROUPS],
+        "robot_group_notes": today.ROBOT_GROUP_NOTES,
+        "today_rows": [r for r in t.visits if r.day == "today"],
+        "tomorrow_rows": [r for r in t.visits if r.day == "tomorrow"],
+    }
+    return render(request, "operations/today.html", ctx)
+
+
+@ops_view("operations.read")
+def robot_status_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    """The detailed one-row-per-robot table (the old Today page); ?group= filters by a Today fleet group."""
+    from operations import today
+
+    readmodels = _read_model("readmodels")
+    group = request.GET.get("group", "")
+    labels = dict(today.ROBOT_GROUPS)
+    robots = list(readmodels.fleet_overview(at))
+    if group in labels:
+        robots = [r for r in robots if today.robot_group(r.status_rule) == group]
+    else:
+        group = ""
     counts: dict[str, int] = {}
-    for r in data["robots"]:
+    for r in robots:
         label = str(field(r, "status_label", ""))
         counts[label] = counts.get(label, 0) + 1
-    ctx = {**_base(request, at, "overview"), **data, "label_counts": sorted(counts.items())}
+    ctx = {
+        **_base(request, at, "robots"),
+        "robots": robots,
+        "label_counts": sorted(counts.items()),
+        "group": group,
+        "group_label": labels.get(group, ""),
+    }
     return render(request, "operations/overview.html", ctx)
+
+
+@ops_view("operations.read")
+def production_readiness_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    readmodels = _read_model("readmodels")
+    ctx = {
+        **_base(request, at, "production-readiness"),
+        "production_blockers": readmodels.production_blockers(at),
+    }
+    return render(request, "operations/production_readiness.html", ctx)
 
 
 @ops_view("operations.read")

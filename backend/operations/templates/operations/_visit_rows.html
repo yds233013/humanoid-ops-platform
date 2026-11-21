@@ -1,0 +1,10 @@
+{% load ui %}<ul class="vlist">
+{% for r in rows %}<li class="vrow" data-visit="{{ r.code }}" data-status="{{ r.status }}" data-kind="{{ r.kind }}">
+  <div><a class="vcode" href="{{ r.url }}">{{ r.code }}</a> <span class="muted">{% if r.robot %}robot {{ r.robot }}{% else %}no robot yet{% endif %} · {{ r.start|local_dt }} to {{ r.end|local_time }}</span></div>
+  <div class="vstatus">{% chip r.tone r.label %}</div>
+  <div class="vdetail">{% if r.approval %}<p class="decision" data-approved-to-leave="1">Approved to leave by <b>{{ r.approval.by }}</b> at <b>{{ r.approval.at|local_dt }}</b>, valid until <b>{{ r.approval.until|local_dt }}</b>, for visit <b>{{ r.approval.visit }}</b> with robot <b>{{ r.approval.robot }}</b>.</p>{% endif %}
+  {% if r.why %}<ul>{% for w in r.why %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
+  {% if r.note %}<span class="muted">{{ r.note }}</span>{% endif %}
+  {% if r.run_url %}<div class="muted"><a href="{{ r.run_url }}">Open the trip</a></div>{% endif %}</div>
+</li>{% endfor %}
+</ul>

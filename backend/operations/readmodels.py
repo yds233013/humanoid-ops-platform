@@ -298,8 +298,8 @@ class BlockerPanel:
                 "the platform never supplies one."
             )
         return (
-            "This is a SYNTHETIC demo deployment. Each item below would block authorization, release or "
-            "visibility in production; demo mode keeps working on clearly labelled synthetic inputs."
+            "These items block real production use. Each one needs a company decision recorded with its "
+            "approvals. In this demo workspace they do not stop the demo from working."
         )
 
 
