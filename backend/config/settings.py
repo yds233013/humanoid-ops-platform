@@ -22,6 +22,9 @@ def env(name: str, default: str | None = None) -> str:
 SECRET_KEY = env("DJANGO_SECRET_KEY", "dev-only-insecure-key-change-me")
 DEBUG = env("DJANGO_DEBUG", "true").lower() == "true"
 ALLOWED_HOSTS = [h for h in env("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h]
+CSRF_TRUSTED_ORIGINS = [o for o in env("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o]
+if not DEBUG:  # behind the host's HTTPS proxy (hosted demo)
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 INSTALLED_APPS = [
     "django.contrib.auth",

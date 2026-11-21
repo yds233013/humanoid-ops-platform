@@ -6,3 +6,4 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 EXPOSE 8000
+CMD ["sh", "deploy/start.sh"]

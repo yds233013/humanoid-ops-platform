@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "django>=5.1,<5.2",
     "djangorestframework>=3.15,<3.16",
+    "gunicorn>=27.0.1",
     "openpyxl>=3.1.5",
     "psycopg[binary]>=3.2,<3.3",
 ]
