@@ -42,7 +42,7 @@
   {% for a in auths %}<tr>
     <td><b>{{ a.auth.code }}</b></td>
     <td><span class="badge {{ a.state }}">{{ a.label }}</span>
-      {% if a.reasons %}<ul class="reasons">{% for x in a.reasons %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+      {% if a.reasons %}<ul class="reasons">{% for x in a.reasons %}<li>{{ x|localize_utc_text }}</li>{% endfor %}</ul>{% endif %}
       {% if a.revocation %}<div class="muted">Revoked by {{ a.revocation.revoked_by.username }}: {{ a.revocation.reason }}</div>{% endif %}</td>
     <td>{{ a.auth.issued_at|local_dt }}<div class="muted">by {{ a.auth.issued_by.username }}</div></td>
     <td><b>{{ a.auth.expires_at|local_dt }}</b></td>
@@ -54,7 +54,7 @@
       {% endif %}
       {% if can.revoke_authorization and a.state != "revoked" and a.state != "used" %}
       <form method="post" action="/readiness/authorizations/{{ a.auth.code }}/revoke/" class="inline">{% csrf_token %}{% form_token %}
-        <input name="reason" placeholder="Revocation reason (required)"><button class="primary">Revoke</button></form>
+        <input name="reason" placeholder="Revocation reason (required)" aria-label="Revocation reason (required)"><button class="primary">Revoke</button></form>
       {% endif %}
     </td></tr>
   {% empty %}<tr><td colspan="6" class="muted">No authorizations for this visit.</td></tr>{% endfor %}
@@ -82,7 +82,7 @@
     <td class="keep">{% if e.void %}<span class="badge revoked">Voided</span><div class="muted">{{ e.void.voided_by.username }}: {{ e.void.reason }}</div>
         {% else %}{% if e.current %}Active{% else %}<span class="muted">Earlier revision r{{ e.ev.revision.revision_no }}</span>{% endif %}
         {% if can.record_evidence %}<form method="post" action="/readiness/visits/{{ visit.code }}/void/" class="inline">{% csrf_token %}{% form_token %}
-          <input type="hidden" name="evidence" value="{{ e.ev.code }}"><input name="reason" placeholder="Void reason (required)"><button class="primary">Void</button></form>{% endif %}
+          <input type="hidden" name="evidence" value="{{ e.ev.code }}"><input name="reason" placeholder="Void reason (required)" aria-label="Void reason (required)"><button class="primary">Void</button></form>{% endif %}
         {% endif %}</td></tr>
   {% empty %}<tr><td colspan="7" class="muted">No evidence recorded.</td></tr>{% endfor %}
   </tbody></table></div>

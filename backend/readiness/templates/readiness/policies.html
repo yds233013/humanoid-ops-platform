@@ -18,7 +18,7 @@
         <input type="hidden" name="slot" value="{{ a.slot }}"><button class="primary">Approve {{ a.slot }}</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
   <td><pre>{{ r.requirements }}</pre></td>
   <td>{% if can.withdraw_policy and r.status != 'withdrawn' %}<form method="post" action="/readiness/policies/{{ r.policy.version }}/withdraw/" class="inline">{% csrf_token %}{% form_token %}
-      <input name="reason" placeholder="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
+      <input name="reason" placeholder="Withdrawal reason (required)" aria-label="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
 </tr>{% empty %}<tr><td colspan="6" class="muted">No readiness policies yet.</td></tr>{% endfor %}
 </tbody></table></div>
 {% if can.manage_policy %}

@@ -10,7 +10,7 @@
 
 <div class="card"><h2>Adults in the home</h2>
 <p>Expected adults: <b>{{ site.expected_adults|default:"not set" }}</b>. Consent is checked against this number.</p>
-{% if can.manage %}<form method="post" action="/planning/sites/{{ site.code }}/adults/" class="row">{% csrf_token %}{% form_token %}{{ adults_form.expected_adults }}<button class="primary">Save</button></form>
+{% if can.manage %}<form method="post" action="/planning/sites/{{ site.code }}/adults/" class="row">{% csrf_token %}{% form_token %}<label for="{{ adults_form.expected_adults.id_for_label }}">Number of adults living here</label> {{ adults_form.expected_adults }}<button class="primary">Save</button></form>
 {% else %}<p class="waiting">{{ who.manage }}</p>{% endif %}</div>
 
 <div class="card"><h2>Assessments</h2>

@@ -90,6 +90,8 @@ def local_date(value: Any) -> str:
 
 _UTC_STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})? ?UTC")
 _UTC_CLOCK = re.compile(r"\b(\d{2}:\d{2}) UTC\b")
+# ISO-8601 instants with an offset (e.g. "2026-11-20T06:29:07.123+00:00") in model-produced reasons
+_ISO_INSTANT = re.compile(r"\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))")
 
 
 @register.filter
@@ -105,6 +107,10 @@ def localize_utc_text(text: Any) -> str:
         today = datetime.now(UTC).date().isoformat()
         return local_dt(datetime.fromisoformat(f"{today}T{m.group(1)}:00+00:00"))
 
+    def iso(m: re.Match[str]) -> str:
+        return local_dt(datetime.fromisoformat(m.group(1).replace("Z", "+00:00")))
+
+    out = _ISO_INSTANT.sub(iso, out)
     return _UTC_CLOCK.sub(clock, _UTC_STAMP.sub(stamp, out))
 
 

@@ -67,7 +67,7 @@
   {% if can.place_hold %}<form method="post" action="hold/" class="row" style="margin-top:12px">{% csrf_token %}
     <select name="source_type"><option value="manual">Manual</option><option value="engineering">Engineering</option>
       <option value="maintenance">Maintenance</option><option value="incident">Incident</option></select>
-    <input name="source_ref" placeholder="Reference (e.g. INC-002)"><input name="reason" placeholder="Reason (required)" size="30">
+    <input name="source_ref" placeholder="Reference (e.g. INC-002)" aria-label="Reference (e.g. INC-002)"><input name="reason" placeholder="Reason (required)" size="30" aria-label="Reason (required)">
     <button class="primary">Place hold</button></form>{% endif %}
 </div>
 

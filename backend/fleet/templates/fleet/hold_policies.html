@@ -14,7 +14,7 @@
   <td>{% for sl in r.slots %}<div>{{ sl.label }}: {% if sl.approval %}{{ sl.approval.approver.username }}{% else %}<span class="muted">pending</span>{% if can.approve_hold_policy and not r.withdrawal %}
     <form method="post" action="/fleet/hold-policies/{{ r.policy.version }}/approve/" style="display:inline">{% csrf_token %}<input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve {{ sl.slot }}</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
   <td><pre>{{ r.rules }}</pre></td>
-  <td>{% if can.withdraw_hold_policy and not r.withdrawal %}<form method="post" action="/fleet/hold-policies/{{ r.policy.version }}/withdraw/" class="row">{% csrf_token %}<input name="reason" placeholder="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
+  <td>{% if can.withdraw_hold_policy and not r.withdrawal %}<form method="post" action="/fleet/hold-policies/{{ r.policy.version }}/withdraw/" class="row">{% csrf_token %}<input name="reason" placeholder="Withdrawal reason (required)" aria-label="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
 </tr>{% empty %}<tr><td colspan="6" class="muted">No hold policy exists: new holds have no release slots and stay unreleasable.</td></tr>{% endfor %}
 </tbody></table></div>
 {% if can.manage_hold_policy %}

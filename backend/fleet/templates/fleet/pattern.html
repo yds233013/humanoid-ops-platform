@@ -23,7 +23,7 @@
     {% for pu in t.purposes %}<td data-purpose="{{ pu.purpose }}" data-state="{{ pu.state }}"><b>{{ pu.state_text }}</b>{% if pu.usable_now %}<div class="muted">usable in this mode</div>{% else %}<div class="muted">not usable in this mode</div>{% endif %}
       {% for sl in pu.slots %}<div class="muted">{{ sl.label }}: {% if sl.approval %}{{ sl.approval.approver.username }}{% else %}pending{% if t.approvable and can.approve_inspection_template %}
         <form method="post" action="/fleet/patterns/{{ pattern.code }}/templates/approve/" style="display:inline">{% csrf_token %}<input type="hidden" name="template" value="{{ t.template.pk }}"><input type="hidden" name="purpose" value="{{ pu.purpose }}"><input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>{% endfor %}
-    <td>{% if can.withdraw_inspection_template and not t.withdrawal %}<form method="post" action="/fleet/patterns/{{ pattern.code }}/templates/withdraw/" class="row">{% csrf_token %}<input type="hidden" name="template" value="{{ t.template.pk }}"><input name="reason" placeholder="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
+    <td>{% if can.withdraw_inspection_template and not t.withdrawal %}<form method="post" action="/fleet/patterns/{{ pattern.code }}/templates/withdraw/" class="row">{% csrf_token %}<input type="hidden" name="template" value="{{ t.template.pk }}"><input name="reason" placeholder="Withdrawal reason (required)" aria-label="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
   </tr>{% empty %}<tr><td colspan="5" class="muted">No inspection template for this configuration.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.manage_inspection_template %}
@@ -47,7 +47,7 @@
     <td>{{ r.status }}{% if r.withdrawal %}<div class="muted">by {{ r.withdrawal.withdrawn_by.username }}: {{ r.withdrawal.reason }}</div>{% endif %}</td>
     <td>{% for sl in r.slots %}<div>{{ sl.label }}: {% if sl.approval %}{{ sl.approval.approver.username }}{% else %}<span class="muted">pending</span>{% if can.approve_periodic_rule and not r.withdrawal %}
       <form method="post" action="/fleet/patterns/{{ pattern.code }}/periodic-rules/approve/" style="display:inline">{% csrf_token %}<input type="hidden" name="rule" value="{{ r.rule.pk }}"><input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
-    <td>{% if can.withdraw_periodic_rule and not r.withdrawal %}<form method="post" action="/fleet/patterns/{{ pattern.code }}/periodic-rules/withdraw/" class="row">{% csrf_token %}<input type="hidden" name="rule" value="{{ r.rule.pk }}"><input name="reason" placeholder="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
+    <td>{% if can.withdraw_periodic_rule and not r.withdrawal %}<form method="post" action="/fleet/patterns/{{ pattern.code }}/periodic-rules/withdraw/" class="row">{% csrf_token %}<input type="hidden" name="rule" value="{{ r.rule.pk }}"><input name="reason" placeholder="Withdrawal reason (required)" aria-label="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
   </tr>{% empty %}<tr><td colspan="6" class="muted">No periodic inspection rule: the interval is unknown for this configuration.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.manage_periodic_rule %}
