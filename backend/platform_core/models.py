@@ -47,3 +47,40 @@ class IdempotencyKey(models.Model):
 
     def __str__(self) -> str:
         return f"{self.command}:{self.key}"
+
+
+class Workspace(models.Model):
+    """The one workspace of this deployment (v2 contract section 2 and 12.1): a singleton row.
+
+    The database enforces it: the primary key is fixed at 1 (default 1, CHECK id = 1), and a primary key is
+    unique, so a second row is impossible even through raw SQL. ``initialized`` flips to true in the same
+    transaction that creates the first admin (platform_core.bootstrap) and never goes back.
+    """
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    name = models.CharField(max_length=120, default="Workspace")
+    region = models.CharField(max_length=80, blank=True, default="")
+    time_zone = models.CharField(max_length=64, default="America/Los_Angeles")
+    demo = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    initialized = models.BooleanField(default=False)
+    initialized_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(id=1), name="workspace_singleton_id_is_1")]
+
+    def __str__(self) -> str:
+        return self.name
+
+    @classmethod
+    def ensure(cls) -> None:
+        """Create the singleton row if it is missing (INSERT .. ON CONFLICT DO NOTHING; safe under races)."""
+        from django.db import connection
+
+        with connection.cursor() as cur:
+            cur.execute(
+                "INSERT INTO platform_core_workspace"
+                " (id, name, region, time_zone, demo, created_at, initialized)"
+                " VALUES (1, 'Workspace', '', 'America/Los_Angeles', false, now(), false)"
+                " ON CONFLICT (id) DO NOTHING"
+            )

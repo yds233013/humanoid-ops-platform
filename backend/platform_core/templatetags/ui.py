@@ -296,7 +296,7 @@ def landing_url(roles: set[str]) -> str:
 @register.inclusion_tag("ui/header.html", takes_context=True)
 def site_header(context: template.Context) -> dict[str, Any]:
     request = _request(context)
-    if request is None or not getattr(request.user, "is_authenticated", False):
+    if request is None or not getattr(getattr(request, "user", None), "is_authenticated", False):
         return {"authenticated": False}
     roles = set(context["roles"]) if "roles" in context else request_roles(request)
     path = request.path

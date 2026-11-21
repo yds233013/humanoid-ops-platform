@@ -479,8 +479,9 @@ def test_page_403_and_no_data_without_operations_metrics(roles):
 
 @pytest.mark.django_db(transaction=True)
 def test_page_403_for_anonymous_and_expired():
-    r = Client().get(URL)
-    assert r.status_code == 403 and "<table" not in r.content.decode()
+    r = Client().get(URL)  # v2 01A: signed-out browsers are redirected to login instead of a bare 403
+    assert r.status_code == 302 and r["Location"].startswith("/login/?next=")
+    assert "<table" not in r.content.decode()
     assert client("founder", name="u_expired", expired=True).get(URL).status_code == 403
 
 

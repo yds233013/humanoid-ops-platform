@@ -96,7 +96,11 @@ def test_no_read_permission_gets_403_and_no_data(url, roles):
 def test_expired_grant_and_anonymous_get_403(url):
     assert client("ops_lead", name="u_expired", expired=True).get(url).status_code == 403
     r = Client().get(url)
-    assert r.status_code == 403 and "<table" not in r.content.decode()
+    if url.startswith("/api/"):
+        assert r.status_code == 403  # JSON API: still a refusal, never a redirect
+    else:  # v2 01A: a signed-out browser is sent to the login page (the view still refused it)
+        assert r.status_code == 302 and r["Location"].startswith("/login/?next=")
+    assert "<table" not in r.content.decode()
 
 
 @pytest.mark.parametrize("role", READ_ONLY_ROLES)

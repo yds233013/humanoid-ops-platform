@@ -25,3 +25,12 @@ class Command(BaseCommand):
                 user.save()
             RoleGrant.objects.get_or_create(user=user, role=role, revoked_at=None)
             self.stdout.write(f"{'created' if created else 'exists '} {username} [{role}]")
+        # v2 01A: the demo workspace is initialized (never claimable through /setup/).
+        from django.utils import timezone
+
+        from platform_core.models import Workspace
+
+        Workspace.ensure()
+        Workspace.objects.filter(pk=1, initialized=False).update(
+            name="Demo workspace", demo=True, initialized=True, initialized_at=timezone.now()
+        )
