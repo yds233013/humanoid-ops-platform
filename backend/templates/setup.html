@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Set up your workspace{% endblock %}
+{% block content %}
+<div class="card" style="max-width:420px">
+<h1>Set up your workspace</h1>
+<p class="muted">Create the first administrator. You need the one-time setup token from your deployment.</p>
+{% if error %}<p class="msg error">{{ error }}</p>{% endif %}
+<form method="post">{% csrf_token %}
+<p><label>Setup token<br><input type="password" name="token" autocomplete="off" required></label></p>
+<p><label>Company name (optional)<br><input name="workspace_name" value="{{ workspace_name }}"></label></p>
+<p><label>Admin username<br><input name="username" value="{{ username }}" required></label></p>
+<p><label>Admin password<br><input type="password" name="password" autocomplete="new-password" required></label></p>
+<button class="primary">Create admin</button></form>
+</div>
+{% endblock %}

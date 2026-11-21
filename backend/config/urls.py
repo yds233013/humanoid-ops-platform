@@ -7,8 +7,16 @@ from fleet import api as fleet_api
 from fleet import views as fleet_views
 from planning import views as planning_views
 from platform_core import api as core_api
+from platform_core import views as core_views
+
+handler403 = "platform_core.views.permission_denied"
+handler404 = "platform_core.views.page_not_found"
+handler500 = "platform_core.views.server_error"
 
 urlpatterns = [
+    # v2 01A: operations (health check for the host) and first-run setup
+    path("healthz", core_views.healthz),
+    path("setup/", core_views.setup, name="setup"),
     # JSON API
     path("api/health", core_api.health),
     path("api/auth/csrf", accounts_api.csrf),

@@ -25,6 +25,22 @@ ALLOWED_HOSTS = [h for h in env("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").s
 CSRF_TRUSTED_ORIGINS = [o for o in env("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 if not DEBUG:  # behind the host's HTTPS proxy (hosted demo)
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    # v2 01A (audit D-05): browser hardening headers. Off in DEBUG so plain-http local development works.
+    SECURE_HSTS_SECONDS = 365 * 24 * 60 * 60
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    X_FRAME_OPTIONS = "DENY"
+
+# Content-Security-Policy (added by platform_core.middleware.SecurityHeadersMiddleware). Templates carry
+# inline <style> blocks and style="" attributes, so style-src needs 'unsafe-inline'; there is no inline or
+# external script, so script-src stays 'self' (via default-src).
+CSP_ENABLED = not DEBUG
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+)
+CSRF_FAILURE_VIEW = "platform_core.views.csrf_failure"
 
 INSTALLED_APPS = [
     "django.contrib.auth",
@@ -48,8 +64,12 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    # v2 01A: response hardening (after authentication: they look at request.user)
+    "platform_core.middleware.AnonymousHtmlRedirectMiddleware",
+    "platform_core.middleware.SecurityHeadersMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
