@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Workspace setup{% endblock %}
+{% block content %}
+{% page_header title="Set up your workspace" %}{{ done_count }} of {{ steps|length }} steps done. Setup records facts about your company. It never approves anything: approvals stay with the people who own them.{% endpage_header %}
+<section class="card"><h2>Steps</h2>
+<ol class="steps">{% for s in steps %}<li><div>{% if s.done %}{% chip "info" "Done" %}{% else %}{% chip "warn" "To do" %}{% endif %}</div>
+<div class="what"><b>{{ s.title }}</b><div class="muted">{{ s.detail }}</div></div><a class="btn" href="{{ s.url }}">{{ s.action }}</a></li>{% endfor %}</ol></section>
+<section class="card"><h2>Next: robots, people and vehicles</h2>
+<p class="muted">After the steps above, add what you operate. {{ robots }} robot{{ robots|pluralize }} and {{ patterns }} configuration{{ patterns|pluralize }} so far.</p>
+<div class="row"><a class="btn" href="/fleet/patterns/">Configurations</a><a class="btn" href="/fleet/new/">Add a robot</a><a class="btn" href="/people/">People</a><a class="btn" href="/vehicles/">Vehicles</a></div></section>
+<section class="card"><h2>What still needs someone else's approval</h2>
+<p>Finishing setup does not make anything ready to go out. These decisions are made on their own screens:</p>
+<ul>
+<li>Robot configuration and capability profile: {% who_can "fleet.approve_capability" %}.</li>
+<li>Hold release rules: {% who_can "fleet.approve_hold_policy" %}.</li>
+<li>Qualifications, including readiness inspector: {% who_can "planning.grant_inspector_qualification" %}.</li>
+<li>Inspection templates and rules: {% who_can "fleet.approve_inspection_template" %}.</li>
+<li>Departure readiness policy: {% who_can "readiness.approve_policy" %}.</li>
+</ul>
+{% can "operations.read" as may_read %}{% if may_read %}<p><a href="/ops/production-readiness/">Open Settings &gt; Production readiness</a> to see what is still outstanding.</p>{% else %}<p class="muted">Settings &gt; Production readiness lists what is outstanding. It is visible to the ops lead, engineers, safety reviewer and founder.</p>{% endif %}</section>
+{% endblock %}

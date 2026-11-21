@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Capability profile{% endblock %}
+{% block content %}
+{% with t="Capability profile for "|add:pattern.code %}{% page_header title=t back_url="/fleet/patterns/" back_label="Configurations" %}What this configuration can do. Publishing creates a draft. The engineering lead and the safety reviewer approve it on the approval screen.{% endpage_header %}{% endwith %}
+<section class="card"><h2>Published versions</h2>
+{% for x in profiles %}<p><b>v{{ x.p.version_no }}</b> {% if x.slots|length >= 2 %}{% chip "info" "Approved" %}{% else %}{% chip "warn" "Draft" %} {% waiting_note "fleet.approve_capability" %}{% endif %}</p>{% empty %}<p class="muted">Nothing published yet.</p>{% endfor %}</section>
+<section class="card"><h2>Publish a new version</h2>{% include "ui/form.html" with form=form submit="Publish draft" cancel_url="/fleet/patterns/" %}</section>
+{% endblock %}

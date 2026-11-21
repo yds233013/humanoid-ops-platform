@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Add a vehicle{% endblock %}
+{% block content %}
+{% page_header title="Add a vehicle" back_url="/vehicles/" back_label="Vehicles" %}Adding a vehicle records that it exists.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Add vehicle" cancel_url="/vehicles/" %}</section>
+{% endblock %}

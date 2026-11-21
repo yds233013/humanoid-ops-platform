@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Add a configuration{% endblock %}
+{% block content %}
+{% page_header title="Add a configuration" back_url="/fleet/patterns/" back_label="Configurations" %}Adding a configuration records the combination. Approval is separate.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Add configuration" cancel_url="/fleet/patterns/" %}</section>
+{% endblock %}

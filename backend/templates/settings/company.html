@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Company settings{% endblock %}
+{% block content %}
+{% page_header title="Company settings" back_url="/settings/setup/" back_label="Workspace setup" %}Only {% who_can "platform_core.manage_workspace" %} can change these.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Save settings" cancel_url="/settings/setup/" %}</section>
+{% endblock %}

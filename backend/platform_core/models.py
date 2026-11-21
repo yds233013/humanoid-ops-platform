@@ -84,3 +84,42 @@ class Workspace(models.Model):
                 " VALUES (1, 'Workspace', '', 'America/Los_Angeles', false, now(), false)"
                 " ON CONFLICT (id) DO NOTHING"
             )
+
+
+class Hub(models.Model):
+    """A hub (depot) of the workspace: where robots, vehicles and crews are based (v2 contract section 6).
+
+    Setup data, like the workspace row: it records a fact and approves nothing. Robots, vehicles and people
+    do not reference a hub yet (an optional reference comes later; the guarded tables keep their rules).
+    """
+
+    code = models.CharField(max_length=12, unique=True)
+    name = models.CharField(max_length=80)
+    area = models.CharField(max_length=80, blank=True, default="")
+    time_zone = models.CharField(max_length=64)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["code"]
+
+    def __str__(self) -> str:
+        return f"{self.code} {self.name}"
+
+
+class FormToken(models.Model):
+    """One-time token for a rendered form (double-submit protection, v2 01C).
+
+    Issued when a form is rendered, consumed by one atomic UPDATE on the first POST. A replayed POST finds
+    ``consumed_at`` set and is refused without running anything. Stored in the database (not the session) so
+    two simultaneous submits cannot both win: only one UPDATE changes the row."""
+
+    token = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"form token for {self.user_id}"

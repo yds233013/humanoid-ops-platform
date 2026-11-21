@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Not allowed{% endblock %}
+{% block content %}
+<div class="card">
+<h1>You cannot do this</h1>
+<p data-refusal="1">{{ who }}</p>
+<p class="muted">Your account is signed in, but your role does not include this action. Nothing was changed.</p>
+<p><a href="/">Back to the start page</a></p>
+</div>
+{% endblock %}

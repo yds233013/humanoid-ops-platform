@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Add a hub{% endblock %}
+{% block content %}
+{% page_header title="Add a hub" back_url="/settings/hubs/" back_label="Hubs" %}Adding a hub records a place. It does not approve anything.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Add hub" cancel_url="/settings/hubs/" %}</section>
+{% endblock %}

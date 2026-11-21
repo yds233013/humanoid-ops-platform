@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Invite someone{% endblock %}
+{% block content %}
+{% page_header title="Invite someone" back_url="/settings/users/" back_label="People and roles" %}Creates an account with a temporary password and no role. You choose the role next.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Create account" cancel_url="/settings/users/" %}</section>
+{% endblock %}

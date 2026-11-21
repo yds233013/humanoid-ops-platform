@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Register a person{% endblock %}
+{% block content %}
+{% page_header title="Register a person" back_url="/people/" back_label="People" %}Registering a person records that they exist. It does not qualify them for anything.{% endpage_header %}
+<section class="card">{% if not form.fields.username.choices %}<p class="muted">Every account is already registered, or no account exists yet. The workspace admin creates accounts in Settings &gt; People and roles.</p>{% endif %}
+{% include "ui/form.html" with form=form submit="Register person" cancel_url="/people/" %}</section>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Take away a role{% endblock %}
+{% block content %}
+{% page_header title="Take away a role" back_url="/settings/users/" back_label="People and roles" %}{% endpage_header %}
+<section class="card">{% include "ui/confirm_box.html" with headline="Take the role "|add:grant.role|add:" away from "|add:target.username|add:"?" detail="They lose access that comes with this role straight away. The change is kept in the audit log." %}
+{% include "ui/form.html" with form=form submit="Take role away" danger=True cancel_url="/settings/users/" %}</section>
+{% endblock %}

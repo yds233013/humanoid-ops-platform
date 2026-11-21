@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Vehicles{% endblock %}
+{% block content %}
+{% page_header title="Vehicles" back_url="/fleet/" back_label="Fleet" %}Vehicles that carry crews and robots to a site.{% endpage_header %}
+{% can "planning.manage_vehicles" as may_add %}
+{% if may_add %}<p><a class="btn primary" href="/vehicles/new/">Add a vehicle</a></p>{% endif %}
+{% if vehicles %}<div class="tablewrap"><table><thead><tr><th>Code</th><th>Robots it can carry</th><th>Restraint kit</th></tr></thead><tbody>
+{% for v in vehicles %}<tr><td><b>{{ v.code }}</b></td><td>{% if v.robot_capacity %}{{ v.robot_capacity }}{% else %}<span class="stale">Unknown (blocks visits that carry a robot)</span>{% endif %}</td><td>{{ v.restraint_kit|default:"Unknown" }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="empty"><b>No vehicles yet</b>Next step: {% if may_add %}<a href="/vehicles/new/">add your first vehicle</a>.{% else %}ask {% who_can "planning.manage_vehicles" %} to add one.{% endif %}</div>{% endif %}
+{% endblock %}

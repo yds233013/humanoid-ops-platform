@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}{{ person.code }}{% endblock %}
+{% block content %}
+{% page_header title=person.code back_url="/people/" back_label="People" %}Account {{ person.user.username }}.{% endpage_header %}
+<section class="card"><h2>Qualifications</h2>
+{% if quals %}<div class="tablewrap"><table><thead><tr><th>Qualification</th><th>From</th><th>Until</th><th>Status</th><th>Training record</th><th></th></tr></thead><tbody>
+{% for x in quals %}<tr><td>{{ x.q.get_kind_display }}</td><td>{{ x.q.valid_from|local_dt }}</td><td>{{ x.q.valid_to|local_dt }}</td><td>{% if x.state == "active" %}{% chip "info" "Active" %}{% elif x.state == "revoked" %}{% chip "bad" "Revoked" %}{% else %}{% chip "warn" x.state|capfirst %}{% endif %}</td><td>{{ x.q.basis_ref|default:"-" }}</td>
+<td>{% if x.state == "active" or x.state == "not started" %}{% if x.q.kind == inspector %}{% can "planning.revoke_inspector_qualification" as mr %}{% else %}{% can "planning.manage_people" as mr %}{% endif %}{% if mr %}<a href="/people/{{ person.code }}/qualifications/{{ x.q.pk }}/revoke/">Revoke</a>{% endif %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="empty"><b>No qualification yet</b>Next step: grant the qualification this person needs, below.</div>{% endif %}</section>
+<section class="card"><h2>Grant a qualification</h2>
+{% if form %}{% include "ui/form.html" with form=form submit="Grant qualification" %}
+{% can "planning.grant_inspector_qualification" as may_inspect %}{% if not may_inspect %}<p>Readiness inspector: {% refusal_note "planning.grant_inspector_qualification" %}</p>{% endif %}
+{% else %}<p>{% refusal_note "planning.manage_people" %}</p>{% endif %}</section>
+{% endblock %}

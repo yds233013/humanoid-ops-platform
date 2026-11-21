@@ -3,6 +3,9 @@
 {% block content %}
 {% page_header title=robot.code back_url="/fleet/" back_label="Fleet" %}serial {{ robot.serial }} · {{ robot.get_lifecycle_display }}{% endpage_header %}
 
+{% can "fleet.record_manifest" as may_manifest %}{% can "fleet.transition_lifecycle" as may_life %}{% can "fleet.retire_robot" as may_retire %}
+<p class="row">{% if may_manifest %}<a class="btn" href="/fleet/{{ robot.code }}/manifest/">Record configuration</a>{% endif %}{% if may_life or may_retire %}<a class="btn" href="/fleet/{{ robot.code }}/lifecycle/">Change lifecycle</a>{% endif %}</p>
+
 <div class="card">
   <h2>Planning eligibility</h2>
   {% if e.eligible_for_planning %}<span class="badge elig">{{ e.label }}</span>

@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Add a robot{% endblock %}
+{% block content %}
+{% page_header title="Add a robot" back_url="/fleet/" back_label="Fleet" %}Registering a robot only records that it exists. It is not approved, qualified or ready for any visit.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Add robot" cancel_url="/fleet/" %}
+<p class="muted">Robots are added by {% who_can "fleet.register_robot" %}.</p></section>
+{% endblock %}

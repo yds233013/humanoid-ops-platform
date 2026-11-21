@@ -1,0 +1,7 @@
+{# One form field with its label, help text and inline errors. Usage: {% include "ui/form_field.html" with field=form.code %} #}
+<div class="field{% if field.errors %} has-error{% endif %}">
+<label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required and not field.field.widget.input_type == "checkbox" %}<span class="req"> (required)</span>{% endif %}</label>
+{{ field }}
+{% if field.help_text %}<span class="help" id="id_{{ field.html_name }}-help">{{ field.help_text }}</span>{% endif %}
+{% for e in field.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+</div>

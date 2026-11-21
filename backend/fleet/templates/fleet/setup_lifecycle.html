@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Change lifecycle{% endblock %}
+{% block content %}
+{% with t="Change lifecycle of "|add:robot.code %}{% page_header title=t back_url=robot_url back_label=robot.code %}Currently: {{ robot.get_lifecycle_display }}.{% endpage_header %}{% endwith %}
+<section class="card">
+{% include "ui/confirm_box.html" with headline="This changes what the robot may be used for." detail="Moving to in service needs an approved capability profile. Retiring is permanent and only the founder can do it. Other changes are made by the engineering lead." %}
+{% include "ui/form.html" with form=form submit="Change lifecycle" danger=True cancel_url=robot_url %}</section>
+{% endblock %}

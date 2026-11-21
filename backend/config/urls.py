@@ -33,6 +33,7 @@ urlpatterns = [
     path("login/", auth_views.LoginView.as_view()),
     path("logout/", auth_views.LogoutView.as_view(next_page="/login/")),
     path("fleet/", fleet_views.fleet_list, name="fleet-list"),
+    path("", include("platform_core.setup_urls")),  # v2 01C screens; must precede fleet/<code>/
     # Slice 7 (Engineer C): hold-policy lifecycle and pattern pages; before fleet/<code>/ (it would match)
     path("fleet/hold-policies/", fleet_views.hold_policies, name="fleet-hold-policies"),
     path("fleet/hold-policies/create/", fleet_views.hold_policy_create_view),

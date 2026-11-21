@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Revoke qualification{% endblock %}
+{% block content %}
+{% page_header title="Revoke a qualification" back_url="/people/" back_label="People" %}{% endpage_header %}
+<section class="card">{% include "ui/confirm_box.html" with headline="Revoke this qualification?" detail="The person can no longer be planned for work that needs it. Visits that already depend on it will be blocked." %}
+<p>{{ person.code }} · {{ q.get_kind_display }}</p>
+{% include "ui/form.html" with form=form submit="Revoke qualification" danger=True cancel_url="/people/" %}</section>
+{% endblock %}

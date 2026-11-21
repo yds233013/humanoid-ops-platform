@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}People{% endblock %}
+{% block content %}
+{% page_header title="People" back_url="/fleet/" back_label="Fleet" %}People who can be put on a visit. A person with no qualification cannot be planned for work that needs one.{% endpage_header %}
+{% can "planning.manage_people" as may_add %}
+{% if may_add %}<p><a class="btn primary" href="/people/new/">Register a person</a></p>{% endif %}
+{% if rows %}<div class="tablewrap"><table><thead><tr><th>Code</th><th>Account</th><th>Roles</th><th>Qualifications now</th><th></th></tr></thead><tbody>
+{% for r in rows %}<tr><td><b>{{ r.person.code }}</b></td><td>{{ r.person.user.username }}</td><td>{% for x in r.roles %}{{ x|role_label }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="muted">none</span>{% endfor %}</td>
+<td>{% for k in r.quals %}{% chip "info" k|role_label %} {% empty %}<span class="muted">None yet</span>{% endfor %}</td><td><a href="/people/{{ r.person.code }}/">Qualifications</a></td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="empty"><b>No people registered yet</b>Next step: {% if may_add %}<a href="/people/new/">register the first person</a> (their account must exist; the workspace admin creates accounts in Settings).{% else %}ask {% who_can "planning.manage_people" %} to register people.{% endif %}</div>{% endif %}
+{% endblock %}

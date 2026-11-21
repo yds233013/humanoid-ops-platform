@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Roles of {{ target.username }}{% endblock %}
+{% block content %}
+{% page_header title=target.username back_url="/settings/users/" back_label="People and roles" %}Roles decide what this person may do. Roles that approve safety items cannot be given to yourself.{% endpage_header %}
+<section class="card"><h2>Current roles</h2>
+{% for g in grants %}<div class="row" style="margin-bottom:8px">{% chip "neutral" g.role|role_label %} <a href="/settings/users/{{ target.pk }}/revoke/{{ g.pk }}/">Take away</a></div>{% empty %}<p class="muted">No role yet. This person cannot open any page until they get one.</p>{% endfor %}</section>
+<section class="card"><h2>Give a role</h2>
+{% if is_self %}<p class="waiting">You cannot give a role to your own account. Ask another admin.</p>{% else %}{% include "ui/form.html" with form=form submit="Give role" %}{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Record configuration{% endblock %}
+{% block content %}
+{% with t="Record configuration for "|add:robot.code %}{% page_header title=t back_url=robot_url back_label=robot.code %}Records what the robot runs today. This is a proposal: it approves nothing.{% endpage_header %}{% endwith %}
+<section class="card">
+{% if not patterns %}{% include "ui/empty.html" with title="No configuration exists yet" text="Add a configuration first, then come back to record it for this robot." %}
+<p style="text-align:center"><a class="btn primary" href="/fleet/patterns/new/">Add a configuration</a> <span class="muted">({% who_can "fleet.manage_patterns" %} can)</span></p>
+{% else %}{% include "ui/form.html" with form=form submit="Record configuration" %}{% endif %}</section>
+{% endblock %}

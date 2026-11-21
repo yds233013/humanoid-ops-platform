@@ -212,6 +212,10 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     "fleet": [
         ("Robots", "/fleet/", "fleet.read"),
         ("Robot status", "/ops/robots/", "operations.read"),
+        ("Configurations", "/fleet/patterns/", "fleet.read"),
+        ("People", "/people/", "planning.read"),
+        ("Crews", "/crews/", "planning.read"),
+        ("Vehicles", "/vehicles/", "planning.read"),
     ],
     "customers": [("Sites", "/planning/sites/", "planning.read")],
     "hub": [
@@ -224,6 +228,10 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("Incident reports", "/execution/incidents/", "execution.read"),
     ],
     "settings": [
+        ("Workspace setup", "/settings/setup/", "accounts.grant_role"),
+        ("Company", "/settings/company/", "accounts.grant_role"),
+        ("Hubs", "/settings/hubs/", "accounts.grant_role"),
+        ("People and roles", "/settings/users/", "accounts.grant_role"),
         ("Hold release policies", "/fleet/hold-policies/", "fleet.read"),
         ("Readiness policies", "/readiness/policies/", "readiness.read"),
         ("Incident policies", "/execution/policies/", "execution.read"),
@@ -238,6 +246,10 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
 
 # Longest matching prefix wins; first match order matters for the specific paths.
 SECTION_PREFIXES: list[tuple[str, str]] = [
+    ("/settings/", "settings"),
+    ("/people/", "fleet"),
+    ("/crews/", "fleet"),
+    ("/vehicles/", "fleet"),
     ("/fleet/hold-policies/", "settings"),
     ("/readiness/policies/", "settings"),
     ("/execution/policies/", "settings"),
@@ -370,3 +382,47 @@ def page_header(parser: template.base.Parser, token: template.base.Token) -> Pag
     nodelist = parser.parse(("endpage_header",))
     parser.delete_first_token()
     return PageHeaderNode(nodelist, kwargs)
+
+
+# ------------------------------------------------------------------ 01C interaction components
+# Documented in docs/ui_components.md.
+@register.simple_tag(takes_context=True)
+def form_token(context: template.Context) -> SafeString:
+    """Hidden one-time token for double-submit protection. Put it in every state-changing form, next to
+    ``{% csrf_token %}``. The first POST spends it; a replay is refused with a friendly message."""
+    from platform_core.interaction import TOKEN_FIELD, issue_form_token
+
+    request = context.get("request")
+    token = issue_form_token(request) if request is not None else ""
+    return format_html('<input type="hidden" name="{}" value="{}">', TOKEN_FIELD, token)
+
+
+@register.simple_tag
+def who_can(permission: str) -> str:
+    """``the safety reviewer`` / ``the ops lead or the engineering lead`` for a permission name."""
+    from platform_core.interaction import who_can as _who
+
+    return _who(permission)
+
+
+@register.simple_tag
+def refusal_note(permission: str) -> SafeString:
+    """A quiet line for a viewer who may not act: ``Only the safety reviewer can do this.``"""
+    from platform_core.interaction import refusal_text
+
+    return format_html('<span class="waiting" data-refusal="1">{}</span>', refusal_text(permission))
+
+
+@register.simple_tag
+def waiting_note(permission: str, what: str = "approval") -> SafeString:
+    """``Waiting for the founder's approval``: who must act next, for pending items."""
+    from platform_core.interaction import waiting_text
+
+    return format_html('<span class="waiting" data-waiting="1">{}</span>', waiting_text(permission, what))
+
+
+@register.simple_tag(takes_context=True)
+def can(context: template.Context, permission: str) -> bool:
+    """True when the viewer holds the permission: ``{% can "fleet.register_robot" as ok %}``."""
+    request = context.get("request")
+    return request is not None and _allowed(request_roles(request), permission)

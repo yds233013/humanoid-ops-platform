@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Configurations{% endblock %}
+{% block content %}
+{% page_header title="Configurations" back_url="/fleet/" back_label="Fleet" %}A configuration is a hardware revision, software release and firmware set that engineering can approve as one unit.{% endpage_header %}
+{% can "fleet.manage_patterns" as may_add %}
+{% if rows %}<div class="tablewrap"><table><thead><tr><th>Code</th><th>Hardware</th><th>Release</th><th>Firmware</th><th>Robots</th><th>Capability profile</th><th></th></tr></thead><tbody>
+{% for r in rows %}<tr><td><a href="/fleet/patterns/{{ r.pattern.code }}/"><b>{{ r.pattern.code }}</b></a></td><td>{{ r.pattern.hardware_rev }}</td><td>{{ r.pattern.release }}</td><td>{{ r.pattern.firmware_set }}</td><td class="num">{{ r.robots }}</td>
+<td>{% if r.profile_approved %}{% chip "info" "Approved profile" %}{% elif r.latest %}{% chip "warn" "Draft v" %}{{ r.latest.version_no }} <div>{% waiting_note "fleet.approve_capability" %}</div>{% else %}<span class="muted">None yet</span>{% endif %}</td>
+<td>{% can "fleet.publish_capability" as may_pub %}{% if may_pub %}<a href="/fleet/patterns/{{ r.pattern.code }}/profile/">Publish profile</a>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% if may_add %}<a class="btn primary" href="/fleet/patterns/new/">Add a configuration</a>{% else %}<p>{% refusal_note "fleet.manage_patterns" %}</p>{% endif %}
+{% else %}{% include "ui/empty.html" with title="No configurations yet" text="Add the first configuration, then record it on each robot." %}
+<p style="text-align:center">{% if may_add %}<a class="btn primary" href="/fleet/patterns/new/">Add a configuration</a>{% else %}{% refusal_note "fleet.manage_patterns" %}{% endif %}</p>{% endif %}
+{% endblock %}

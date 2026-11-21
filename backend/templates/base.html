@@ -64,6 +64,16 @@ main{max-width:1180px;margin:0 auto;padding:var(--s4) var(--s4) 64px}
 .notice.neutral{background:var(--neutralbg);border-color:var(--line);color:var(--ink)}
 .msg{padding:var(--s3) var(--s4);border-radius:var(--radius);margin:0 0 var(--s3);border:1px solid var(--blueline);background:var(--bluebg);color:var(--blue)}
 .msg.error{background:var(--redbg);border-color:var(--redline);color:var(--red)}
+/* Toasts (01C): feedback after an action. Pure CSS: stays until the next page; success fades out. */
+.toasts{position:fixed;top:64px;right:var(--s4);z-index:40;display:flex;flex-direction:column;gap:var(--s2);max-width:420px;pointer-events:none}
+.toast{pointer-events:auto;margin:0;box-shadow:0 8px 24px #0F2A4326}
+.toast.success{background:var(--posbg);border-color:var(--posline);color:var(--pos);animation:toast-out 0s 12s forwards}
+.toast.warning{background:var(--amberbg);border-color:var(--amberline);color:var(--amber)}
+@keyframes toast-out{to{opacity:0;visibility:hidden}}
+@media (max-width:700px){.toasts{left:var(--s4);max-width:none;top:auto;bottom:var(--s4)}}
+.field .req{color:var(--soft);font-weight:400} .confirm-box{border:2px solid var(--redline);background:var(--redbg);border-radius:var(--radius);padding:var(--s3) var(--s4);margin:0 0 var(--s3)}
+.steps{list-style:none;margin:0;padding:0} .steps li{display:flex;gap:var(--s3);align-items:flex-start;padding:var(--s3) 0;border-bottom:1px solid var(--line)} .steps li:last-child{border-bottom:0} .steps .what{flex:1}
+.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 var(--s4)}
 .msg ul{margin:var(--s2) 0 0;padding-left:20px} .msg details{margin-top:var(--s2);font-size:var(--fs-xs)} .msg summary{cursor:pointer;font-weight:600}
 .empty{text-align:center;color:var(--soft);padding:var(--s5) var(--s4);border:1px dashed var(--line);border-radius:var(--radius);background:var(--card)}
 .empty b{display:block;color:var(--ink);margin-bottom:var(--s1)}
@@ -115,8 +125,8 @@ button.danger{background:var(--red);color:#fff;border-color:var(--red)}
 {% site_header %}
 <main>
 {% if policy_draft %}<div class="notice warn" data-policy-draft="1">Hold release policy is a DRAFT (no safety approval). Releases are allowed only because this is a demo workspace.</div>{% endif %}
-{% for m in messages %}{% with r=m|refusal %}{% if r %}<div class="msg {{ m.tags }}" role="alert"><b>Refused ({{ r.kind }}){% if r.headline %}: {{ r.headline }}{% endif %}</b>
-<ul>{% for x in r.reasons %}<li>{{ x.text }}</li>{% endfor %}</ul>{% if r.reasons.0.code %}<details><summary>Details</summary><p class="muted" style="margin:6px 0 0">{{ r.raw }}</p></details>{% endif %}</div>{% else %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endif %}{% endwith %}{% endfor %}
+{% if messages %}<div class="toasts" aria-live="polite">{% for m in messages %}{% with r=m|refusal %}{% if r %}<div class="msg toast {{ m.tags }}" role="alert"><b>Refused ({{ r.kind }}){% if r.headline %}: {{ r.headline }}{% endif %}</b>
+<ul>{% for x in r.reasons %}<li>{{ x.text }}</li>{% endfor %}</ul>{% if r.reasons.0.code %}<details><summary>Details</summary><p class="muted" style="margin:6px 0 0">{{ r.raw }}</p></details>{% endif %}</div>{% else %}<div class="msg toast {{ m.tags }}" role="{% if m.level >= 30 %}alert{% else %}status{% endif %}">{% if m.level >= 40 %}<b>Not done.</b> {% endif %}{{ m }}</div>{% endif %}{% endwith %}{% endfor %}</div>{% endif %}
 {% block content %}{% endblock %}
 </main>
 <script>

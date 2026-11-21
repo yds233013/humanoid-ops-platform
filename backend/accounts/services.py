@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Any
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from accounts.models import RoleGrant
@@ -70,6 +72,37 @@ def revoke_role(
         actor,
         "accounts.revoke_role",
         permission="accounts.revoke_role",
+        payload=payload,
+        handler=handler,
+        idempotency_key=idempotency_key,
+    )
+
+
+def create_user(
+    actor: Any, *, username: str, password: str, email: str = "", idempotency_key: str | None = None
+) -> dict[str, Any]:
+    """Admin invites a person: a user account with a temporary password and NO role. Roles are granted
+    afterwards with ``grant_role`` (the admin cannot give anything beyond what that command allows). The
+    password is never written to the audit payload."""
+    username = username.strip()
+    payload = {"username": username, "email": email.strip()}
+
+    def handler() -> Outcome:
+        if not username:
+            raise Invalid("Choose a username")
+        if User.objects.filter(username__iexact=username).exists():
+            raise Conflict(f"The username {username} is taken")
+        try:
+            validate_password(password)
+        except ValidationError as exc:
+            raise Invalid(" ".join(exc.messages)) from None
+        user = User.objects.create_user(username=username, password=password, email=email.strip())
+        return Outcome("user", str(user.pk), {"username": username})
+
+    return run_command(
+        actor,
+        "accounts.create_user",
+        permission="accounts.create_user",
         payload=payload,
         handler=handler,
         idempotency_key=idempotency_key,

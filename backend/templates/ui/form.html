@@ -1,0 +1,7 @@
+{% load ui %}{% comment %} A complete state-changing form: CSRF, one-time token, fields, errors, submit. Usage:
+   {% include "ui/form.html" with form=form submit="Add robot" action="" %}  Optional: danger=True, cancel_url="/x/" {% endcomment %}
+<form method="post"{% if action %} action="{{ action }}"{% endif %}>{% csrf_token %}{% form_token %}
+{% if form.non_field_errors %}<div class="msg error" role="alert">{% for e in form.non_field_errors %}{{ e }} {% endfor %}</div>{% endif %}
+<div class="formgrid">{% for field in form %}{% include "ui/form_field.html" with field=field %}{% endfor %}</div>
+<div class="row"><button class="{% if danger %}danger{% else %}primary{% endif %}" type="submit">{{ submit|default:"Save" }}</button>{% if cancel_url %}<a class="btn" href="{{ cancel_url }}">Cancel</a>{% endif %}</div>
+</form>

@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}People and roles{% endblock %}
+{% block content %}
+{% page_header title="People and roles" back_url="/settings/setup/" back_label="Workspace setup" %}Accounts and the roles they hold. A role decides what a person may do.{% endpage_header %}
+<p><a class="btn primary" href="/settings/users/new/">Invite someone</a></p>
+{% if rows %}<div class="tablewrap"><table><thead><tr><th>Username</th><th>Roles</th><th></th></tr></thead><tbody>
+{% for r in rows %}<tr><td><b>{{ r.user.username }}</b></td><td>{% for role in r.roles %}{% chip "neutral" role|role_label %} {% empty %}<span class="muted">No role yet</span>{% endfor %}</td><td><a href="/settings/users/{{ r.user.pk }}/">Manage roles</a></td></tr>{% endfor %}</tbody></table></div>
+{% else %}{% include "ui/empty.html" with title="No accounts yet" text="Invite your first teammate." %}{% endif %}
+{% endblock %}

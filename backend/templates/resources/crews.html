@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Crews{% endblock %}
+{% block content %}
+{% page_header title="Crews" back_url="/fleet/" back_label="Fleet" %}A crew member is a person with a field role: the field operator role or a field qualification.{% endpage_header %}
+{% if rows %}<div class="tablewrap"><table><thead><tr><th>Account</th><th>Person code</th><th>Field qualifications now</th></tr></thead><tbody>
+{% for r in rows %}<tr><td><b>{{ r.username }}</b></td><td>{% if r.person %}<a href="/people/{{ r.person.code }}/">{{ r.person.code }}</a>{% else %}<span class="muted">Not registered as a person yet</span>{% endif %}</td><td>{% for k in r.quals %}{% chip "info" k|role_label %} {% empty %}<span class="muted">None yet</span>{% endfor %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="empty"><b>No crew yet</b>Next step: the workspace admin gives someone the field operator role in Settings, then {% who_can "planning.manage_people" %} registers them under People.</div>{% endif %}
+{% endblock %}
