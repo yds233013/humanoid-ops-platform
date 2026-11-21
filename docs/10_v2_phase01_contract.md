@@ -172,3 +172,32 @@ Each milestone (01A → 01B → 01C → 01D) is reviewed by the EM before the ne
 1. Workspace isolation as one deployment and database per workspace for v2 (section 2).
 2. A Railway `staging` environment for previews (section 9).
 3. Demo company size for 01D: fixture S (50 robots, 1 hub); the 500-robot demo comes with Phase 05.
+
+## 12. EM review (2026-11-21): approved with corrections — 01A authorized
+
+Rulings: one database per workspace **approved** (document the cost: provisioning, migrations, backups,
+monitoring and recovery per customer database; no claim of proven multi-customer provisioning); Railway staging
+**approved and required**; 50-robot Phase 01 demo **approved** (500 with Phase 05).
+
+Corrections, binding for implementation:
+
+1. **Singleton workspace**: enforced by the database, not a CHECK alone — a fixed primary key (`id = 1`) with a
+   constraint on its value (or an equivalent database-enforced design). Test: a second row is rejected.
+2. **First admin**: setup cannot be claimed by an arbitrary visitor. A one-time bootstrap token from the deployment
+   environment is required; after initialization bootstrap is permanently disabled for that deployment (database
+   flag). Tests: wrong token, replay after success, two concurrent attempts (exactly one wins).
+3. **Staging isolation**: its own database, secret key, cookie names and domain, its own background jobs, and no
+   outbound integrations (messages stay in the outbox). Nothing in staging can reach production data or send real
+   messages.
+4. **Backup and rollback**: a documented restore into an isolated database, tested; a migration compatibility
+   strategy (additive migrations first, code tolerant of both schemas, destructive steps only in a later release with
+   a separately reviewed recovery plan); a rollback rehearsal proving the app starts and works afterwards.
+
+Usability: J4 timing counts only with valid approvals already in the fixture and the final decision made by an
+authorized person; time to prepare the request and time waiting for the approver are recorded separately. No
+automatic safety approval to meet a benchmark. Without the five-person study, that criterion is **unverified**,
+never "passed"; scripted walkthroughs are engineering evidence only.
+
+01A closure evidence: implementation commit, migration diff, CI results, screenshots at desktop and 375 px,
+role-permission tests, staging URL, security-header checks, backup / restore / rollback rehearsal results, original
+safety regression tests green, live demo unchanged.
