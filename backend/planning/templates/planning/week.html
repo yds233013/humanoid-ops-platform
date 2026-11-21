@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Planner{% endblock %}
 {% block content %}
-{% page_header title="Dispatch" %}Week of {{ monday|date:"D j M Y" }}{% endpage_header %}
+<div class="page-head"><div><h1>Dispatch</h1><div class="sub">Week of {{ monday|date:"D j M Y" }}</div></div><div class="actions"><a class="btn primary" href="/planning/book/">Book a visit</a></div></div>
 <div class="row" style="margin:0 0 12px"><a class="btn" href="?week={{ prev|date:'Y-m-d' }}">&larr; Previous</a><a class="btn" href="?">This week</a><a class="btn" href="?week={{ next|date:'Y-m-d' }}">Next &rarr;</a></div>
 <p class="muted">Times are in {% workspace_tz_label %}. "Planning feasible" means the plan has no known blockers. It is <b>never</b> permission to depart.</p>
 <div class="week">
@@ -21,7 +21,7 @@
 {% if unplanned %}<div class="card"><h2>Requested, not yet plannable</h2>
 <div class="tablewrap"><table><thead><tr><th>Visit</th><th>Site</th><th>When (site time)</th><th>Why</th></tr></thead><tbody>
 {% for c in unplanned %}<tr><td><a href="/planning/visits/{{ c.visit.code }}/">{{ c.visit.code }}</a></td><td>{{ c.visit.site.code }}</td>
-<td>{{ c.start|local_dt }}</td><td><ul class="reasons">{% for b in c.live.blockers %}<li>{{ b.message }}</li>{% endfor %}</ul></td></tr>{% endfor %}
+<td>{{ c.start|local_dt }}</td><td><ul class="reasons">{% for b in c.plain %}<li>{{ b.sentence }}</li>{% endfor %}</ul></td></tr>{% endfor %}
 </tbody></table></div></div>{% endif %}
 <style>
  .week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:var(--s2)}

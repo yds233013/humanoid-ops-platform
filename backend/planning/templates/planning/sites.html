@@ -1,13 +1,18 @@
 {% extends "base.html" %}{% load ui %}
-{% block title %}Sites{% endblock %}
+{% block title %}Customers{% endblock %}
 {% block content %}
-{% page_header title="Customers and sites" %}Homes are shown by code. Names, addresses and contacts live in the CRM, not here.{% endpage_header %}
-<div class="tablewrap"><table><thead><tr><th>Site</th><th>Zone / timezone</th><th>Assessment</th><th>Consent</th><th>Consent records</th></tr></thead><tbody>
+<div class="page-head"><div><h1>Customers and homes</h1><div class="sub">Homes are shown by code. Names, addresses and contacts live in the CRM, not here.</div></div>
+<div class="actions">{% if can_add %}<a class="btn primary" href="/planning/sites/new/">Add customer home</a>{% endif %}<a class="btn" href="/planning/book/">Book a visit</a></div></div>
+{% if not can_add %}<p class="waiting">{{ who_add }}</p>{% endif %}
+<form method="get" class="row" role="search" style="margin-bottom:12px"><label for="q" class="muted">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Code, area or CRM reference"><button>Search</button>{% if q %}<a class="btn" href="/planning/sites/">Clear</a>{% endif %}</form>
+{% if rows %}<div class="tablewrap"><table><thead><tr><th>Home</th><th>Area</th><th>Status</th><th>Adults</th><th></th></tr></thead><tbody>
 {% for row in rows %}<tr>
-<td><b>{{ row.site.code }}</b><div class="muted">{{ row.site.crm_ref }}</div></td>
+<td><a href="/planning/sites/{{ row.site.code }}/"><b>{{ row.site.code }}</b></a><div class="muted">{{ row.site.crm_ref }}</div></td>
 <td>{{ row.site.zone }}<div class="muted">{{ row.site.timezone }}</div></td>
-<td>{% if row.assessment %}{{ row.assessment.get_decision_display }}<div class="muted">valid until {{ row.assessment.valid_until|local_date }}</div>{% else %}<span class="badge no">No current approved assessment</span>{% endif %}</td>
-<td><span class="chip badge {% if row.consent_level == 'ok' %}chip-info elig{% else %}chip-bad no{% endif %}">{{ row.consent_level }}</span><div class="muted">{{ row.consent }}</div></td>
-<td>{% for c in row.consents %}<div>{{ c.participant_ref }} · {{ c.form_version }} · {{ c.scope|join:"+" }}{% if c.withdrawn_at %} · <span class="stale">withdrawn {{ c.withdrawn_at|local_date }}</span>{% endif %}</div>{% endfor %}</td>
+<td>{% chip row.status.tone row.status.text %}</td>
+<td>{{ row.site.expected_adults|default:"not set" }}</td>
+<td><a href="/planning/sites/{{ row.site.code }}/book/">Book a visit</a></td>
 </tr>{% endfor %}</tbody></table></div>
+{% elif total %}{% include "ui/empty.html" with title="No homes match your search" text="Try a different code, area or CRM reference." %}
+{% else %}{% include "ui/empty.html" with title="No customer homes yet" text="Add the first home to start booking visits." %}{% if can_add %}<p style="text-align:center"><a class="btn primary" href="/planning/sites/new/">Add customer home</a></p>{% endif %}{% endif %}
 {% endblock %}

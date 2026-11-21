@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% load ui planning_forms %}
+{% block title %}{{ site.code }}{% endblock %}
+{% block content %}
+{% page_header title=site.code back_url="/planning/sites/" back_label="Customers" %}{{ site.zone }} · {{ site.timezone }} · CRM {{ site.crm_ref }}{% endpage_header %}
+<div class="card"><h2>Status</h2>
+<p style="font-size:var(--fs-lg);margin:0 0 6px">{% chip status.tone status.text %}</p>
+{% if status.detail %}<p class="muted">{{ status.detail }}</p>{% endif %}
+<div class="row">{% if can.plan %}<a class="btn primary" href="/planning/sites/{{ site.code }}/book/">Book a visit</a>{% else %}<span class="waiting">{{ who.plan }}</span>{% endif %}</div>
+{% if not status.ready %}<p class="muted">You can still book, but the plan will stay blocked until the home is ready.</p>{% endif %}</div>
+
+<div class="card"><h2>Adults in the home</h2>
+<p>Expected adults: <b>{{ site.expected_adults|default:"not set" }}</b>. Consent is checked against this number.</p>
+{% if can.manage %}<form method="post" action="/planning/sites/{{ site.code }}/adults/" class="row">{% csrf_token %}{% form_token %}{{ adults_form.expected_adults }}<button class="primary">Save</button></form>
+{% else %}<p class="waiting">{{ who.manage }}</p>{% endif %}</div>
+
+<div class="card"><h2>Assessments</h2>
+<p class="muted">An assessment counts only after a different person approves it ({{ approve_roles }}).</p>
+{% if assessments %}<div class="tablewrap"><table><thead><tr><th>Result</th><th>Valid until</th><th>Tasks not allowed</th><th>State</th><th></th></tr></thead><tbody>
+{% for r in assessments %}<tr><td>{{ r.a.get_decision_display }}<div class="muted">recorded {{ r.a.assessed_at|local_dt }} by {{ r.a.assessed_by.username }}</div></td>
+<td>{{ r.a.valid_until|local_date }}</td><td>{{ r.excluded|default:"none" }}</td>
+<td>{% if r.current %}{% chip 'ok' 'In use' %}{% elif r.replaced %}{% chip 'neutral' 'Replaced' %}{% elif r.approval %}{% chip 'neutral' 'Approved, not current' %}{% else %}{% chip 'warn' 'Waiting for approval' %}{% endif %}{% if r.approval %}<div class="muted">approved {{ r.approval.approved_at|local_dt }} by {{ r.approval.approver.username }}</div>{% endif %}</td>
+<td>{% if not r.approval %}{% if can.approve %}<form method="post" action="/planning/sites/{{ site.code }}/assessments/{{ r.a.pk }}/approve/">{% csrf_token %}{% form_token %}<button class="primary">Approve assessment</button></form>{% else %}<span class="waiting">{{ who.approve }}</span>{% endif %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{% include "ui/empty.html" with title="No assessment yet" text="Record the first home assessment below." %}{% endif %}
+<details class="fold"{% if not assessments %} open{% endif %}><summary>Record assessment</summary>
+{% if can.assess %}<form method="post" action="/planning/sites/{{ site.code }}/assessments/new/" style="margin-top:10px">{% csrf_token %}{% form_token %}
+{% for f in assess_form %}{% include "planning/_field.html" %}{% endfor %}<button class="primary">Record assessment</button></form>
+{% else %}<p class="waiting">{{ who.assess }}</p>{% endif %}</details></div>
+
+<div class="card"><h2>Consent</h2>
+<p class="muted">One record per adult, shown as P1, P2 ... No names are stored.</p>
+{% if consents %}<div class="tablewrap"><table><thead><tr><th>Adult</th><th>Form</th><th>Covers</th><th>State</th><th></th></tr></thead><tbody>
+{% for c in consents %}<tr><td>{{ c.participant_ref }}</td><td>{{ c.form_version }}</td><td>{{ c.scope|join:", " }}</td>
+<td>{% if c.withdrawn_at %}{% chip 'bad' 'Withdrawn' %}<div class="muted">{{ c.withdrawn_at|local_dt }}</div>{% else %}{% chip 'info' 'Active' %}<div class="muted">verified {{ c.verified_at|local_dt }}</div>{% endif %}</td>
+<td>{% if not c.withdrawn_at %}{% if can.consent %}<details class="fold"><summary>Withdraw consent</summary>
+<form method="post" action="/planning/sites/{{ site.code }}/consents/{{ c.pk }}/withdraw/">{% csrf_token %}{% form_token %}
+<div class="field"><label for="wr{{ c.pk }}">Reason</label><input id="wr{{ c.pk }}" name="reason" maxlength="200" required><span class="help">A short reason. No names or medical details.</span></div>
+<label><input type="checkbox" name="confirm" value="on" required> Yes, withdraw this consent now</label>
+<div style="margin-top:8px"><button class="danger">Withdraw consent</button></div></form></details>{% else %}<span class="waiting">{{ who.consent }}</span>{% endif %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{% include "ui/empty.html" with title="No consent recorded" text="Record consent for each adult below." %}{% endif %}
+<details class="fold"{% if not consents %} open{% endif %}><summary>Record consent</summary>
+{% if can.consent %}<form method="post" action="/planning/sites/{{ site.code }}/consents/new/" style="margin-top:10px">{% csrf_token %}{% form_token %}
+{% for f in consent_form %}{% include "planning/_field.html" %}{% endfor %}<button class="primary">Record consent</button></form>
+{% else %}<p class="waiting">{{ who.consent }}</p>{% endif %}</details></div>
+
+{% if visits %}<div class="card"><h2>Recent visits</h2><div class="tablewrap"><table><thead><tr><th>Visit</th><th>When</th><th>Status</th></tr></thead><tbody>
+{% for v in visits %}<tr><td><a href="/planning/visits/{{ v.code }}/">{{ v.code }}</a></td><td>{{ v.current_revision.on_site_start|local_dt }}</td><td>{{ v.get_status_display }}</td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
+<style>.plainlist{margin:0;padding-left:18px}</style>
+{% endblock %}
