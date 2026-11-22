@@ -13,7 +13,8 @@ the engineering branch.
 | Staging | a separate Railway environment `staging` | its own database, secret key, cookie names and domain, no outbound integrations (contract 12.3) |
 
 Start sequence (`start.sh`): `deploy/bootstrap.py` (roles and database) -> `migrate` as owner -> demo seed **only when
-the database has no robots** -> gunicorn as `ops_app`. A new, empty, non-demo deployment is not seeded; its first admin is
+the database has no robots** (with `DEMO_WORKSPACE=1`: `build_demo_workspace` instead, see section 8b) -> gunicorn as
+`ops_app`. A new, empty, non-demo deployment is not seeded; its first admin is
 created through `/setup/` or `manage.py bootstrap_admin` with `WORKSPACE_BOOTSTRAP_TOKEN` (see section 8).
 
 ## 2. Health check
@@ -164,6 +165,59 @@ DJANGO_DB_IDENTITY=owner python manage.py provision_settings \
 - It takes the settings advisory lock exclusively, validates everything before writing, and records one audit
   event. Settings > Operating settings (read-only) shows what is set; /settings/setup/ shows
   "Operating settings incomplete" until the required values exist.
+
+## 8b. Demo workspace (v2 01D)
+
+The demo is its own workspace (its own deployment and database, section 7): a fictional company, **Northbay Home
+Robotics** (Oakland hub, 50 robots, 3 crews, 40 homes in Bay Area towns, visits from 7 days ago to 14 days ahead of
+the workspace's local today). One command builds it, as the schema owner:
+
+```
+DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace           # into an empty, migrated database
+DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace --reset   # destroy the demo data and rebuild
+```
+
+- **Logins**: the command prints the usernames (one per role, plus the crews and the hub technician). Every demo
+  login's password is the `DEV_SEED_PASSWORD` environment variable; the command refuses to run without it. No
+  password is in the repository except the development value in `.env.example`; set a different one on Railway.
+- **What it refuses**: a database that holds a non-demo workspace (the workspace demo flag is off, or
+  `demo_mode` is not `'true'`); a non-empty demo database without `--reset`; an empty database whose `demo_mode`
+  is explicitly not `'true'`. `--reset` itself refuses unless the workspace is a demo workspace. It never touches a
+  production workspace.
+- **What `--reset` destroys**: every row of every application table of that database: users and role grants,
+  sessions (everyone is signed out), the audit log, robots, holds, homes, visits, readiness evidence, departures,
+  runs, incidents, settings, the workspace row. Only the schema, `django_migrations`, content types and permissions
+  stay; the rows the migrations insert are restored and every sequence restarts (so codes repeat for a given
+  date). The TRUNCATE runs as the schema owner with the owner's own user triggers disabled for that one statement
+  (the documented owner trust boundary, the same one the test teardown uses); the runtime role cannot do this.
+  Anything a demo visitor did that day is gone. Take no backup of it: it is fictional.
+- **How it writes**: through the existing guarded service commands (permission, audit row, locks, triggers), like
+  the seed commands; as the owner only for what has no command (users and role grants, deployment settings, the
+  workspace demo flag, the site-check template). No trigger is disabled while data is written. Every approval in it
+  is one the demo seeds also create, on `synthetic_demo` records that production refuses (Settings > Production
+  readiness still lists every blocker). No visit of today or later is authorized: the visit named in the output
+  ("Journey J4: visit V-....") has its plan, crew qualifications, periodic inspection and recovery plan; the crew
+  records the day's checks and the ops lead approves in the app. Past visits are completed through the execution
+  commands, which stamp database time: their departure and close-out show the build time.
+- **Deterministic** for a date (seeded by the workspace's local date); about 25 s on a laptop.
+- **First start**: set `DEMO_WORKSPACE=1` and `DEV_SEED_PASSWORD` on the demo `web` service. `start.sh` runs
+  `build_demo_workspace` once when the database has no robots (a refusal is logged and the app still starts).
+  Without `DEMO_WORKSPACE=1` the start sequence is unchanged.
+
+**Daily refresh (OWNER ACTION, demo environment only).** Visits are placed relative to the build date, so the demo is
+rebuilt every day. On Railway, add a **cron service** to the demo project only:
+
+1. New service from the same repository and `backend/Dockerfile`, same variables as `web` (reference them:
+   `ADMIN_DATABASE_URL`, `DB_*`, `DJANGO_SECRET_KEY`, `DEV_SEED_PASSWORD`, `DEMO_WORKSPACE=1`).
+2. Settings > Deploy > Custom start command: `sh deploy/refresh_demo.sh`.
+3. Settings > Cron schedule: `0 12 * * *` (Railway cron is UTC: 04:00 in winter, 05:00 in summer in California).
+4. No public domain, no health check (it exits when done). Check its logs after the first run: the last lines are
+   the timings and the login list.
+
+`deploy/refresh_demo.sh` refuses unless `DEMO_WORKSPACE=1`, and the command refuses unless the database is a demo
+workspace, so a cron service copied by mistake into a production project does nothing. Never add it to a customer
+workspace or to staging when staging holds anything but the demo. During the rebuild (about half a minute) pages
+may error or show partial data; users are signed out.
 
 ## 9. Rehearsal log
 

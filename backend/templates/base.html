@@ -124,7 +124,7 @@ button.danger{background:var(--red);color:#fff;border-color:var(--red)}
 <body>
 {% site_header %}
 <main>
-{% if policy_draft %}<div class="notice warn" data-policy-draft="1">Hold release policy is a DRAFT (no safety approval). Releases are allowed only because this is a demo workspace.</div>{% endif %}
+{% if policy_draft %}<details class="fold" data-policy-draft="1"><summary>About hold releases</summary><p class="muted">The hold release policy is a DRAFT with no safety approval. Releases under it are allowed in this workspace only; production refuses them.</p></details>{% endif %}
 {% if messages %}<div class="toasts" aria-live="polite">{% for m in messages %}{% with r=m|refusal %}{% if r %}<div class="msg toast {{ m.tags }}" role="alert"><b>Refused ({{ r.kind }}){% if r.headline %}: {{ r.headline }}{% endif %}</b>
 <ul>{% for x in r.reasons %}<li>{{ x.text }}</li>{% endfor %}</ul>{% if r.reasons.0.code %}<details><summary>Details</summary><p class="muted" style="margin:6px 0 0">{{ r.raw }}</p></details>{% endif %}</div>{% else %}<div class="msg toast {{ m.tags }}" role="{% if m.level >= 30 %}alert{% else %}status{% endif %}">{% if m.level >= 40 %}<b>Not done.</b> {% endif %}{{ m }}</div>{% endif %}{% endwith %}{% endfor %}</div>{% endif %}
 {% block content %}{% endblock %}

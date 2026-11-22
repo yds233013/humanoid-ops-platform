@@ -304,11 +304,15 @@ def _allowed(roles: set[str], permission: str | None) -> bool:
 
 
 def workspace_demo_mode(request: HttpRequest) -> bool:
+    """True in a demo workspace (v2 01D): the workspace row's demo flag is on, or the deployment runs in demo
+    mode (demo_mode = 'true', where synthetic approvals are usable). Either one shows the one persistent
+    "Demo workspace" badge; a production workspace (flag off, production mode) never shows it."""
     cached: bool | None = getattr(request, "_ui_demo", None)
     if cached is None:
         from fleet.services import demo_mode
+        from platform_core.models import Workspace
 
-        cached = bool(demo_mode())
+        cached = bool(demo_mode()) or Workspace.objects.filter(pk=1, demo=True).exists()
         request._ui_demo = cached  # type: ignore[attr-defined]
     return cached
 
@@ -358,7 +362,7 @@ def site_header(context: template.Context) -> dict[str, Any]:
         "username": request.user.get_username(),
         "roles": sorted(roles),
         "home_url": landing_url(roles),
-        "demo": bool(context["demo_mode"]) if "demo_mode" in context else workspace_demo_mode(request),
+        "demo": bool(context.get("demo_mode")) or workspace_demo_mode(request),
         "csrf_token": context.get("csrf_token"),
         "settings_active": active == "settings",
         "reports_active": active == "reports",
