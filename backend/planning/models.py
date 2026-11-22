@@ -98,6 +98,13 @@ class Person(models.Model):
     def __str__(self) -> str:
         return self.code
 
+    @property
+    def label(self) -> str:
+        """What screens show for a person: code plus who it is, e.g. "P-111 · Jordan Lee" (01D J3/J5)."""
+        user = self.user
+        name = (user.get_full_name() or user.get_username()) if user is not None else ""
+        return f"{self.code} · {name}" if name else self.code
+
 
 class Qualification(models.Model):
     KINDS = [
