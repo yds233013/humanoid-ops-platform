@@ -75,6 +75,8 @@ MIDDLEWARE = [
     "platform_core.middleware.SecurityHeadersMiddleware",
     # v2 01D: the workspace time zone is the one DISPLAY zone (platform_core.timezones), activated per request
     "platform_core.timezones.DisplayTimeZoneMiddleware",
+    # v2 01D: readable page instead of a bare 405 for a browser GET of a form-only address (01C D5)
+    "platform_core.middleware.FriendlyMethodNotAllowedMiddleware",
     # v2 01D: an account with a temporary password reaches only the change-password page until it is changed
     "accounts.middleware.ForcedPasswordChangeMiddleware",
 ]

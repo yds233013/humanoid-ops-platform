@@ -318,6 +318,7 @@ def pattern_decision(request: HttpRequest, code: str) -> HttpResponse:
             "pattern": pattern,
             "pattern_url": f"/fleet/patterns/{code}/",
             "decision": s.pattern_status(pattern),
+            "decision_label": dict(PatternApproval.STATUS).get(s.pattern_status(pattern), "none yet"),
             "history": list(pattern.approvals.select_related("decided_by").order_by("-id")[:5]),
         },
     )

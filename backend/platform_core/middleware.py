@@ -71,3 +71,31 @@ class SecurityHeadersMiddleware:
         if _signed_in(request):
             patch_cache_control(response, no_store=True, private=True)
         return response
+
+
+class FriendlyMethodNotAllowedMiddleware:
+    """A browser GET of a form-only (POST) address gets a readable page, not Django's bare 405 (01C D5).
+
+    Only non-API GET/HEAD requests answered with an empty 405 are replaced; the status (405) and the Allow
+    header are kept, so nothing about what the address accepts changes. Listed after the security-header and
+    display-zone middleware so the replacement page still gets the CSP, no-store and the workspace zone.
+    """
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        response = self.get_response(request)
+        if (
+            response.status_code == 405
+            and request.method in ("GET", "HEAD")
+            and not request.path.startswith("/api/")
+            and not response.content
+        ):
+            from django.shortcuts import render
+
+            page = render(request, "405.html", status=405)
+            if "Allow" in response:
+                page["Allow"] = response["Allow"]
+            return page
+        return response

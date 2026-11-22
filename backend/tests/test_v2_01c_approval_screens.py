@@ -325,3 +325,12 @@ def test_setup_profile_text_links_to_the_real_screen(w: SimpleNamespace) -> None
     html = _html(_client(w.eng).get("/fleet/patterns/P-A/profile/"))
     assert "on the approval screen" not in html
     assert w.approve_url in html and f"profile id {w.profile.pk}" in html
+
+
+def test_current_decision_shows_its_label_not_the_code(w: SimpleNamespace) -> None:
+    """01C D4: the decision page shows 'engineering only', never the stored code."""
+    c = _client(w.lead)
+    _post(c, w.decision_url, {"status": "engineering_only", "reason": "Bench only", "confirm": "on"})
+    html = _html(c.get(w.decision_url))
+    head = html.split("Current decision:")[1].split("</b>")[0]
+    assert "engineering only" in head and "engineering_only" not in head.split(">", 1)[1]
