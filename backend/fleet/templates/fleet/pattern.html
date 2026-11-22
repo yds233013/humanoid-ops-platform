@@ -2,7 +2,7 @@
 {% block title %}{{ pattern.code }}{% endblock %}
 {% block content %}
 {% with ptitle="Configuration "|add:pattern.code %}{% page_header title=ptitle back_url="/fleet/" back_label="Fleet" %}hardware {{ pattern.hardware_rev }} · release {{ pattern.release }} · Mode: <b>{% if production %}production{% else %}demo{% endif %}</b>{% endpage_header %}{% endwith %}
-<p class="muted">A template or an interval is usable in production only through approval records by distinct people holding the right role, none of them its author. A synthetic item is usable in demo only and can never be approved for production. The platform records company decisions; it never supplies a checklist, an interval or an approval.</p>
+<p class="muted">A template or an interval is usable in production only through approval records by distinct people holding the right role, none of them its author. A demo item is usable in this demo workspace only and can never be approved for production. The platform records company decisions; it never supplies a checklist, an interval or an approval.</p>
 
 <div class="card" id="home-decision">
   <h2>Home-use decision</h2>
@@ -19,8 +19,8 @@
       {% if t.template.procedure_ref %}<div class="muted">procedure {{ t.template.procedure_ref }}</div>{% endif %}
       {% if t.withdrawal %}<div class="stale">Withdrawn by {{ t.withdrawal.withdrawn_by.username }}: {{ t.withdrawal.reason }}</div>{% endif %}
       {% if t.warning %}<div class="stale" data-template-warning="1">{{ t.warning }}</div>{% endif %}</td>
-    <td>{% if t.template.source == "synthetic_demo" %}<span class="badge no">Synthetic demo</span>{% else %}{{ t.template.get_source_display }}{% endif %}</td>
-    {% for pu in t.purposes %}<td data-purpose="{{ pu.purpose }}" data-state="{{ pu.state }}"><b>{{ pu.state_text }}</b>{% if pu.usable_now %}<div class="muted">usable in this mode</div>{% else %}<div class="muted">not usable in this mode</div>{% endif %}
+    <td>{% source_label t.template.source t.template.get_source_display %}</td>
+    {% for pu in t.purposes %}<td data-purpose="{{ pu.purpose }}" data-state="{{ pu.state }}"><b>{{ pu.state_text|approval_text }}</b>{% if pu.usable_now %}<div class="muted">usable in this mode</div>{% else %}<div class="muted">not usable in this mode</div>{% endif %}
       {% for sl in pu.slots %}<div class="muted">{{ sl.label }}: {% if sl.approval %}{{ sl.approval.approver.username }}{% else %}pending{% if t.approvable and can.approve_inspection_template %}
         <form method="post" action="/fleet/patterns/{{ pattern.code }}/templates/approve/" style="display:inline">{% csrf_token %}<input type="hidden" name="template" value="{{ t.template.pk }}"><input type="hidden" name="purpose" value="{{ pu.purpose }}"><input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>{% endfor %}
     <td>{% if can.withdraw_inspection_template and not t.withdrawal %}<form method="post" action="/fleet/patterns/{{ pattern.code }}/templates/withdraw/" class="row">{% csrf_token %}<input type="hidden" name="template" value="{{ t.template.pk }}"><input name="reason" placeholder="Withdrawal reason (required)" aria-label="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
@@ -30,7 +30,7 @@
   <form method="post" action="/fleet/patterns/{{ pattern.code }}/templates/create/" style="margin-top:10px">{% csrf_token %}
     <h2>Record an inspection template (engineering document reference)</h2>
     <div class="row"><label>Version <input name="version" placeholder="e.g. E1"></label>
-      <label>Source <select name="source">{% for v, lbl in template_sources %}<option value="{{ v }}"{% if v == "engineering_doc" %} selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
+      <label>Source <select name="source">{% for v, lbl in template_sources %}<option value="{{ v }}"{% if v == "engineering_doc" %} selected{% endif %}>{{ lbl|source_option }}</option>{% endfor %}</select></label>
       <label>Procedure reference <input name="procedure_ref" placeholder="document reference, not content"></label></div>
     <p><label>Items (JSON list of {"id", "label", "robot_condition"})<br><textarea name="items" rows="4" cols="70"></textarea></label></p>
     <button class="primary">Record template</button></form>{% endif %}
@@ -42,9 +42,9 @@
   <div class="tablewrap"><table><thead><tr><th>Version</th><th>Interval</th><th>Source</th><th>Status</th><th>Approvals</th><th>Actions</th></tr></thead><tbody>
   {% for r in rules %}<tr data-rule="{{ r.rule.version_no }}" data-status="{{ r.status }}">
     <td><b>v{{ r.rule.version_no }}</b>{% if r.active %} <b>active</b>{% endif %}{% if r.usable_now %} <span class="muted">usable in this mode</span>{% endif %}<div class="muted">by {{ r.rule.created_by.username }}</div></td>
-    <td>{% if r.rule.interval_min %}{{ r.rule.interval_min }} min{% else %}<b>unknown</b>{% endif %}{% if r.synthetic %}<div class="stale">{{ synthetic_interval }}</div>{% endif %}</td>
-    <td>{% if r.synthetic %}<span class="badge no">Synthetic demo</span>{% else %}{{ r.rule.get_source_display }}{% endif %}{% if r.rule.procedure_ref %}<div class="muted">procedure {{ r.rule.procedure_ref }}</div>{% endif %}</td>
-    <td>{{ r.status }}{% if r.withdrawal %}<div class="muted">by {{ r.withdrawal.withdrawn_by.username }}: {{ r.withdrawal.reason }}</div>{% endif %}</td>
+    <td>{% if r.rule.interval_min %}{{ r.rule.interval_min }} min{% else %}<b>unknown</b>{% endif %}{% if r.synthetic %}{% demo_value %}{% endif %}</td>
+    <td>{% source_label r.rule.source r.rule.get_source_display %}{% if r.rule.procedure_ref %}<div class="muted">procedure {{ r.rule.procedure_ref }}</div>{% endif %}</td>
+    <td>{% if r.synthetic and r.status == "approved" %}Demo approval{% else %}{{ r.status|approval_text }}{% endif %}{% if r.withdrawal %}<div class="muted">by {{ r.withdrawal.withdrawn_by.username }}: {{ r.withdrawal.reason }}</div>{% endif %}</td>
     <td>{% for sl in r.slots %}<div>{{ sl.label }}: {% if sl.approval %}{{ sl.approval.approver.username }}{% else %}<span class="muted">pending</span>{% if can.approve_periodic_rule and not r.withdrawal %}
       <form method="post" action="/fleet/patterns/{{ pattern.code }}/periodic-rules/approve/" style="display:inline">{% csrf_token %}<input type="hidden" name="rule" value="{{ r.rule.pk }}"><input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
     <td>{% if can.withdraw_periodic_rule and not r.withdrawal %}<form method="post" action="/fleet/patterns/{{ pattern.code }}/periodic-rules/withdraw/" class="row">{% csrf_token %}<input type="hidden" name="rule" value="{{ r.rule.pk }}"><input name="reason" placeholder="Withdrawal reason (required)" aria-label="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
@@ -53,7 +53,7 @@
   {% if can.manage_periodic_rule %}
   <form method="post" action="/fleet/patterns/{{ pattern.code }}/periodic-rules/create/" class="row" style="margin-top:10px">{% csrf_token %}
     <label>Interval (minutes; empty = unknown) <input name="interval_min" size="8"></label>
-    <label>Source <select name="source">{% for v, lbl in template_sources %}<option value="{{ v }}"{% if v == "engineering_doc" %} selected{% endif %}>{{ lbl }}</option>{% endfor %}</select></label>
+    <label>Source <select name="source">{% for v, lbl in template_sources %}<option value="{{ v }}"{% if v == "engineering_doc" %} selected{% endif %}>{{ lbl|source_option }}</option>{% endfor %}</select></label>
     <label>Procedure reference <input name="procedure_ref"></label><label>Notes <input name="notes"></label>
     <button class="primary">Record a new rule version</button></form>{% endif %}
 </div>

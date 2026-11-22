@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}{{ site.code }}{% endblock %}
 {% block content %}
-{% page_header title=site.code back_url="/planning/sites/" back_label="Customers" %}{{ site.zone }} · {{ site.timezone }} · CRM {{ site.crm_ref }}{% endpage_header %}
+{% page_header title=site.code back_url="/planning/sites/" back_label="Customers" %}{{ site.zone }} · CRM reference {{ site.crm_ref }} · {{ site.timezone }}{% endpage_header %}
 <div class="card"><h2>Status</h2>
 <p style="font-size:var(--fs-lg);margin:0 0 6px">{% chip status.tone status.text %}</p>
 {% if status.detail %}<p class="muted">{{ status.detail }}</p>{% endif %}
@@ -43,6 +43,6 @@
 {% else %}<p class="waiting">{{ who.consent }}</p>{% endif %}</details></div>
 
 {% if visits %}<div class="card"><h2>Recent visits</h2><div class="tablewrap"><table><thead><tr><th>Visit</th><th>When</th><th>Status</th></tr></thead><tbody>
-{% for v in visits %}<tr><td><a href="/planning/visits/{{ v.code }}/">{{ v.code }}</a></td><td>{{ v.current_revision.on_site_start|local_dt }}</td><td>{{ v.get_status_display }}</td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
+{% for v in visits %}<tr><td><a href="/planning/visits/{{ v.code }}/">{{ v.code }}</a></td><td>{{ v.current_revision.on_site_start|local_dt }}</td><td>{{ v|visit_status }}</td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
 <style>.plainlist{margin:0;padding-left:18px}</style>
 {% endblock %}

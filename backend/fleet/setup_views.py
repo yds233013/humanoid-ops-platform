@@ -115,7 +115,10 @@ class ProfileForm(UIForm):
     load_unload_min = _optional_int("Load or unload time (minutes)")
     source = forms.ChoiceField(
         label="Source",
-        choices=[("engineering_doc", "Engineering document"), ("synthetic_demo", "Synthetic demo value")],
+        choices=[
+            ("engineering_doc", "Engineering document"),
+            ("synthetic_demo", "Demo value (fictional, never approvable for production)"),
+        ],
         initial="engineering_doc",
     )
 

@@ -11,7 +11,7 @@
 <dt>Minimum battery at departure (%)</dt><dd>{{ profile.min_departure_soc_pct|default:"Unknown" }}</dd>
 <dt>Charge turnaround (minutes)</dt><dd>{{ profile.charge_turnaround_min|default:"Unknown" }}</dd>
 <dt>Load or unload time (minutes)</dt><dd>{{ profile.load_unload_min|default:"Unknown" }}</dd>
-<dt>Source</dt><dd>{{ profile.get_source_display }}</dd>
+<dt>Source</dt><dd>{% source_label profile.source profile.get_source_display %}</dd>
 </dl></section>
 <section class="card"><h2>Approvals</h2>
 {% for r in slot_rows %}<p data-slot="{{ r.slot }}"><b>{{ r.label }}</b>: {% if r.approval %}{% chip "info" "Approved" %} by {{ r.approval.approver.username }}, {{ r.approval.approved_at|local_dt }}{% else %}{% chip "warn" "Not yet" %} <span class="waiting" data-waiting="1">Waiting for {{ r.role_words }}'s approval</span>{% endif %}</p>{% endfor %}</section>

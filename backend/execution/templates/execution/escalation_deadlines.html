@@ -10,7 +10,7 @@
 {% for r in rows %}<tr data-set="{{ r.set.pk }}" data-status="{{ r.status }}">
   <td><b>v{{ r.set.version_no }}</b> for incident policy v{{ r.set.incident_policy.version }}<div class="muted">by {{ r.set.created_by.username }}</div>{% if r.active %}<div><b>Active</b></div>{% endif %}{% if r.usable_now %}<div class="muted">usable in this mode</div>{% endif %}{% if r.set.notes %}<div class="muted">{{ r.set.notes }}</div>{% endif %}</td>
   <td>{{ r.status }}{% if r.withdrawal %}<div class="muted">Withdrawn by {{ r.withdrawal.withdrawn_by.username }}: {{ r.withdrawal.reason }}</div>{% endif %}</td>
-  <td>{% if r.synthetic %}<span class="badge synthetic">SYNTHETIC demo, not a company value</span>{% else %}{{ r.set.get_source_display }}{% endif %}</td>
+  <td>{% if r.synthetic %}{% source_label "synthetic_demo" %}{% else %}{{ r.set.get_source_display }}{% endif %}</td>
   <td>{% for sl in r.slots %}<div>{{ sl.label }}: {% if sl.approval %}{{ sl.approval.approver.username }}{% else %}<span class="muted">pending</span>{% if can.approve_escalation_deadlines and not r.withdrawal %}
     <form method="post" action="/execution/escalation-deadlines/{{ r.set.pk }}/approve/" class="inline">{% csrf_token %}{% form_token %}<input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve {{ sl.slot }}</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
   <td><pre>{{ r.deadlines }}</pre></td>
@@ -20,7 +20,7 @@
 {% if can.manage_escalation_deadlines %}
 <div class="card"><h2>Record a deadline set for the active incident policy</h2>
 <form method="post" action="/execution/escalation-deadlines/create/">{% csrf_token %}{% form_token %}
-  <div class="row"><label>Source <select name="source">{% for v, lbl in sources %}<option value="{{ v }}">{{ lbl }}</option>{% endfor %}</select></label>
+  <div class="row"><label>Source <select name="source">{% for v, lbl in sources %}<option value="{{ v }}">{{ lbl|source_option }}</option>{% endfor %}</select></label>
   <label>Notes <input name="notes" size="40"></label></div>
   <p><label>Deadlines (JSON: level -> list of {"to_role", "within_min"})<br><textarea name="deadlines" rows="8" cols="70">{{ example }}</textarea></label></p>
   <button class="primary">Record deadline set</button></form></div>{% endif %}

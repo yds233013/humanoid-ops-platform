@@ -203,7 +203,9 @@ def test_overview_blocker_panel_demo_and_production(w):
     assert 'data-blocker="HOLD_POLICY_NOT_APPROVED"' in body
     assert 'data-blocker="PERIODIC_INTERVAL_NOT_APPROVED"' in body
     robots = c.get("/ops/robots/").content.decode()
-    assert 'data-periodic="due"' in robots and "SYNTHETIC demo interval, not an engineering value" in robots
+    # v2 01D ruling C: the fictional interval is a "Demo value" chip with its meaning in a fold
+    assert 'data-periodic="due"' in robots and "Demo value" in robots
+    assert "This interval is fictional demonstration data" in robots and "SYNTHETIC" not in robots
     assert "Demo workspace" in body
     api = c.get("/api/ops/production-blockers").json()
     assert api["production"] is False and api["heading"] == "Would block in production"
@@ -221,15 +223,18 @@ def test_overview_blocker_panel_demo_and_production(w):
 def test_fleet_pattern_robot_and_policy_labels(w):
     c = client("engineering_lead", name="l7")
     pat = c.get("/fleet/patterns/P-A/").content.decode()
-    assert 'data-template="T1"' in pat and "synthetic, demo only" in pat
-    assert "SYNTHETIC demo interval, not an engineering value" in pat
+    # v2 01D ruling C: approval-affecting states say precisely what they are; values get a Demo value chip
+    assert 'data-template="T1"' in pat and "Demo checklist \u2014 not approved for production" in pat
+    assert "Demo value" in pat and "This interval is fictional demonstration data" in pat
+    assert "Not approved for production" in pat and "Demo approval" in pat
     assert 'data-status="approved"' in pat and "<b>active</b>" in pat
     pol = c.get("/fleet/hold-policies/").content.decode()
     assert 'data-status="synthetic draft"' in pol and "not usable in production" in pol
+    assert "Draft \u2014 not approved" in pol and "Not approved for production" in pol
     assert "data-no-active" in pol and "would block every release in production" in pol
     hold = ow.place_hold(w, "robot", "R-01", "manual")
     robot = c.get("/fleet/R-01/").content.decode()
-    assert "Release requirements fixed at placement under policy v1 (synthetic draft)" in robot
+    assert "Release requirements fixed at placement under policy v1 (Draft \u2014 not approved)" in robot
     assert "Would be unreleasable in production" in robot and f'data-rebases="{hold}"' in robot
     assert "two different people" in robot
     assert "Periodic inspection: due" in robot
@@ -280,7 +285,7 @@ def test_incident_deadline_states_and_deadline_page(w):
     make_deadline_set(w)
     page = c.get(f"/execution/incidents/{code}/").content.decode()
     assert 'data-deadlines="configured"' in page and 'data-deadline-role="safety_reviewer"' in page
-    assert "not yet escalated" in page and "SYNTHETIC demo, not a company value" in page
+    assert "not yet escalated" in page and "Not approved for production" in page  # demo deadline set
     dl = c.get("/execution/escalation-deadlines/").content.decode()
     assert "<b>Active</b>" in dl and "data-deadlines-unconfigured" not in dl
     set_setting("demo_mode", "false")

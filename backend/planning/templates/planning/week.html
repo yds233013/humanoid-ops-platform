@@ -9,10 +9,10 @@
   <div class="day"><div class="dayhead">{{ d.date|date:"D j" }}</div>
   {% for c in d.cards %}
     <a class="vcard {{ c.state }}" href="/planning/visits/{{ c.visit.code }}/">
-      <b>{{ c.visit.code }}</b> · {{ c.visit.site.code }}<br>
+      <b>{{ c.visit.code }}</b> · {{ c.visit.site|home_label }}<br>
       {{ c.start|local_time }} to {{ c.end|local_time }}<br>
       <span class="badge {{ c.state }}">{{ c.label }}</span>
-      <div class="muted">{{ c.visit.get_status_display }}{% if c.rev.robot %} · {{ c.rev.robot.code }}{% endif %}{% if c.rev.vehicle %} · {{ c.rev.vehicle.code }}{% endif %}</div>
+      <div class="muted">{{ c.visit|visit_status }}{% if c.rev.robot %} · {{ c.rev.robot.code }}{% endif %}{% if c.rev.vehicle %} · {{ c.rev.vehicle.code }}{% endif %}</div>
     </a>
   {% empty %}<div class="muted" style="padding:6px">-</div>{% endfor %}
   </div>
@@ -20,7 +20,7 @@
 </div>
 {% if unplanned %}<div class="card"><h2>Requested, not yet plannable</h2>
 <div class="tablewrap"><table><thead><tr><th>Visit</th><th>Site</th><th>When (site time)</th><th>Why</th></tr></thead><tbody>
-{% for c in unplanned %}<tr><td><a href="/planning/visits/{{ c.visit.code }}/">{{ c.visit.code }}</a></td><td>{{ c.visit.site.code }}</td>
+{% for c in unplanned %}<tr><td><a href="/planning/visits/{{ c.visit.code }}/">{{ c.visit.code }}</a></td><td>{{ c.visit.site|home_label }}</td>
 <td>{{ c.start|local_dt }}</td><td><ul class="reasons">{% for b in c.plain %}<li>{{ b.sentence }}</li>{% endfor %}</ul></td></tr>{% endfor %}
 </tbody></table></div></div>{% endif %}
 <style>

@@ -25,10 +25,19 @@ class Command(BaseCommand):
         parser.add_argument(
             "--reset",
             action="store_true",
-            help="Destroy every row of this demo workspace first (refused unless it is a demo workspace).",
+            help="Destroy every row of this demo workspace first (refused unless it is a demo workspace and "
+            "DEMO_DATABASE_FINGERPRINT matches this database).",
+        )
+        parser.add_argument(
+            "--print-fingerprint",
+            action="store_true",
+            help="Print this database's fingerprint (DEMO_DATABASE_FINGERPRINT) and exit; writes nothing.",
         )
 
     def handle(self, *args: Any, **opts: Any) -> None:
+        if opts["print_fingerprint"]:
+            self.stdout.write(demo.database_fingerprint())
+            return
         t0 = time.perf_counter()
         password = os.environ.get(demo.PASSWORD_ENV, "")
         try:
@@ -36,11 +45,12 @@ class Command(BaseCommand):
                 raise demo.DemoRefused(
                     f"Set {demo.PASSWORD_ENV} (see .env.example): the demo logins use it as their password."
                 )
-            demo.check_can_build(reset=bool(opts["reset"]))
-            if not demo.is_empty():
-                demo.wipe()
-                self.stdout.write("reset: every row of the previous demo workspace was destroyed")
-            summary = demo.build(password=password)
+            with demo.build_lock():
+                demo.check_can_build(reset=bool(opts["reset"]))
+                if not demo.is_empty():
+                    demo.wipe()  # checks the demo markers and the database fingerprint again itself
+                    self.stdout.write("reset: every row of the previous demo workspace was destroyed")
+                summary = demo.build(password=password)
         except demo.DemoRefused as refused:
             raise CommandError(str(refused)) from None
         total = time.perf_counter() - t0
@@ -50,9 +60,8 @@ class Command(BaseCommand):
         self.stdout.write(f"  total {total:.1f} s")
         self.stdout.write(
             f"Journey J4: visit {summary.j4_visit} is ready for the day's checks and the ops lead's "
-            "decision; "
-            f"{summary.complete_visit} had every check recorded at build time; open incident "
-            f"{summary.incident}; overdue return on run {summary.overdue_run}."
+            f"decision. Open incident {summary.incident}; robot {summary.attention_robot} has no periodic "
+            "inspection yet. Past visits are historical scheduled visits (no execution records)."
         )
         self.stdout.write(f"Demo logins (password: the {demo.PASSWORD_ENV} environment variable):")
         for username, role, note in summary.logins:

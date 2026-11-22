@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Cancel {{ visit.code }}{% endblock %}
 {% block content %}
-{% url "planning-visit" visit.code as visit_url %}{% page_header title="Cancel this visit?" back_url=visit_url back_label=visit.code %}{{ visit.code }} at {{ visit.site.code }} · {{ visit.get_status_display }}{% endpage_header %}
+{% url "planning-visit" visit.code as visit_url %}{% page_header title="Cancel this visit?" back_url=visit_url back_label=visit.code %}{{ visit.code }} at {{ visit.site|home_label }} · {{ visit|visit_status }}{% endpage_header %}
 {% if visit.status == "cancelled" %}<p class="notice neutral">This visit is already cancelled.</p>
 {% elif can_plan %}<div class="card"><p>Cancelling releases the robot, crew and vehicle reservations. A visit that has already left cannot be cancelled.</p>
 <form method="post" action="/planning/visits/{{ visit.code }}/cancel/">{% csrf_token %}{% form_token %}

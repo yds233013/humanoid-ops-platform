@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}{{ visit.code }}{% endblock %}
 {% block content %}
-{% page_header title=visit.code back_url="/planning/" back_label="Planner" %}{{ visit.site.code }} ({{ visit.site.zone }}) · {{ visit.get_status_display }} · revision {{ rev.revision_no }} · <a href="/readiness/visits/{{ visit.code }}/">Departure readiness</a>{% endpage_header %}
+{% page_header title=visit.code back_url="/planning/" back_label="Planner" %}{{ visit.site|home_label }} · {{ visit|visit_status }} · revision {{ rev.revision_no }} · <a href="/readiness/visits/{{ visit.code }}/">Departure readiness</a>{% endpage_header %}
 <div class="card">
   <h2>Planning status (checked now)</h2>
   <span class="badge {{ state }}">{{ label }}</span> <span class="muted">Planning only - not cleared to depart.</span>
