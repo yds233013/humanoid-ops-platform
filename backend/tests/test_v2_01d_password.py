@@ -329,3 +329,65 @@ def test_a_voluntary_change_works_for_a_user_who_is_not_forced(admin):
     assert r.status_code == 302
     row = AuditEvent.objects.get(command="accounts.change_password", outcome="committed")
     assert row.result["was_temporary"] is False
+
+
+# ------------------------------------------------------------------ look-alike paths cannot bypass the gate
+LOOKALIKES = [
+    "/account/password/../ops/",
+    "/account/passwordX",
+    "/account/password/extra/",
+    "/account/password",
+    "/login/../ops/",
+    "/login/x",
+    "/healthzX",
+    "/healthz/",
+    "/logout/x",
+    "/logoutX/",
+    "/static-evil/",
+    "/static/../ops/",
+    "/static/..%2fops/",
+]
+API_LOOKALIKES = ["/api/healthz-anything", "/api/health/x", "/api/auth/logoutX", "/api/auth/logout/x"]
+
+
+@pytest.mark.parametrize("path", LOOKALIKES)
+def test_lookalike_page_paths_get_the_gate_redirect(admin, settings, path):
+    settings.STATIC_URL = "/static/"
+    user = _invite(admin, "look", "ops_lead")
+    c = _sign_in(user.username, TEMP)
+    for method in (c.get, c.post):
+        r = method(path)
+        assert r.status_code == 302 and r["Location"] == CHANGE, (path, method.__name__, r.status_code)
+
+
+@pytest.mark.parametrize("path", API_LOOKALIKES)
+def test_lookalike_api_paths_get_the_gate_refusal(admin, path):
+    user = _invite(admin, "lookapi", "ops_lead")
+    c = _sign_in(user.username, TEMP)
+    for method in (c.get, c.post):
+        r = method(path)
+        assert r.status_code == 403 and r.json()["error"] == "password_change_required", (path, r.status_code)
+
+
+def test_only_the_exact_allowed_paths_and_static_files_pass(admin, settings):
+    from accounts.middleware import ALLOWED_PATHS, is_allowed
+
+    settings.STATIC_URL = "/static/"
+    assert ALLOWED_PATHS == {
+        "/account/password/",
+        "/logout/",
+        "/login/",
+        "/api/auth/logout",
+        "/healthz",
+        "/api/health",
+    }
+    assert is_allowed("/static/css/site.css")
+    for bad in LOOKALIKES + API_LOOKALIKES:
+        assert not is_allowed(bad), bad
+    settings.STATIC_URL = None  # no static prefix configured: nothing passes as static
+    assert not is_allowed("/static/css/site.css")
+    user = _invite(admin, "exact", "ops_lead")
+    c = _sign_in(user.username, TEMP)
+    assert c.get(CHANGE).status_code == 200
+    assert c.get("/healthz").status_code in (200, 503)
+    assert c.get("/login/").status_code == 200
