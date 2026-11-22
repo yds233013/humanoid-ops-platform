@@ -73,6 +73,10 @@ MIDDLEWARE = [
     # v2 01A: response hardening (after authentication: they look at request.user)
     "platform_core.middleware.AnonymousHtmlRedirectMiddleware",
     "platform_core.middleware.SecurityHeadersMiddleware",
+    # v2 01D: the workspace time zone is the one DISPLAY zone (platform_core.timezones), activated per request
+    "platform_core.timezones.DisplayTimeZoneMiddleware",
+    # v2 01D: an account with a temporary password reaches only the change-password page until it is changed
+    "accounts.middleware.ForcedPasswordChangeMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -126,6 +130,9 @@ CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_AGE = 12 * 60 * 60
 
 LANGUAGE_CODE = "en-us"
+# Fallback only: the DISPLAY zone is the workspace row's time zone (platform_core.timezones), activated per
+# request. This value is used when no workspace row exists yet. Business-rule zones (daily close-out,
+# a home's booking zone) are separate settings and never come from here.
 TIME_ZONE = "America/Los_Angeles"
 USE_TZ = True
 

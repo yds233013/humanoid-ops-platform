@@ -7,4 +7,5 @@
 <section class="card"><h2>Give a role</h2>
 {% if is_self %}<p class="waiting">You cannot give a role to your own account. Ask another admin.</p>{% else %}{% include "ui/form.html" with form=form submit="Give role" %}{% endif %}
 </section>
+{% if not is_self %}<section class="card"><h2>Password</h2><p class="muted">Forgot their password? Set a new temporary one; they must change it when they next sign in.</p><a class="btn" href="/settings/users/{{ target.pk }}/password/">Set a temporary password</a></section>{% endif %}
 {% endblock %}

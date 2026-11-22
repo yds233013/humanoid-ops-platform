@@ -46,3 +46,34 @@ class RoleGrant(models.Model):
             and self.valid_from <= now  # type: ignore[operator]
             and (self.valid_to is None or now < self.valid_to)  # type: ignore[operator]
         )
+
+
+class PasswordState(models.Model):
+    """Whether a user must change a temporary password before using the app (v2 01D).
+
+    ``must_change`` is set when an admin creates the account (accounts.services.create_user) or resets its
+    password (reset_password), and cleared ONLY by that user's own successful change (change_own_password).
+    No row means "not forced": the bootstrap admin and the synthetic dev users chose their own password.
+    No password, hash or hint is ever stored here.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, primary_key=True, on_delete=models.CASCADE, related_name="password_state"
+    )
+    must_change = models.BooleanField(default=False)
+    temporary_set_at = models.DateTimeField(null=True, blank=True)
+    temporary_set_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    changed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"{self.user_id}: {'must change' if self.must_change else 'ok'}"
+
+
+def must_change_password(user: object) -> bool:
+    """True while the signed-in user still has a temporary password (one indexed primary-key lookup)."""
+    pk = getattr(user, "pk", None)
+    if pk is None or not getattr(user, "is_authenticated", False):
+        return False
+    return PasswordState.objects.filter(user_id=pk, must_change=True).exists()

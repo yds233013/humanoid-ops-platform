@@ -31,8 +31,7 @@ from planning.models import Person, Reservation, Site, SiteAssessment, Vehicle, 
 from planning.plain import ALREADY_DONE, plain_blockers, refusal_text, role_words, who_can
 from platform_core.commands import CommandError
 from platform_core.interaction import consume_form_token
-
-PLANNER_TZ = "America/Los_Angeles"  # display default; each visit also shows its site's own timezone
+from platform_core.timezones import workspace_zone_name
 
 
 def _guard(request: HttpRequest) -> HttpResponse | None:
@@ -62,7 +61,8 @@ def _card(v: Visit) -> dict[str, Any]:
 def week(request: HttpRequest) -> HttpResponse:
     if (deny := _guard(request)) is not None:
         return deny
-    tz = ZoneInfo(PLANNER_TZ)
+    tz_name = workspace_zone_name()  # the week is laid out in the workspace display zone
+    tz = ZoneInfo(tz_name)
     try:
         anchor = date.fromisoformat(request.GET["week"]) if "week" in request.GET else timezone.localdate()
     except ValueError:
@@ -89,7 +89,7 @@ def week(request: HttpRequest) -> HttpResponse:
             "monday": monday,
             "prev": monday - timedelta(days=7),
             "next": monday + timedelta(days=7),
-            "tz": PLANNER_TZ,
+            "tz": tz_name,
             "roles": sorted(active_roles(request.user)),
             "unplanned": [_card(v) for v in Visit.objects.filter(status="requested").select_related("site")],
         },

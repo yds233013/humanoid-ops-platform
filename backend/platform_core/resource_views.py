@@ -8,10 +8,8 @@ qualification stays with the safety reviewer and the service enforces it.
 
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from django import forms
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse
@@ -23,6 +21,7 @@ from accounts.permissions import has_permission
 from planning import services as ps
 from planning.models import Person, Qualification, Vehicle
 from platform_core.interaction import ConfirmForm, UIForm, command_page, denied, holds_any
+from platform_core.timezones import workspace_zone
 
 User = get_user_model()
 READ = "planning.read"
@@ -52,7 +51,8 @@ def _qual_state(q: Qualification, now: datetime) -> str:
 
 
 def _day_start(d: date) -> datetime:
-    return datetime.combine(d, time.min, tzinfo=ZoneInfo(settings.TIME_ZONE)).astimezone(UTC)
+    # a typed calendar day is read in the workspace display zone (the zone every date on screen is shown in)
+    return datetime.combine(d, time.min, tzinfo=workspace_zone()).astimezone(UTC)
 
 
 # ------------------------------------------------------------------ forms

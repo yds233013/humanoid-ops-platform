@@ -2,6 +2,7 @@ from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
 from accounts import api as accounts_api
+from accounts import views as accounts_views
 from fleet import api as fleet_api
 from fleet import views as fleet_views
 from platform_core import api as core_api
@@ -31,6 +32,7 @@ urlpatterns = [
     path("", core_views.landing, name="landing"),
     path("login/", auth_views.LoginView.as_view()),
     path("logout/", auth_views.LogoutView.as_view(next_page="/login/")),
+    path("account/password/", accounts_views.password_change, name="password-change"),
     path("fleet/", fleet_views.fleet_list, name="fleet-list"),
     path("", include("platform_core.setup_urls")),  # v2 01C screens; must precede fleet/<code>/
     # Slice 7 (Engineer C): hold-policy lifecycle and pattern pages; before fleet/<code>/ (it would match)

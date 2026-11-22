@@ -13,12 +13,12 @@ from datetime import date, datetime
 from typing import Any
 
 from django import forms
-from django.conf import settings
 from django.core.validators import RegexValidator
 from django.utils import timezone
 
 from fleet.models import Robot
 from planning.models import ConsentRecord, Person, Site, SiteAssessment, Vehicle
+from platform_core.timezones import workspace_zone_name
 
 CODE = RegexValidator(
     r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,19}$",
@@ -69,7 +69,7 @@ class SiteForm(forms.Form):
     tz = forms.CharField(
         label="Time zone",
         max_length=60,
-        initial=settings.TIME_ZONE,
+        initial=workspace_zone_name,  # callable: the workspace display zone when the form is shown
         help_text="For example America/Los_Angeles.",
     )
     crm_ref = forms.CharField(

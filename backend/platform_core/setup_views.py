@@ -89,6 +89,15 @@ class InviteForm(UIForm):
     )
 
 
+class ResetPasswordForm(ConfirmForm):
+    password = forms.CharField(
+        label="New temporary password",
+        strip=False,
+        widget=forms.PasswordInput(render_value=False, attrs={"autocomplete": "new-password"}),
+        help_text="Share it with the person privately. They must change it when they next sign in.",
+    )
+
+
 class GrantForm(UIForm):
     role = forms.ChoiceField(label="Role", choices=[(r, r.replace("_", " ").capitalize()) for r in ALL_ROLES])
 
@@ -323,4 +332,27 @@ def user_revoke(request: HttpRequest, user_id: int, grant_id: int) -> HttpRespon
         ok=f"Role {grant.role.replace('_', ' ')} taken away from {target.username}.",
         success_url=f"/settings/users/{target.pk}/",
         context={"target": target, "grant": grant},
+    )
+
+
+@login_required
+def user_password(request: HttpRequest, user_id: int) -> HttpResponse:
+    """Confirm page: set a new temporary password for someone else (accounts.reset_password). The person must
+    change it at their next sign-in. The password goes only into the POST body: never a URL, message or audit
+    row."""
+    perm = "accounts.reset_password"
+    if not has_permission(request.user, perm):
+        return denied(request, perm)
+    target = get_object_or_404(User, pk=user_id)
+    return command_page(
+        request,
+        permission=perm,
+        form_class=ResetPasswordForm,
+        template="settings/user_password.html",
+        call=lambda actor, d: account_services.reset_password(
+            actor, user_id=target.pk, password=d["password"]
+        ),
+        ok=f"Temporary password set for {target.username}. They must choose their own at their next sign-in.",
+        success_url=f"/settings/users/{target.pk}/",
+        context={"target": target},
     )

@@ -16,6 +16,7 @@ urlpatterns = [
     path("settings/users/", setup.user_list, name="settings-users"),
     path("settings/users/new/", setup.user_new, name="settings-user-new"),
     path("settings/users/<int:user_id>/", setup.user_detail, name="settings-user"),
+    path("settings/users/<int:user_id>/password/", setup.user_password, name="settings-user-password"),
     path(
         "settings/users/<int:user_id>/revoke/<int:grant_id>/", setup.user_revoke, name="settings-user-revoke"
     ),

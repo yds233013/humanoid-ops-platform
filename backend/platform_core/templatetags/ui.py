@@ -1,8 +1,9 @@
 """Template helpers for the shared design system (milestone 01A).
 
-* Time: the database stores UTC; every screen shows the workspace time zone (settings.TIME_ZONE) with an
-  explicit zone label and ONE format (``Sat 21 Nov, 10:48 PST``). Use ``local_dt`` / ``local_time``; never the
-  ``date`` filter on an instant.
+* Time: the database stores UTC; every screen shows the workspace display zone (the workspace row's
+  time zone, see platform_core.timezones; settings.TIME_ZONE only when no row exists) with an explicit zone
+  label and ONE format (``Sat 21 Nov, 10:48 PST``). Use ``local_dt`` / ``local_time``; never the ``date``
+  filter on an instant.
 * Navigation: ``{% site_header %}`` renders the one global header (navigation, section links, user menu and
   the single "Demo workspace" badge).
 * Plain language: ``refusal`` turns a raw "Refused (...): CODE: text; CODE: text" message into a list of
@@ -18,13 +19,13 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from django import template
-from django.conf import settings
 from django.http import HttpRequest
 from django.utils.html import format_html
 from django.utils.safestring import SafeString
 
 from accounts.permissions import active_roles
 from accounts.roles import PERMISSIONS
+from platform_core import timezones
 
 register = template.Library()
 
@@ -35,7 +36,8 @@ DATE_FORMAT_YEAR = "%a %-d %b %Y"
 
 
 def workspace_zone() -> ZoneInfo:
-    return ZoneInfo(settings.TIME_ZONE)
+    """The workspace DISPLAY zone (activated per request by DisplayTimeZoneMiddleware)."""
+    return timezones.workspace_zone()
 
 
 def _as_datetime(value: Any) -> datetime | None:
@@ -59,8 +61,9 @@ def local_dt(value: Any) -> str:
     dt = _as_datetime(value)
     if dt is None:
         return ""
-    local = dt.astimezone(workspace_zone())
-    fmt = DT_FORMAT if local.year == datetime.now(workspace_zone()).year else DT_FORMAT_YEAR
+    zone = workspace_zone()
+    local = dt.astimezone(zone)
+    fmt = DT_FORMAT if local.year == datetime.now(zone).year else DT_FORMAT_YEAR
     return local.strftime(fmt)
 
 
@@ -75,16 +78,17 @@ def local_time(value: Any) -> str:
 @register.filter
 def local_date(value: Any) -> str:
     """A calendar day: an instant is converted to the workspace zone first; a ``date`` is shown as is."""
+    zone = workspace_zone()
     if isinstance(value, datetime) or isinstance(value, str):
         dt = _as_datetime(value)
         if dt is None:
             return ""
-        d: date = dt.astimezone(workspace_zone()).date()
+        d: date = dt.astimezone(zone).date()
     elif isinstance(value, date):
         d = value
     else:
         return ""
-    fmt = DATE_FORMAT if d.year == datetime.now(workspace_zone()).year else DATE_FORMAT_YEAR
+    fmt = DATE_FORMAT if d.year == datetime.now(zone).year else DATE_FORMAT_YEAR
     return d.strftime(fmt).replace("  ", " ")
 
 
@@ -116,9 +120,9 @@ def localize_utc_text(text: Any) -> str:
 
 @register.simple_tag
 def workspace_tz_label() -> str:
-    """The workspace zone name and today's abbreviation, e.g. ``America/Los_Angeles (PST)``."""
-    zone = workspace_zone()
-    return f"{settings.TIME_ZONE} ({datetime.now(zone).strftime('%Z')})"
+    """The workspace display zone name and today's abbreviation, e.g. ``America/Los_Angeles (PST)``."""
+    name = timezones.workspace_zone_name()
+    return f"{name} ({datetime.now(ZoneInfo(name)).strftime('%Z')})"
 
 
 # ------------------------------------------------------------------ status chips

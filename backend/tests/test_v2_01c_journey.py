@@ -214,6 +214,17 @@ class Journey:
         self.record(
             actor.role, "/login/", f"username {actor.username}, the password the admin set", "Signed in"
         )
+        if r.redirect_chain and r.redirect_chain[-1][0] == "/account/password/":
+            # v2 01D: an invited account must replace the admin's temporary password first
+            new = actor.password + "-own"
+            self.submit(
+                actor,
+                "/account/password/",
+                {"current_password": actor.password, "new_password1": new, "new_password2": new},
+                expect="Password changed.",
+                what="first sign-in: choose an own password instead of the temporary one",
+            )
+            actor.password = new
 
     # ---- a screen with a form
     def submit(

@@ -6,11 +6,14 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils import timezone
 
-from accounts.models import RoleGrant
+from accounts.models import PasswordState, RoleGrant
 from accounts.roles import ALL_ROLES
-from platform_core.commands import Conflict, Invalid, Outcome, run_command
+from platform_core.commands import Conflict, Invalid, NotAuthenticated, Outcome, run_command
+from platform_core.middleware import current_request_id
+from platform_core.models import AuditEvent
 
 User = get_user_model()
 
@@ -83,7 +86,8 @@ def create_user(
 ) -> dict[str, Any]:
     """Admin invites a person: a user account with a temporary password and NO role. Roles are granted
     afterwards with ``grant_role`` (the admin cannot give anything beyond what that command allows). The
-    password is never written to the audit payload."""
+    password is never written to the audit payload. The account must change the temporary password at its
+    first sign-in (PasswordState.must_change; enforced by accounts.middleware)."""
     username = username.strip()
     payload = {"username": username, "email": email.strip()}
 
@@ -97,7 +101,8 @@ def create_user(
         except ValidationError as exc:
             raise Invalid(" ".join(exc.messages)) from None
         user = User.objects.create_user(username=username, password=password, email=email.strip())
-        return Outcome("user", str(user.pk), {"username": username})
+        _mark_temporary(user, actor)
+        return Outcome("user", str(user.pk), {"username": username, "must_change_password": True})
 
     return run_command(
         actor,
@@ -107,3 +112,102 @@ def create_user(
         handler=handler,
         idempotency_key=idempotency_key,
     )
+
+
+# ------------------------------------------------------------------ temporary passwords (v2 01D)
+def _mark_temporary(user: Any, actor: Any) -> None:
+    PasswordState.objects.update_or_create(
+        user=user,
+        defaults={
+            "must_change": True,
+            "temporary_set_at": timezone.now(),
+            "temporary_set_by": actor,
+            "changed_at": None,
+        },
+    )
+
+
+def reset_password(
+    actor: Any, *, user_id: int, password: str, idempotency_key: str | None = None
+) -> dict[str, Any]:
+    """Admin sets a new TEMPORARY password for someone else. The person must change it at their next sign-in;
+    their existing sessions end (Django ties a session to the password hash). The password is never written
+    to the audit payload or result."""
+    payload = {"user_id": user_id}
+
+    def handler() -> Outcome:
+        if user_id == actor.pk:
+            raise Invalid("Use Change password for your own account")
+        try:
+            target = User.objects.select_for_update().get(pk=user_id)
+        except User.DoesNotExist:
+            raise Invalid(f"No user {user_id}") from None
+        try:
+            validate_password(password, user=target)
+        except ValidationError as exc:
+            raise Invalid(" ".join(exc.messages)) from None
+        target.set_password(password)
+        target.save(update_fields=["password"])
+        _mark_temporary(target, actor)
+        return Outcome(
+            "user", str(target.pk), {"username": target.get_username(), "must_change_password": True}
+        )
+
+    return run_command(
+        actor,
+        "accounts.reset_password",
+        permission="accounts.reset_password",
+        payload=payload,
+        handler=handler,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _audit_self(user: Any, outcome: str, result: dict[str, Any], reason: str = "") -> None:
+    AuditEvent.objects.create(
+        actor=user,
+        command="accounts.change_password",
+        outcome=outcome,
+        entity_type="user",
+        entity_id=str(user.pk),
+        payload={"username": user.get_username()},
+        result=result,
+        reason=reason,
+        request_id=current_request_id.get(),
+    )
+
+
+def change_own_password(user: Any, *, current: str, new: str) -> dict[str, Any]:
+    """The signed-in user replaces their own password (the only way ``must_change`` is cleared).
+
+    Needs no role: a newly invited person has none yet. Refuses a wrong current password and a new password
+    equal to the current (temporary) one, and applies Django's password validators. The audit row names the
+    user only; no password is ever written. The caller must rotate the session (update_session_auth_hash)."""
+    if user is None or not user.is_authenticated:
+        raise NotAuthenticated("Sign in again to change your password")
+    with transaction.atomic():
+        locked = User.objects.select_for_update().get(pk=user.pk)  # one change at a time per account
+        if not locked.check_password(current):
+            refusal: Exception = Invalid("Your current password is not correct")
+        elif new == current:
+            refusal = Invalid("Choose a new password: it cannot be the temporary or current password")
+        else:
+            try:
+                validate_password(new, user=locked)
+            except ValidationError as exc:
+                refusal = Invalid(" ".join(exc.messages))
+            else:
+                state = PasswordState.objects.select_for_update().filter(user=locked).first()
+                was_forced = bool(state and state.must_change)
+                locked.set_password(new)
+                locked.save(update_fields=["password"])
+                PasswordState.objects.update_or_create(
+                    user=locked, defaults={"must_change": False, "changed_at": timezone.now()}
+                )
+                result = {"user_id": locked.pk, "was_temporary": was_forced}
+                _audit_self(locked, AuditEvent.OUTCOME_COMMITTED, result)
+                user.password = locked.password  # the caller's object, for update_session_auth_hash
+                return result
+    # refused: nothing changed; record the attempt (reason only, never the password)
+    _audit_self(user, AuditEvent.OUTCOME_DENIED, {}, reason=str(refusal))
+    raise refusal

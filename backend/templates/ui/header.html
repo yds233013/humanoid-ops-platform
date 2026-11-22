@@ -7,7 +7,7 @@
 <div class="pop"><div class="who">Signed in as {{ username }}{% if roles %}<br>{{ roles|join:", " }}{% endif %}</div><hr>
 {% if report_links %}<div class="grp">Reports</div>{% for label, url, perm in report_links %}<a href="{{ url }}">{{ label }}</a>{% endfor %}{% endif %}
 {% if settings_links %}<div class="grp">Settings</div>{% for label, url, perm in settings_links %}<a href="{{ url }}">{{ label }}</a>{% endfor %}{% endif %}
-<hr><form method="post" action="/logout/"><input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"><button type="submit">Sign out</button></form></div></details>
+<hr><a href="/account/password/">Change password</a><form method="post" action="/logout/"><input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"><button type="submit">Sign out</button></form></div></details>
 {% else %}<a class="brand" href="/">Ops Platform</a>{% endif %}
 </div>
 {% if authenticated and sub %}<div class="subnav"><div class="hdr" role="navigation" aria-label="Section">{% for s in sub %}<a href="{{ s.url }}"{% if s.active %} aria-current="page"{% endif %}>{{ s.label }}</a>{% endfor %}</div></div>{% endif %}

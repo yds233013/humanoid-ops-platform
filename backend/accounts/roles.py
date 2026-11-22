@@ -16,6 +16,7 @@ PERMISSIONS: dict[str, set[str]] = {
     "accounts.revoke_role": {ADMIN},
     # v2 01C: the workspace admin invites people and sets up the workspace (records facts, approves nothing)
     "accounts.create_user": {ADMIN},
+    "accounts.reset_password": {ADMIN},  # v2 01D: sets a temporary password the person must change
     "platform_core.manage_workspace": {ADMIN},
     "platform_core.manage_hubs": {ADMIN},
     "platform_core.read_operating_settings": {ADMIN, OPS_LEAD},

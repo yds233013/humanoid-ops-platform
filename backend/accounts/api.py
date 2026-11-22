@@ -8,6 +8,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from accounts import services
+from accounts.models import must_change_password
 from accounts.permissions import active_roles
 
 
@@ -26,7 +27,14 @@ def login_view(request: Request) -> Response:
     if user is None:
         return Response({"error": "invalid_credentials"}, status=401)
     login(request._request, user)
-    return Response({"user_id": user.pk, "roles": sorted(active_roles(user))})
+    return Response(
+        {
+            "user_id": user.pk,
+            "roles": sorted(active_roles(user)),
+            # v2 01D: while true, every other API answers 403 password_change_required
+            "password_change_required": must_change_password(user),
+        }
+    )
 
 
 @api_view(["POST"])

@@ -53,3 +53,26 @@ a different permission than the page gate (for example retiring a robot is the f
 
 - Tokens are per rendered form. A page that renders several forms issues several tokens.
 - A refusal consumes the token; the re-rendered form carries a fresh one.
+
+## Time zones (v2 01D)
+
+- **Display zone = the workspace time zone** (Settings > Company; `platform_core_workspace.time_zone`).
+  `platform_core.timezones.DisplayTimeZoneMiddleware` reads it once per request and activates it, so
+  `local_dt`, `local_time`, `local_date`, `localize_utc_text`, `{% workspace_tz_label %}`, Today's
+  "today/tomorrow" boundary, the planner week and `timezone.localdate()` all use it. Times typed into a form
+  labelled with `{% workspace_tz_label %}` are read in it. `settings.TIME_ZONE` is only the fallback when no
+  workspace row exists (or its value is unusable).
+- **Business-rule zones are separate and unchanged**: daily close-out uses the owner's `ops_closeout_timezone`
+  operating setting (its screen names that zone); booking reads wall times in the home's own zone
+  (`Site.timezone`, shown next to the booking form); hubs record their own zone. None of them decides how an
+  instant is labelled on screen.
+- **Storage is UTC.** Audit rows and every stored instant are UTC; the database session time zone stays UTC.
+
+## Temporary passwords (v2 01D)
+
+An account the admin creates (Invite someone) or gives a new temporary password (People and roles > person >
+Set a temporary password) must choose its own password at its next sign-in: `accounts.PasswordState.must_change`
+is set by `accounts.services.create_user` / `reset_password` and cleared only by the person's own
+`change_own_password`. `accounts.middleware.ForcedPasswordChangeMiddleware` sends every page to
+`/account/password/` (the API answers 403 `password_change_required`) until then. The bootstrap admin and the
+synthetic dev users are never forced. No password appears in an audit row, URL or message.

@@ -19,7 +19,6 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import connection
@@ -71,6 +70,7 @@ from planning.models import Person, Visit
 from platform_core.commands import CommandError, Invalid
 from platform_core.interaction import one_time_form, refused_message
 from platform_core.models import AuditEvent
+from platform_core.timezones import workspace_zone
 
 DEMO_BANNER = "SYNTHETIC DEMO - not real-world clearance"
 ACTIONS = [
@@ -404,7 +404,7 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
             "move_targets": [k for k in ("vehicle", "site", "hub") if k != summary["custody"].kind],
             "event_types": INCIDENT_EVENT_TYPES,
             "knowledge_sources": KNOWLEDGE_SOURCES,
-            "now_local": datetime.now(ZoneInfo(settings.TIME_ZONE)).strftime("%Y-%m-%dT%H:%M"),
+            "now_local": datetime.now(workspace_zone()).strftime("%Y-%m-%dT%H:%M"),
             "report_key": uuid.uuid4().hex,
             **_base(request),
         },
@@ -631,7 +631,7 @@ def _report_context() -> dict[str, Any]:
         "robots": Robot.objects.order_by("code"),
         "event_types": INCIDENT_EVENT_TYPES,
         "knowledge_sources": KNOWLEDGE_SOURCES,
-        "now_local": datetime.now(ZoneInfo(settings.TIME_ZONE)).strftime("%Y-%m-%dT%H:%M"),
+        "now_local": datetime.now(workspace_zone()).strftime("%Y-%m-%dT%H:%M"),
         "report_key": uuid.uuid4().hex,
     }
 
@@ -811,10 +811,8 @@ def report_view(request: HttpRequest) -> HttpResponse:
             occurred = datetime.fromisoformat(raw)
         except ValueError:
             raise Invalid("Occurred at must be a date and time") from None
-        # a time typed in the form is workspace local time; the database stores UTC
-        occurred = (
-            occurred.replace(tzinfo=ZoneInfo(settings.TIME_ZONE)) if occurred.tzinfo is None else occurred
-        )
+        # a typed time is in the workspace display zone (the form's label); the database stores UTC
+        occurred = occurred.replace(tzinfo=workspace_zone()) if occurred.tzinfo is None else occurred
     except CommandError as exc:
         _refused(request, exc)
         return back
