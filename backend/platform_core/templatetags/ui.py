@@ -55,6 +55,116 @@ def _as_datetime(value: Any) -> datetime | None:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt  # a naive value is a stored UTC instant
 
 
+def home_text(site: Any) -> str:
+    """How a home is named on v2 screens (01D ruling A): ``H-101 · Fremont · CRM reference NB-1042``. The
+    product stores no customer name or street address (planning/forms.py); the town (service area) and the
+    opaque CRM reference are what tell homes apart."""
+    if site is None:
+        return ""
+    parts = [str(site.code)]
+    if getattr(site, "zone", ""):
+        parts.append(str(site.zone))
+    if getattr(site, "crm_ref", ""):
+        parts.append(f"CRM reference {site.crm_ref}")
+    return " · ".join(parts)
+
+
+@register.filter
+def home_label(site: Any) -> str:
+    return home_text(site)
+
+
+# ------------------------------------------------------------ demo values and demo approvals (01D ruling C)
+DEMO_INTERVAL_TEXT = (
+    "This interval is fictional demonstration data. It is not an approved engineering requirement for a real "
+    "robot."
+)
+DEMO_CHECKLIST_TEXT = (
+    "This checklist is fictional demonstration data. It is not an approved procedure for a real robot and "
+    "can never be approved for production."
+)
+DEMO_SOURCE_TEXT = (
+    "This record is fictional demonstration data. Its approvals count in this demo workspace only; "
+    "production refuses it."
+)
+# Approval states shown with their precise meaning (never a neutral chip alone for anything that affects
+# whether something is approved).
+APPROVAL_WORDS = {
+    "synthetic approved": "Demo approval",
+    "synthetic draft": "Draft \u2014 not approved",
+    "synthetic, demo only": "Demo checklist \u2014 not approved for production",
+    "draft": "Draft \u2014 not approved",
+}
+
+
+def _fold(text: str) -> SafeString:
+    return format_html(
+        '<details class="fold demo-fold"><summary>What this means</summary><p class="muted">{}</p></details>',
+        text,
+    )
+
+
+@register.simple_tag
+def demo_value(text: str = DEMO_INTERVAL_TEXT) -> SafeString:
+    """A neutral "Demo value" chip with its explanation in a fold (values that approve nothing)."""
+    return format_html('<span class="chip chip-neutral" data-demo-value="1">Demo value</span>{}', _fold(text))
+
+
+@register.simple_tag
+def demo_checklist() -> SafeString:
+    return demo_value(DEMO_CHECKLIST_TEXT)
+
+
+@register.simple_tag
+def source_label(source: str, display: str = "") -> SafeString:
+    """The source of an approvable record. A synthetic_demo one is labelled precisely ("Not approved for
+    production") with the explanation in a fold; any other source shows its own name."""
+    if source == "synthetic_demo":
+        return format_html(
+            '<span class="chip chip-warn" data-demo-source="1">Not approved for production</span>{}',
+            _fold(DEMO_SOURCE_TEXT),
+        )
+    return format_html("{}", display or source)
+
+
+@register.filter
+def source_option(label: str) -> str:
+    """A source choice in a form, in plain words: "Synthetic demo (...)" reads "Demo, fictional (...)"."""
+    text = str(label)
+    if text.lower().startswith("synthetic demo"):
+        rest = text[len("synthetic demo") :].strip()
+        return (
+            f"Demo, fictional {rest}".strip() if rest else "Demo, fictional (never approvable for production)"
+        )
+    return text
+
+
+@register.filter
+def approval_text(status: str) -> str:
+    return APPROVAL_WORDS.get(str(status), str(status))
+
+
+HISTORICAL_VISIT = "Historical scheduled visit"
+
+
+@register.filter
+def visit_status(visit: Any) -> str:
+    """The visit's status in plain words. A planned or confirmed visit whose on-site time ended before the
+    workspace's local today and that never departed is a historical scheduled visit: it is never shown as
+    completed, and as nothing else either (display only; no rule reads this)."""
+    status = getattr(visit, "status", "")
+    rev = getattr(visit, "current_revision", None)
+    if status in ("planned", "confirmed") and rev is not None and rev.on_site_end is not None:
+        zone = workspace_zone()
+        today_start = datetime.combine(datetime.now(zone).date(), datetime.min.time(), tzinfo=zone)
+        if rev.on_site_end < today_start:
+            from readiness.models import DepartureEvent  # noqa: PLC0415 - readiness depends on platform_core
+
+            if not DepartureEvent.objects.filter(visit_id=visit.pk).exists():
+                return HISTORICAL_VISIT
+    return str(visit.get_status_display()) if hasattr(visit, "get_status_display") else str(status)
+
+
 @register.filter
 def local_dt(value: Any) -> str:
     """An instant in the workspace time zone with its zone label: ``Sat 21 Nov, 10:48 PST``."""
@@ -314,9 +424,8 @@ def workspace_demo_mode(request: HttpRequest) -> bool:
     cached: bool | None = getattr(request, "_ui_demo", None)
     if cached is None:
         from fleet.services import demo_mode
-        from platform_core.models import Workspace
 
-        cached = bool(demo_mode()) or Workspace.objects.filter(pk=1, demo=True).exists()
+        cached = timezones.workspace_demo_flag() or bool(demo_mode())
         request._ui_demo = cached  # type: ignore[attr-defined]
     return cached
 
@@ -366,7 +475,10 @@ def site_header(context: template.Context) -> dict[str, Any]:
         "username": request.user.get_username(),
         "roles": sorted(roles),
         "home_url": landing_url(roles),
-        "demo": bool(context.get("demo_mode")) or workspace_demo_mode(request),
+        # a view that already read demo_mode passes it; the workspace flag comes from the request's one read
+        "demo": (bool(context["demo_mode"]) or timezones.workspace_demo_flag())
+        if "demo_mode" in context
+        else workspace_demo_mode(request),
         "csrf_token": context.get("csrf_token"),
         "settings_active": active == "settings",
         "reports_active": active == "reports",

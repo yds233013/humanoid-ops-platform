@@ -17,9 +17,12 @@ What is fictional and what is not:
   qualifications by the safety reviewer, home assessments). Each sits on a ``synthetic_demo`` record or is
   refused in production mode exactly as before: switching the deployment to production shows the same
   production blockers. The hold-release policy stays a DRAFT.
-* Past visits are completed through the execution commands. Those commands stamp database time, so a past
-  visit's departure, custody and close-out carry the build time, not the planned day (nothing is backdated);
-  the planned times of the visit are the past days.
+* Past visits (the last 7 days) are booked and confirmed for their planned days and nothing more: the build
+  creates no departure authorization, custody transfer, visit inspection, run, close-out or any other
+  execution record, because those commands stamp database time and would date a "past" event at the build.
+  Screens show such a visit as "Historical scheduled visit", never as completed. The only events stamped
+  at build time are current facts: today's periodic robot inspections (planning eligibility needs them), one
+  failed inspection that holds a robot, one maintenance hold, one incident reported this morning.
 * No visit of today or later is authorized. The visit prepared for journey J4 has everything it needs except
   the checks a crew records on the day; the ops lead's decision is made in the app by a person.
 
@@ -30,9 +33,12 @@ teardown uses), then restores the rows the migrations insert. It refuses outside
 
 from __future__ import annotations
 
+import hmac
+import os
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
@@ -47,12 +53,8 @@ from django.utils import timezone
 from accounts.models import RoleGrant
 from execution import escalation_deadlines as ed
 from execution import incidents as inc
-from execution import logistics as lg
 from execution import policy as ipol
-from execution import reconciliation as rcn
-from execution import sessions as ses
-from execution import site_checks as sc
-from execution.models import ExecutionRun, SiteCheckTemplate
+from execution.models import SiteCheckTemplate
 from fleet import services as fs
 from fleet.models import (
     CapabilityProfile,
@@ -61,10 +63,9 @@ from fleet.models import (
     Robot,
 )
 from planning import services as ps
-from planning.models import ConsentRecord, Site, Visit
+from planning.models import ConsentRecord, Site
 from platform_core.models import Hub, Workspace
 from platform_core.workspace import create_hub, update_workspace
-from readiness import commands as rc
 from readiness import evidence as rx
 
 User = get_user_model()
@@ -135,6 +136,7 @@ PATTERN_HOME, PATTERN_ENG = "HX-430", "HX-440"
 ROBOTS = 50
 IN_SERVICE = 45  # NB-001 .. NB-045 on HX-430; NB-046..048 HX-440 in validation; NB-049..050 commissioning
 INCIDENT_ROBOT, INSPECTION_HOLD_ROBOT, MAINTENANCE_ROBOT = "NB-007", "NB-012", "NB-019"
+NEVER_INSPECTED = "NB-048"  # beta robot in validation, no periodic inspection on its configuration yet
 
 CHECKLIST: list[dict[str, Any]] = [
     {"id": "R1", "label": "Body shell, joints and covers undamaged", "robot_condition": True},
@@ -153,7 +155,6 @@ SITE_CHECK_ITEMS = [
     {"id": "c2", "label": "Everyone at home was briefed on the visit"},
     {"id": "c3", "label": "Only people who consented are present"},
 ]
-SITE_CHECK_OK = {"c1": "ok", "c2": "ok", "c3": "ok"}
 READINESS_REQUIREMENTS = {
     "authorization_ttl_min": 90,
     "evidence": [
@@ -252,6 +253,7 @@ def check_can_build(*, reset: bool) -> None:
         raise DemoRefused(
             "This demo workspace already has data. Run with --reset to destroy it and build it again."
         )
+    check_fingerprint()
 
 
 # ------------------------------------------------------------------ reset
@@ -266,17 +268,65 @@ MIGRATION_ROWS = [
 ]
 
 
+# ------------------------------------------------------------------ deployment-level guards (01D ruling D)
+FINGERPRINT_ENV = "DEMO_DATABASE_FINGERPRINT"
+LOCK_KEY = 7_201_018_301  # pg advisory lock key of the demo builder (one build or reset at a time)
+
+
+def database_fingerprint() -> str:
+    """``<database name>:<PostgreSQL system identifier>`` of the connected database. The system identifier is
+    unique per cluster (pg_control_system), so a fingerprint names exactly one database on one server."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT current_database(), (SELECT system_identifier FROM pg_control_system())")
+        name, sysid = cur.fetchone()
+    return f"{name}:{sysid}"
+
+
+def check_fingerprint() -> None:
+    """--reset needs an independent, deployment-level confirmation that THIS is the demo database: the
+    environment's DEMO_DATABASE_FINGERPRINT must equal the connected database's fingerprint, and the
+    connection must be to the database the settings name. Refuses even when demo_mode and Workspace.demo
+    are both on."""
+    expected = os.environ.get(FINGERPRINT_ENV, "").strip()
+    if not expected:
+        raise DemoRefused(
+            f"Reset refused: {FINGERPRINT_ENV} is not set for this deployment. Set it to the value printed "
+            "by `manage.py build_demo_workspace --print-fingerprint` on the demo database only."
+        )
+    actual = database_fingerprint()
+    configured = str(connection.settings_dict.get("NAME") or "")
+    if actual.split(":", 1)[0] != configured:
+        raise DemoRefused("Reset refused: the connection is not to the configured database; nothing done.")
+    if not hmac.compare_digest(expected, actual):
+        raise DemoRefused(
+            f"Reset refused: {FINGERPRINT_ENV} does not match this database ({actual}); nothing done."
+        )
+
+
+@contextmanager
+def build_lock() -> Iterator[None]:
+    """Session advisory lock (try, never wait): a second build or reset at the same time is refused."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", [LOCK_KEY])
+        if not cur.fetchone()[0]:
+            raise DemoRefused("Another demo build or reset is running on this database; nothing done.")
+    try:
+        yield
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", [LOCK_KEY])
+
+
 def wipe() -> None:
     """Destroy every row of every application table and restart every sequence (demo workspace only)."""
     if not is_demo_workspace():
         raise DemoRefused("Reset refused: this is not a demo workspace (demo flag off or production mode).")
+    check_fingerprint()
     with connection.cursor() as cur:
         cur.execute(
             "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
         )
         tables = [t for (t,) in cur.fetchall() if t not in KEEP_TABLES]
-        cur.execute("SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'")
-        sequences = [s for (s,) in cur.fetchall()]
     q = connection.ops.quote_name
     with transaction.atomic(), connection.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = '120s'")
@@ -287,18 +337,30 @@ def wipe() -> None:
             cur.execute(f"ALTER TABLE {q(t)} ENABLE TRIGGER USER")
         for sql in MIGRATION_ROWS:
             cur.execute(sql)
-    restart_sequences(sequences)
+    restart_sequences()
     Workspace.ensure()
 
 
-def restart_sequences(sequences: list[str] | None = None) -> None:
-    """Every sequence back to its start, so codes (V-0001, ...) are the same for every build of a date."""
+# Sequences of application data only: never those of the kept tables (django_migrations, content types,
+# permissions), whose rows survive a wipe; restarting them would make the next migrate collide.
+APP_SEQUENCES_SQL = """
+SELECT s.relname
+FROM pg_class s
+JOIN pg_namespace n ON n.oid = s.relnamespace AND n.nspname = 'public'
+LEFT JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = s.oid AND d.deptype IN ('a', 'i')
+LEFT JOIN pg_class t ON t.oid = d.refobjid
+WHERE s.relkind = 'S' AND (t.relname IS NULL OR NOT (t.relname = ANY(%s)))
+ORDER BY s.relname
+"""
+
+
+def restart_sequences() -> None:
+    """Application sequences back to their start, so codes (V-0001, ...) are the same for every build of a
+    date. Run only on an empty or just-wiped database (every application table is empty)."""
     with connection.cursor() as cur:
-        if sequences is None:
-            cur.execute("SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'")
-            sequences = [s for (s,) in cur.fetchall()]
-        for s in sequences:
-            cur.execute(f"ALTER SEQUENCE {connection.ops.quote_name(s)} RESTART")
+        cur.execute(APP_SEQUENCES_SQL, [sorted(KEEP_TABLES)])
+        for (seq,) in cur.fetchall():
+            cur.execute(f"ALTER SEQUENCE {connection.ops.quote_name(seq)} RESTART")
 
 
 # ------------------------------------------------------------------ build
@@ -308,8 +370,7 @@ class Summary:
     timings: dict[str, float] = field(default_factory=dict)
     logins: list[tuple[str, str, str]] = field(default_factory=list)
     j4_visit: str = ""
-    complete_visit: str = ""
-    overdue_run: str = ""
+    attention_robot: str = NEVER_INSPECTED
     incident: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -472,35 +533,30 @@ class _Builder:
             if n <= IN_SERVICE:
                 fs.transition_lifecycle(lead, robot_code=code, to="in_service", reason="Validation passed")
                 fs.grant_base_authorization(lead, robot_code=code)
-            # Every robot with a configuration gets its periodic inspection (two qualified inspectors sign);
+            # Every robot with a configuration gets its periodic inspection today (two qualified inspectors
+            # sign; planning eligibility needs it), except NEVER_INSPECTED: the beta robot nobody inspected
+            # on its configuration yet, which Today shows as overdue for its regular inspection (true now).
             # NB-046..048 stay in validation (beta build), NB-049..050 in commissioning.
-            self.inspect(code)
+            if code != NEVER_INSPECTED:
+                self.inspect(code)
         self.lap("robots")
 
-    def inspect(self, robot: str, visit: str = "", answers: dict[str, str] | None = None) -> str:
-        crew = self.crew_of_visit(visit) if visit else None
-        performer = self.username(crew[1]) if crew else self.username(HUB_TECH)
-        verifier = self.username(crew[2]) if crew else "dana.ortiz"
+    def inspect(self, robot: str, answers: dict[str, str] | None = None) -> str:
+        """A robot inspection by the hub technician and the ops lead, both qualified inspectors."""
         return str(
             fs.submit_inspection(
                 self.u["dana.ortiz"],
                 robot_code=robot,
                 template_version="T1",
                 answers=answers or dict(ALL_PASS),
-                performer=performer,
-                verifier=verifier,
-                visit_ref=visit,
+                performer=self.username(HUB_TECH),
+                verifier="dana.ortiz",
             )["entity_id"]
         )
 
     @staticmethod
     def username(person_code: str) -> str:
         return next(u for u, _r, c, _n in LOGINS if c == person_code)
-
-    def crew_of_visit(self, visit_code: str) -> tuple[str, str, str, str]:
-        rev = Visit.objects.select_related("current_revision__lead").get(code=visit_code).current_revision
-        assert rev is not None and rev.lead is not None
-        return next(c for c in CREWS if c[1] == rev.lead.code)
 
     # .............................................................. homes
     def homes(self) -> list[tuple[str, int]]:
@@ -601,27 +657,10 @@ class _Builder:
             ps.confirm_visit(ops, visit_code=code)
         return code
 
-    def evidence(self, visit: str, robot: str, *, checks: bool = True) -> None:
-        ops = self.u["dana.ortiz"]
-        crew = self.crew_of_visit(visit)
-        crew_user = self.u[self.username(crew[2])]
-        if checks:
-            insp = self.inspect(robot, visit)
-            rx.record_evidence(
-                ops, visit_code=visit, kind="pre_departure_inspection", result="pass", inspection_code=insp
-            )
-            rx.record_evidence(
-                crew_user, visit_code=visit, kind="equipment_check", result="pass", details=EQUIPMENT
-            )
-            rx.record_evidence(
-                crew_user,
-                visit_code=visit,
-                kind="battery_check",
-                result="pass",
-                details={"soc_pct": 88 + self.rng.randint(0, 10)},
-            )
+    def recovery_plan(self, visit: str) -> None:
+        """A recovery plan is part of the preparation (who is on call); it is not a check of the day."""
         rx.record_recovery_plan(
-            ops,
+            self.u["dana.ortiz"],
             visit_code=visit,
             on_call_code=ON_CALL,
             escalation_code=ESCALATION,
@@ -629,86 +668,27 @@ class _Builder:
             required_equipment=["recovery_kit"],
         )
 
-    def complete(self, visit: str, robot: str, *, stop_at: str = "closed") -> str:
-        """Depart and work the run through the execution commands (database time; see the module note)."""
-        ops = self.u["dana.ortiz"]
-        _name, lead, second, _van = self.crew_of_visit(visit)
-        crew = self.u[self.username(second)]
-        self.evidence(visit, robot)
-        auth = rc.authorize_departure(ops, visit_code=visit)["code"]
-        rc.record_departure(ops, authorization_code=auth)
-        run = ExecutionRun.objects.get(visit__code=visit)
-        rc_ = run.code
-        departure_event = lg.latest_event(run.robot_id)
-        assert departure_event is not None
-        lg.verify_custody(crew, run_code=rc_, custody_seq=departure_event.seq, verifier_code=second)
-        lg.record_trip_event(crew, run_code=rc_, kind="arrived_site")
-        lg.transfer_custody(crew, run_code=rc_, to_kind="site", custodian_code=lead, received_by_code=second)
-        check = sc.record_site_check(
-            crew,
-            run_code=rc_,
-            template_version="SC-1",
-            adults_present=Site.objects.get(visits__code=visit).expected_adults or 1,
-            conditions=dict(SITE_CHECK_OK),
-            verifier_code=lead,
-        )
-        ses.record_session_event(crew, run_code=rc_, kind="start", site_check_id=check["id"])
-        ses.record_session_event(crew, run_code=rc_, kind="stop")
-        lg.transfer_custody(
-            crew, run_code=rc_, to_kind="vehicle", custodian_code=lead, received_by_code=second
-        )
-        lg.record_trip_event(crew, run_code=rc_, kind="departed_site")
-        if stop_at == "returning":
-            return rc_
-        lg.record_trip_event(crew, run_code=rc_, kind="arrived_hub")
-        lg.transfer_custody(crew, run_code=rc_, to_kind="hub", custodian_code=lead, received_by_code=HUB_TECH)
-        post = self.inspect(robot, visit)
-        rcn.reconcile_return(ops, run_code=rc_, inspection_code=post)
-        rcn.close_trip(ops, run_code=rc_)
-        return rc_
-
     def visits(self, homes: list[tuple[str, int]]) -> None:
         rows = self.schedule(homes)
         past = [r for r in rows if r["offset"] < 0]
         future = [r for r in rows if r["offset"] >= 0]
-        # Past visits, oldest first: booked, then completed. The last one of yesterday is left on its way back
-        # (its crew never recorded the return): the overdue item.
-        for i, row in enumerate(past):
-            code = self.book(row)
-            stop = "returning" if i == len(past) - 1 else "closed"
-            run = self.complete(code, row["robot"], stop_at=stop)
-            if stop == "returning":
-                self.s.overdue_run = run
-        self.lap(f"past visits ({len(past)}, completed through the execution commands)")
+        # Past visits stay what the records can truthfully say: booked and confirmed for their planned days.
+        # Nothing is departed, inspected, handed over or closed for them (every execution command stamps
+        # database time, so any such record would be dated at the build). Screens call them "Historical
+        # scheduled visit".
+        for row in past:
+            self.book(row)
+        self.lap(f"past visits ({len(past)}, booked for their planned days; no execution records)")
         booked: list[tuple[dict[str, Any], str]] = []
         for row in future:
             booked.append((row, self.book(row)))
-        today = [(r, c) for r, c in booked if r["offset"] == 0]
         tomorrow = [(r, c) for r, c in booked if r["offset"] == 1]
         # J4: crew A's first visit tomorrow has a recovery plan; the day's checks are what is left to do.
-        j4_row, j4 = next((r, c) for r, c in tomorrow if r["crew"][0] == "A" and r["slot"] == 0)
-        self.evidence(j4, j4_row["robot"], checks=False)
+        _j4_row, j4 = next((r, c) for r, c in tomorrow if r["crew"][0] == "A" and r["slot"] == 0)
+        self.recovery_plan(j4)
         self.s.j4_visit = j4
-        # Crew B's first visit today: every check recorded at build time (they age during the day).
-        done_row, done = next((r, c) for r, c in today if r["crew"][0] == "B" and r["slot"] == 0)
-        self.evidence(done, done_row["robot"])
-        self.s.complete_visit = done
-        # Crew C's first visit today: inspection and recovery plan, no battery or equipment check yet.
-        part_row, part = next((r, c) for r, c in today if r["crew"][0] == "C" and r["slot"] == 0)
-        self.evidence(part, part_row["robot"], checks=False)
-        self.inspect_for(part, part_row["robot"])
         self.lap(f"upcoming visits ({len(future)})")
         self.exceptions(homes, booked)
-
-    def inspect_for(self, visit: str, robot: str) -> None:
-        insp = self.inspect(robot, visit)
-        rx.record_evidence(
-            self.u["dana.ortiz"],
-            visit_code=visit,
-            kind="pre_departure_inspection",
-            result="pass",
-            inspection_code=insp,
-        )
 
     # .............................................................. exceptions
     def exceptions(self, homes: list[tuple[str, int]], booked: list[tuple[dict[str, Any], str]]) -> None:

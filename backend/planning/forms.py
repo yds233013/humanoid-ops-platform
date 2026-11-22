@@ -18,6 +18,7 @@ from django.utils import timezone
 
 from fleet.models import Robot
 from planning.models import ConsentRecord, Person, Site, SiteAssessment, Vehicle
+from platform_core.templatetags.ui import home_text
 from platform_core.timezones import workspace_zone_name
 
 CODE = RegexValidator(
@@ -181,7 +182,7 @@ class BookForm(forms.Form):
     def __init__(self, *args: Any, **kw: Any) -> None:
         super().__init__(*args, **kw)
         self.fields["site"].choices = [("", "Choose a home")] + [  # type: ignore[attr-defined]
-            (s.code, s.code) for s in Site.objects.order_by("code")
+            (s.code, home_text(s)) for s in Site.objects.order_by("code")
         ]
 
     def clean(self) -> dict[str, Any]:

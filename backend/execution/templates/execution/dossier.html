@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}{{ visit.code }} dossier{% endblock %}
 {% block content %}
-{% with ptitle=visit.code|add:" dossier" %}{% page_header title=ptitle back_url="/readiness/visits/"|add:visit.code|add:"/" back_label="Readiness view" %}{{ visit.site.code }}{% if run %} · <a href="/execution/runs/{{ run.code }}/">Run {{ run.code }}</a>{% endif %} · <a href="/planning/visits/{{ visit.code }}/">Planner view</a>{% endpage_header %}{% endwith %}
+{% with ptitle=visit.code|add:" dossier" %}{% page_header title=ptitle back_url="/readiness/visits/"|add:visit.code|add:"/" back_label="Readiness view" %}{{ visit.site|home_label }}{% if run %} · <a href="/execution/runs/{{ run.code }}/">Run {{ run.code }}</a>{% endif %} · <a href="/planning/visits/{{ visit.code }}/">Planner view</a>{% endpage_header %}{% endwith %}
 <p class="muted">Every planning, readiness and execution record for this visit in time order, with the plan revision and robot manifest in force at each step. A record of what people reported, not a verification of what physically happened.</p>
 <div class="tablewrap"><table><thead><tr><th>When</th><th>Kind</th><th>What</th><th>Revision</th><th>Manifest</th><th>Ref</th></tr></thead><tbody>
 {% for x in entries %}<tr><td class="muted">{{ x.local|local_dt }}</td><td>{{ x.e.kind }}</td><td>{{ x.e.text }}</td>

@@ -451,7 +451,8 @@ def test_policy_create_approve_withdraw(w):
     assert "approval recorded" in _post(w.lead2, "/execution/policies/1/approve/", {"slot": "engineering"})
     html = _post(w.safety, "/execution/policies/1/approve/", {"slot": "safety"})
     assert "Incident policy v1: safety approval recorded" in html
-    assert "Active policy: <b>v1</b>" in html and "Synthetic demo" in html
+    assert "Active policy: <b>v1</b>" in html and "Demo approval" in html  # v2 01D ruling C wording
+    assert "Not approved for production" in html
     assert IncidentPolicyApproval.objects.count() == 2
     html = _post(w.lead, "/execution/policies/1/withdraw/", {"reason": ""})
     assert "Refused" in html

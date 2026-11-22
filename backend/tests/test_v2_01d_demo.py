@@ -5,21 +5,26 @@ rebuild is identical (deterministic for the date). The other tests are cheap ref
 """
 
 import io
+import os
 import re
+import subprocess
 import time
 from datetime import date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import psycopg
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import connection
 from django.test import Client
 from django.utils import timezone
 
 from accounts.models import RoleGrant
 from execution.models import (
+    CustodyEvent,
     EscalationDeadlineSetApproval,
     ExecutionRun,
     Incident,
@@ -32,6 +37,7 @@ from fleet.models import (
     Hold,
     HoldPolicy,
     HoldPolicyApproval,
+    Inspection,
     InspectionTemplateApproval,
     PeriodicInspectionRuleApproval,
     Robot,
@@ -44,7 +50,12 @@ from platform_core.models import Hub, Workspace
 from readiness import commands as rc
 from readiness import evidence as rx
 from readiness.evaluator import evaluate_readiness
-from readiness.models import DepartureAuthorization, ReadinessPolicyApproval
+from readiness.models import (
+    DepartureAuthorization,
+    DepartureEvent,
+    ReadinessEvidence,
+    ReadinessPolicyApproval,
+)
 from tests.conftest import make_user
 from tests.fleet_world import set_setting
 
@@ -154,17 +165,42 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     assert frozen_today + timedelta(days=13) <= days[-1] <= frozen_today + timedelta(days=14)
     assert frozen_today in days and frozen_today + timedelta(days=1) in days
     past = [v for v in Visit.objects.all() if _local_day(v.current_revision.on_site_start) < frozen_today]
-    assert len(past) >= 15
-    # every past visit departed through the execution commands; all closed except the one overdue run
-    runs = ExecutionRun.objects.filter(visit__in=past)
-    assert runs.count() == len(past)
-    open_runs = [r for r in runs if not TripClosure.objects.filter(run=r).exists()]
-    assert len(open_runs) == 1
-    # departures exist only for past visits: nothing of today or later is authorized
-    authorized_days = {
-        _local_day(a.visit.current_revision.on_site_start) for a in DepartureAuthorization.objects.all()
+    assert len(past) >= 15 and {v.status for v in past} == {"confirmed"}
+
+    # ---- ruling B: no fabricated execution history. The build creates no execution record at all ...
+    assert ExecutionRun.objects.count() == 0 and TripClosure.objects.count() == 0
+    assert DepartureAuthorization.objects.count() == 0 and DepartureEvent.objects.count() == 0
+    assert CustodyEvent.objects.count() == 0 and ReadinessEvidence.objects.count() == 0
+    # ... and no inspection tied to a visit; the only inspections are today's robot inspections (periodic
+    # eligibility needs them) and the one failed inspection that holds a robot, all stamped now.
+    assert not Inspection.objects.exclude(visit_ref="").exists()
+    assert {_local_day(i.submitted_at) for i in Inspection.objects.all()} <= {
+        frozen_today,
+        demo.workspace_today(),
     }
-    assert authorized_days and max(authorized_days) < frozen_today
+    assert Inspection.objects.count() == 49 + 1  # 50 robots minus the never-inspected one, plus the failure
+    # past visits are shown as historical scheduled visits, never as completed or back
+    ops = User.objects.get(username="dana.ortiz")
+    c = Client()
+    c.force_login(ops)
+    old = past[0]
+    for url in (
+        f"/planning/visits/{old.code}/",
+        f"/readiness/visits/{old.code}/",
+        f"/planning/sites/{old.site.code}/",
+    ):
+        page = c.get(url).content.decode()
+        assert "Historical scheduled visit" in page, url
+        assert not re.search(r"\b(Completed|Back at the hub)\b", _visible_text(page)), url
+    week = c.get(
+        f"/planning/?week={old.current_revision.on_site_start.astimezone(LA).date()}"
+    ).content.decode()
+    assert old.code in week and "Historical scheduled visit" in week
+    # ruling A: homes read "H-101 · Fremont · CRM reference ..." on v2 screens
+    site = old.site
+    label = f"{site.code} · {site.zone} · CRM reference {site.crm_ref}"
+    assert label in c.get(f"/planning/visits/{old.code}/").content.decode()
+    assert label in c.get("/planning/book/").content.decode()
 
     # ---- realistic exceptions
     active_holds = Hold.objects.filter(released_at__isnull=True)
@@ -175,7 +211,10 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     }
     assert Incident.objects.count() == 1
     codes = {e.code for e in open_exceptions(timezone.now(), include_readiness=False).items}
-    assert {"RETURN_OVERDUE", "HELD_ROBOT_ASSIGNED"} <= codes, codes
+    # truthful attention items only (recorded now): a held robot still booked, a robot never inspected on its
+    # configuration, an incident without a severity decision; no overdue return (it needed a fabricated run)
+    assert {"HELD_ROBOT_ASSIGNED", "PERIODIC_INSPECTION_OVERDUE", "SEVERITY_UNCLASSIFIED"} <= codes, codes
+    assert "RETURN_OVERDUE" not in codes
     statuses = {v.status for v in Visit.objects.all()}
     assert {"confirmed", "planned", "requested"} <= statuses
     feas = {v.current_revision.feasibility for v in Visit.objects.all()}
@@ -211,22 +250,54 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         set_setting("demo_mode", "true")
 
     # ---- the badge, once, on Today; the logins in the output, never the password
-    ops = User.objects.get(username="dana.ortiz")
     assert ops.check_password(PASSWORD) and RoleGrant.objects.filter(user=ops, role="ops_lead").exists()
     assert PASSWORD not in out
     for username in ("priya.raman", "dana.ortiz", "jordan.lee", "elena.vasquez", "kenji.watanabe"):
         assert username in out
-    c = Client()
-    c.force_login(ops)
     html = c.get("/ops/").content.decode()
     assert html.count("Demo workspace") == 1
     assert not re.search(r"(?i)synthetic", _visible_text(html))
+
+    # ---- ruling C: demo values and demo approvals are labelled precisely, without SYNTHETIC per row
+    lead_c = Client()
+    lead_c.force_login(User.objects.get(username="kenji.watanabe"))
+    expect = {
+        "/fleet/patterns/HX-430/": ["Demo value", "Not approved for production", "Demo approval",
+                                    "Demo checklist \u2014 not approved for production", "What this means"],
+        "/fleet/hold-policies/": ["Draft \u2014 not approved", "Not approved for production"],
+        "/readiness/policies/": ["Demo approval", "Not approved for production"],
+        "/execution/policies/": ["Demo approval", "Not approved for production"],
+        "/execution/escalation-deadlines/": ["Not approved for production"],
+        "/fleet/NB-001/": ["Demo value", "not approved for production"],
+        "/fleet/": ["Demo value"],
+        "/ops/robots/": ["Demo value"],
+    }  # fmt: skip
+    for url, needles in expect.items():
+        r = lead_c.get(url)
+        assert r.status_code == 200, url
+        page = r.content.decode()
+        for needle in needles:
+            assert needle in page, (url, needle)
+        assert not re.search(r"(?i)synthetic", _visible_text(page)), url
+        if "Demo value" in page:  # never a neutral chip without its explanation
+            assert "This interval is fictional demonstration data" in page, url
 
     # ---- rebuild with --reset: everything destroyed and rebuilt identically for the date
     before = _fingerprint()
     counts = (User.objects.count(), Robot.objects.count(), Site.objects.count(), Visit.objects.count())
     with pytest.raises(CommandError, match="--reset"):
         _build()  # non-empty demo workspace without --reset
+    # ruling D: --reset needs the deployment's database fingerprint, even with both demo markers on
+    with pytest.raises(CommandError, match="DEMO_DATABASE_FINGERPRINT is not set"):
+        _build("--reset")
+    os.environ[demo.FINGERPRINT_ENV] = "humanoid_ops_demo_b:1234567890"
+    try:
+        with pytest.raises(CommandError, match="does not match this database"):
+            _build("--reset")
+    finally:
+        del os.environ[demo.FINGERPRINT_ENV]
+    assert _fingerprint() == before and User.objects.count() == counts[0]  # nothing destroyed
+    os.environ[demo.FINGERPRINT_ENV] = demo.database_fingerprint()
     t1 = time.perf_counter()
     out2 = _build("--reset")
     print(f"build_demo_workspace --reset: {time.perf_counter() - t1:.1f} s")
@@ -238,7 +309,14 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         Site.objects.count(),
         Visit.objects.count(),
     ) == counts
-    assert not DepartureAuthorization.objects.filter(visit__code=j4_code).exists()
+    assert DepartureAuthorization.objects.count() == 0 and ExecutionRun.objects.count() == 0
+    del os.environ[demo.FINGERPRINT_ENV]
+    # the wipe never restarts the sequences of the tables it keeps (a later migrate must not collide)
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT last_value >= (SELECT max(id) FROM django_migrations) FROM django_migrations_id_seq"
+        )
+        assert cur.fetchone()[0]
 
     # ---- J4 is possible: once the crew records the day's checks, the ops lead's decision goes through
     j4 = Visit.objects.get(code=j4_code)
@@ -362,3 +440,71 @@ def test_start_script_builds_the_demo_only_with_the_flag_and_keeps_the_old_seed_
     assert (
         'if [ "${DEMO_WORKSPACE:-}" != "1" ]; then' in refresh and "build_demo_workspace --reset" in refresh
     )
+
+
+def test_reset_refuses_a_wrong_fingerprint_even_with_both_demo_markers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(demo.PASSWORD_ENV, PASSWORD)
+    _company_workspace()
+    Workspace.objects.filter(pk=1).update(demo=True)
+    set_setting("demo_mode", "true")
+    assert demo.is_demo_workspace()
+    monkeypatch.setenv(demo.FINGERPRINT_ENV, demo.database_fingerprint() + "0")
+    with pytest.raises(CommandError, match="does not match this database"):
+        _build("--reset")
+    with pytest.raises(demo.DemoRefused, match="does not match"):
+        demo.wipe()
+    assert User.objects.filter(username="acme_admin").exists()
+    out = io.StringIO()
+    call_command("build_demo_workspace", "--print-fingerprint", stdout=out)
+    assert out.getvalue().strip() == demo.database_fingerprint()
+    assert out.getvalue().strip().startswith(connection.settings_dict["NAME"] + ":")
+
+
+def test_a_second_build_while_one_holds_the_lock_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(demo.PASSWORD_ENV, PASSWORD)
+    s = connection.settings_dict
+    other = psycopg.connect(
+        host=s["HOST"],
+        port=s["PORT"],
+        dbname=s["NAME"],
+        user=s["USER"],
+        password=s["PASSWORD"],
+        autocommit=True,
+    )
+    try:
+        other.execute("SELECT pg_advisory_lock(%s)", [demo.LOCK_KEY])
+        with pytest.raises(CommandError, match="Another demo build or reset is running"):
+            _build()
+        assert User.objects.count() == 0 and Robot.objects.count() == 0
+    finally:
+        other.execute("SELECT pg_advisory_unlock(%s)", [demo.LOCK_KEY])
+        other.close()
+
+
+def test_start_script_exits_non_zero_when_the_initial_demo_build_fails(tmp_path: Path) -> None:
+    """start.sh with DEMO_WORKSPACE=1: a failing build_demo_workspace stops the start; gunicorn never runs."""
+    backend = Path(__file__).resolve().parents[1]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "gunicorn-started"
+    (bin_dir / "python").write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        "  *build_demo_workspace*) echo 'refused' >&2; exit 1 ;;\n"
+        "  *needs_seed.py*) exit 0 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    (bin_dir / "gunicorn").write_text(f"#!/bin/sh\ntouch {marker}\n")
+    for f in bin_dir.iterdir():
+        f.chmod(0o755)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "DEMO_WORKSPACE": "1"}
+    done = subprocess.run(["sh", "deploy/start.sh"], cwd=backend, env=env, capture_output=True, text=True)
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "not starting the app" in done.stderr and not marker.exists()
+    # the same script with a successful build starts the app (the stub gunicorn)
+    (bin_dir / "python").write_text("#!/bin/sh\nexit 0\n")
+    ok = subprocess.run(["sh", "deploy/start.sh"], cwd=backend, env=env, capture_output=True, text=True)
+    assert ok.returncode == 0 and marker.exists(), ok.stderr

@@ -73,7 +73,7 @@
 
 <div class="card">
   <h2>Inspection templates for this configuration</h2>
-  {% for t in templates %}<div data-template="{{ t.template.version }}">{{ t.template.version }}: {% for pu in t.purposes %}{{ pu.label }} <b>{{ pu.state_text }}</b>{% if not forloop.last %} · {% endif %}{% endfor %}
+  {% for t in templates %}<div data-template="{{ t.template.version }}">{{ t.template.version }}: {% for pu in t.purposes %}{{ pu.label }} <b>{{ pu.state_text|approval_text }}</b>{% if not forloop.last %} · {% endif %}{% endfor %}
     {% if t.warning %}<div class="stale" data-template-warning="1">{{ t.warning }}</div>{% endif %}</div>{% empty %}<p class="muted">No inspection template for this configuration.</p>{% endfor %}
   <h2 style="margin-top:12px">Recent inspections and signer qualification</h2>
   <div class="tablewrap"><table><thead><tr><th>Inspection</th><th>Result</th><th>Signers</th><th>Readiness inspector qualification</th></tr></thead><tbody>

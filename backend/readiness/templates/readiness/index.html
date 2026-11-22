@@ -8,7 +8,7 @@
 {% for r in rows %}
 <tr>
   <td><a href="/readiness/visits/{{ r.visit.code }}/"><b>{{ r.visit.code }}</b></a>{% if r.rev.robot %}<div class="muted">{{ r.rev.robot.code }}</div>{% endif %}</td>
-  <td>{{ r.visit.site.code }}</td>
+  <td>{{ r.visit.site|home_label }}</td>
   <td>{{ r.start|local_dt }}</td>
   <td><span class="badge {{ r.planning_state }}">{{ r.planning_label }}</span></td>
   <td><span class="badge {{ r.readiness_state }}">{{ r.result.label }}</span>

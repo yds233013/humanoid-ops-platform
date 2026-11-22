@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}{{ visit.code }} readiness{% endblock %}
 {% block content %}
-{% page_header title=visit.code back_url="/readiness/" back_label="Departure readiness" %}{{ visit.site.code }} · {{ visit.get_status_display }}{% if rev %} · revision {{ rev.revision_no }}{% if rev.robot %} · robot {{ rev.robot.code }}{% endif %}{% endif %}{% if start %} · on site {{ start|local_dt }}{% endif %} · <a href="/planning/visits/{{ visit.code }}/">Planner view</a>{% endpage_header %}
+{% page_header title=visit.code back_url="/readiness/" back_label="Departure readiness" %}{{ visit.site|home_label }} · {{ visit|visit_status }}{% if rev %} · revision {{ rev.revision_no }}{% if rev.robot %} · robot {{ rev.robot.code }}{% endif %}{% endif %}{% if start %} · on site {{ start|local_dt }}{% endif %} · <a href="/planning/visits/{{ visit.code }}/">Planner view</a>{% endpage_header %}
 
 <div class="card">
   <h2>Status (checked now)</h2>

@@ -346,7 +346,12 @@ def test_recovery_plan_form(w):
 def test_policy_list_status_and_no_green(w):
     html = _html(_client(w.ops).get("/readiness/policies/"))
     assert f"v{w.policy_version}" in html and "Current" in html
-    assert "Approved (synthetic demo)" in html and 'class="badge synthetic"' in html
+    # v2 01D ruling C: a synthetic_demo approval is shown precisely as a demo approval, never as plain "Approved"
+    assert (
+        "Demo approval" in html
+        and 'class="badge synthetic"' in html
+        and "Not approved for production" in html
+    )
     assert "Create a policy" not in html  # ops lacks manage_policy
     _assert_safe(html)
 

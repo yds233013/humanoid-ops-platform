@@ -182,8 +182,20 @@ DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace --reset   # destr
   password is in the repository except the development value in `.env.example`; set a different one on Railway.
 - **What it refuses**: a database that holds a non-demo workspace (the workspace demo flag is off, or
   `demo_mode` is not `'true'`); a non-empty demo database without `--reset`; an empty database whose `demo_mode`
-  is explicitly not `'true'`. `--reset` itself refuses unless the workspace is a demo workspace. It never touches a
-  production workspace.
+  is explicitly not `'true'`. `--reset` itself refuses unless the workspace is a demo workspace **and** the
+  deployment-level fingerprint matches (below). It never touches a production workspace.
+- **Database fingerprint (required for `--reset`)**: `DEMO_DATABASE_FINGERPRINT` must equal
+  `<database name>:<PostgreSQL system identifier>` of the connected database (`current_database()` and
+  `pg_control_system()`), and the connection must be to the database the settings name (`DB_NAME`). It is an
+  independent check from the deployment: a reset is refused on a mismatch even when `demo_mode` and the
+  workspace demo flag are both on (for example a demo cron service pointed at a copied or restored database).
+  To set it (OWNER ACTION, demo project only): after the first build, open a shell on the demo `web` service
+  (`railway run` or the service's shell) and run
+  `DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace --print-fingerprint` (writes nothing); paste
+  the printed value into the variable `DEMO_DATABASE_FINGERPRINT` of the demo cron service (and `web` if you
+  run resets from there). A restored or recreated database has a new value: set it again on purpose.
+- **One at a time**: the build and the reset take a PostgreSQL advisory lock (try-lock). A second build or
+  reset started while one runs is refused at once and changes nothing.
 - **What `--reset` destroys**: every row of every application table of that database: users and role grants,
   sessions (everyone is signed out), the audit log, robots, holds, homes, visits, readiness evidence, departures,
   runs, incidents, settings, the workspace row. Only the schema, `django_migrations`, content types and permissions
@@ -197,25 +209,35 @@ DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace --reset   # destr
   is one the demo seeds also create, on `synthetic_demo` records that production refuses (Settings > Production
   readiness still lists every blocker). No visit of today or later is authorized: the visit named in the output
   ("Journey J4: visit V-....") has its plan, crew qualifications, periodic inspection and recovery plan; the crew
-  records the day's checks and the ops lead approves in the app. Past visits are completed through the execution
-  commands, which stamp database time: their departure and close-out show the build time.
+  records the day's checks and the ops lead approves in the app.
+- **No fabricated history**: past visits (the last 7 days) are booked and confirmed for their planned days and
+  nothing more. The build creates no departure authorization, custody transfer, visit inspection, run,
+  close-out or other execution record (those commands stamp database time, so they would date a "past" event at
+  the build). Screens show such a visit as **Historical scheduled visit**, never as completed. The only records
+  stamped at build time are current facts: today's periodic robot inspections (planning eligibility needs
+  them), one failed inspection that holds a robot, one maintenance hold, an incident reported this morning, and
+  the recovery plan of the J4 visit. The attention item is a beta robot (NB-048) with no periodic inspection on
+  its configuration yet, which is true at any time; there is no "overdue return" (it needed a fabricated run).
 - **Deterministic** for a date (seeded by the workspace's local date); about 25 s on a laptop.
 - **First start**: set `DEMO_WORKSPACE=1` and `DEV_SEED_PASSWORD` on the demo `web` service. `start.sh` runs
-  `build_demo_workspace` once when the database has no robots (a refusal is logged and the app still starts).
+  `build_demo_workspace` once when the database has no robots. If that build is refused or fails, `start.sh`
+  exits non-zero and the app does not start (Railway shows a failed deploy): it never serves a half-built demo.
+  Fix the cause (usually a database that is not empty or a missing `DEV_SEED_PASSWORD`) and redeploy.
   Without `DEMO_WORKSPACE=1` the start sequence is unchanged.
 
 **Daily refresh (OWNER ACTION, demo environment only).** Visits are placed relative to the build date, so the demo is
 rebuilt every day. On Railway, add a **cron service** to the demo project only:
 
 1. New service from the same repository and `backend/Dockerfile`, same variables as `web` (reference them:
-   `ADMIN_DATABASE_URL`, `DB_*`, `DJANGO_SECRET_KEY`, `DEV_SEED_PASSWORD`, `DEMO_WORKSPACE=1`).
+   `ADMIN_DATABASE_URL`, `DB_*`, `DJANGO_SECRET_KEY`, `DEV_SEED_PASSWORD`, `DEMO_WORKSPACE=1`) plus
+   `DEMO_DATABASE_FINGERPRINT` (see above).
 2. Settings > Deploy > Custom start command: `sh deploy/refresh_demo.sh`.
 3. Settings > Cron schedule: `0 12 * * *` (Railway cron is UTC: 04:00 in winter, 05:00 in summer in California).
 4. No public domain, no health check (it exits when done). Check its logs after the first run: the last lines are
    the timings and the login list.
 
-`deploy/refresh_demo.sh` refuses unless `DEMO_WORKSPACE=1`, and the command refuses unless the database is a demo
-workspace, so a cron service copied by mistake into a production project does nothing. Never add it to a customer
+`deploy/refresh_demo.sh` refuses unless `DEMO_WORKSPACE=1` and `DEMO_DATABASE_FINGERPRINT` are set, and the command
+refuses unless the database is a demo workspace whose fingerprint matches, so a cron service copied by mistake into a production project does nothing. Never add it to a customer
 workspace or to staging when staging holds anything but the demo. During the rebuild (about half a minute) pages
 may error or show partial data; users are signed out.
 

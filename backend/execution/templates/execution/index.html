@@ -9,7 +9,7 @@
 {% for r in rows %}
 <tr>
   <td><a href="/execution/runs/{{ r.run.code }}/"><b>{{ r.run.code }}</b></a></td>
-  <td>{{ r.run.visit.code }}<div class="muted">{{ r.run.visit.site.code }}</div></td>
+  <td>{{ r.run.visit.code }}<div class="muted">{{ r.run.visit.site|home_label }}</div></td>
   <td><a href="/fleet/{{ r.run.robot.code }}/">{{ r.run.robot.code }}</a></td>
   <td><span class="badge {{ r.custody_state }}">{{ r.custody_text }}</span>{% if r.not_back %}<div><span class="badge notback">Robot is NOT back</span></div>{% endif %}</td>
   <td>{{ r.trip_progress }}</td>

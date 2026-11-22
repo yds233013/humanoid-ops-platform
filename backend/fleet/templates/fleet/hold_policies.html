@@ -2,15 +2,15 @@
 {% block title %}Hold release policies{% endblock %}
 {% block content %}
 {% page_header title="Hold release policies" back_url="/fleet/" back_label="Fleet" %}Mode: <b>{% if production %}production{% else %}demo{% endif %}</b>.{% endpage_header %}
-<p class="muted"> A new hold binds, for life, to the active policy, else the newest one, else none (the binding reads no setting). Active = the highest version fully approved (engineering and safety for a synthetic policy; engineering, safety and founder for an approved procedure); if that version is withdrawn there is none. In production only an approved procedure releases holds; a hold under anything else needs a two-person re-basing decision. Who must approve an incident hold release is a company decision (B-07); the platform ships no such policy.</p>
+<p class="muted"> A new hold binds, for life, to the active policy, else the newest one, else none (the binding reads no setting). Active = the highest version fully approved (engineering and safety for a demo policy; engineering, safety and founder for an approved procedure); if that version is withdrawn there is none. In production only an approved procedure releases holds; a hold under anything else needs a two-person re-basing decision. Who must approve an incident hold release is a company decision (B-07); the platform ships no such policy.</p>
 {% if not active_id %}<div class="notice warn" data-no-active="1">No active hold release policy.{% if production %} Every hold is unreleasable in production.{% else %} This would block every release in production.{% endif %}</div>{% endif %}
 <div class="tablewrap"><table>
 <thead><tr><th>Version</th><th>Status</th><th>Source</th><th>Approvals</th><th>Rules</th><th>Actions</th></tr></thead><tbody>
 {% for r in rows %}<tr data-policy="{{ r.policy.version }}" data-status="{{ r.status }}">
   <td><b>v{{ r.policy.version }}</b><div class="muted">by {{ r.policy.created_by.username }}</div>{% if r.active %}<div><b>Active</b></div>{% endif %}{% if r.binding %}<div class="muted">New holds bind to this version</div>{% endif %}</td>
-  <td>{{ r.status }}{% if r.production_usable %}<div class="muted">usable in production</div>{% else %}<div class="stale">not usable in production</div>{% endif %}{% if not r.has_incident_rule %}<div class="stale">no incident release rule</div>{% endif %}
+  <td>{{ r.status|approval_text }}{% if r.production_usable %}<div class="muted">usable in production</div>{% else %}<div class="stale">not usable in production</div>{% endif %}{% if not r.has_incident_rule %}<div class="stale">no incident release rule</div>{% endif %}
     {% if r.withdrawal %}<div class="muted">Withdrawn by {{ r.withdrawal.withdrawn_by.username }}: {{ r.withdrawal.reason }}</div>{% endif %}</td>
-  <td>{% if r.policy.source == "synthetic_demo" %}<span class="badge no">Synthetic demo</span>{% else %}{{ r.policy.get_source_display }}{% endif %}{% if r.policy.procedure_ref %}<div class="muted">procedure {{ r.policy.procedure_ref }}</div>{% endif %}</td>
+  <td>{% source_label r.policy.source r.policy.get_source_display %}{% if r.policy.procedure_ref %}<div class="muted">procedure {{ r.policy.procedure_ref }}</div>{% endif %}</td>
   <td>{% for sl in r.slots %}<div>{{ sl.label }}: {% if sl.approval %}{{ sl.approval.approver.username }}{% else %}<span class="muted">pending</span>{% if can.approve_hold_policy and not r.withdrawal %}
     <form method="post" action="/fleet/hold-policies/{{ r.policy.version }}/approve/" style="display:inline">{% csrf_token %}<input type="hidden" name="slot" value="{{ sl.slot }}"><button class="primary">Approve {{ sl.slot }}</button></form>{% endif %}{% endif %}</div>{% endfor %}</td>
   <td><pre>{{ r.rules }}</pre></td>
@@ -20,7 +20,7 @@
 {% if can.manage_hold_policy %}
 <div class="card"><h2>Record a new hold policy version (starts as a draft)</h2>
 <form method="post" action="/fleet/hold-policies/create/">{% csrf_token %}
-  <div class="row"><label>Source <select name="source">{% for v, lbl in sources %}<option value="{{ v }}">{{ lbl }}</option>{% endfor %}</select></label>
+  <div class="row"><label>Source <select name="source">{% for v, lbl in sources %}<option value="{{ v }}">{{ lbl|source_option }}</option>{% endfor %}</select></label>
   <label>Procedure reference (approved procedure only) <input name="procedure_ref" size="30"></label></div>
   <p><label>Rules (JSON, keyed by hold source)<br><textarea name="rules" rows="8" cols="70">{{ example }}</textarea></label></p>
   <button class="primary">Record policy version</button></form></div>{% endif %}
