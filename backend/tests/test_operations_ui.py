@@ -642,7 +642,7 @@ def test_statement_budget_per_endpoint_constant_in_fleet_size():
     # with the readiness evaluator running (the world's visits are inside the lookahead): 12 + 10 x E
     for u in evaluating:
         n = _count(c, u)
-        assert n <= 12 + 10 * E, (u, n)
+        assert n <= 14 + 10 * E, (u, n)  # +2 fixed 01D middleware reads
     # without evaluator runs every endpoint is within the plain budget, and constant in fleet size
     set_setting("ops_readiness_lookahead_min", "1")
     small = {u: _count(c, u) for u in plain + evaluating}
@@ -654,7 +654,9 @@ def test_statement_budget_per_endpoint_constant_in_fleet_size():
     for u, n in small.items():
         # Today (v2 01B) has a fixed floor of its own: one savepoint per section plus the timeline, inbox,
         # fleet, blockers and approval reads; with the evaluator off it is still constant in fleet size
-        assert n <= (30 if u == "/ops/" else 12), (u, n)
+        # v2 01D adds two fixed reads to every signed-in request: the workspace display zone
+        # (platform_core.timezones) and the forced-password flag (accounts.middleware); +2, still fleet-size constant
+        assert n <= (32 if u == "/ops/" else 14), (u, n)
     assert small == big, (small, big)
 
 
