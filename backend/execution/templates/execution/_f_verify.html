@@ -1,6 +1,6 @@
 {% load ui %}{% for ev in unverified %}<form method="post" action="/execution/runs/{{ run.code }}/verify/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
   <input type="hidden" name="custody_seq" value="{{ ev.seq }}">
   <span>Custody #{{ ev.seq }} is an administrative assignment - not verified.</span>
-  <label>Verifier (crew) <select name="verifier">{% for p in crew %}<option value="{{ p.code }}">{{ p.label }}</option>{% endfor %}</select></label>
+  <label>Verifier (crew) <select name="verifier">{% for p in crew %}<option value="{{ p.code }}"{% if forloop.counter == 2 %} selected{% endif %}>{{ p.label }}</option>{% endfor %}</select></label>
   <button class="primary">Record crew verification of #{{ ev.seq }}</button>
 </form>{% endfor %}

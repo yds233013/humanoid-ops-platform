@@ -10,6 +10,7 @@ from django.contrib.auth import get_user_model
 from accounts.permissions import active_roles
 from accounts.roles import INSPECTION_SIGNER_ROLES
 from fleet.models import InspectionTemplate
+from planning.models import Person
 from platform_core.interaction import UIForm
 
 ANSWER_CHOICES = [("", "Not checked yet"), ("pass", "Pass"), ("fail", "Fail")]
@@ -19,14 +20,15 @@ def signer_choices() -> list[tuple[str, str]]:
     """People who could sign an inspection. Someone who is not a qualified inspector is still listed (and
     marked) so that the refusal is plain and server-side, never a silently shorter list."""
     out: list[tuple[str, str]] = [("", "Nobody yet")]
+    # 01D P2-3: shown as the person ("P-111 · Jordan Lee") when registered; the value stays the username
+    labels = {p.user_id: p.label for p in Person.objects.select_related("user").filter(user__isnull=False)}
     for u in get_user_model().objects.filter(is_active=True).order_by("username")[:200]:
         roles = active_roles(u)
         if not roles:
             continue
         qualified = bool(roles & INSPECTION_SIGNER_ROLES)
-        out.append(
-            (u.get_username(), u.get_username() + ("" if qualified else " (not a qualified inspector)"))
-        )
+        shown = labels.get(u.pk, u.get_username())
+        out.append((u.get_username(), shown + ("" if qualified else " (not a qualified inspector)")))
     return out
 
 

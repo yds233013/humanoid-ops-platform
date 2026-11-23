@@ -35,13 +35,36 @@ def _workspace() -> Workspace:
     return Workspace.objects.get(pk=1)
 
 
+# 01D P2-4: common zones offered as a select; the server still accepts any valid IANA name (a CharField with
+# a Select widget: the choices are a convenience, validate_time_zone decides).
+COMMON_TIME_ZONES = [
+    "America/Los_Angeles",
+    "America/Denver",
+    "America/Phoenix",
+    "America/Chicago",
+    "America/New_York",
+    "America/Anchorage",
+    "Pacific/Honolulu",
+    "America/Toronto",
+    "America/Vancouver",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Asia/Kolkata",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+    "UTC",
+]
+
+
 def _tz_field(initial: str = "") -> forms.CharField:
     return forms.CharField(
         max_length=64,
         initial=initial,
         label="Time zone",
-        help_text="A name such as America/Los_Angeles, America/New_York or Europe/London. "
-        "Visit times are shown in this zone.",
+        widget=forms.Select(choices=[(z, z) for z in COMMON_TIME_ZONES]),
+        help_text="Visit times are shown in this zone. Common zones are listed; ask your administrator if "
+        "yours is missing (any IANA zone name such as Europe/Madrid is accepted).",
     )
 
 
@@ -52,18 +75,33 @@ def _clean_tz(value: str) -> str:
         raise forms.ValidationError(str(exc)) from None
 
 
-class CompanyForm(UIForm):
+class TimeZoneFormMixin(forms.Form):
+    """Keeps the current (or submitted) zone in the select even when it is not a common one."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        field = self.fields["time_zone"]
+        current = str(self.data.get("time_zone") or self.initial.get("time_zone") or field.initial or "")
+        widget = field.widget
+        assert isinstance(widget, forms.Select)
+        zones = list(COMMON_TIME_ZONES)
+        if current and current not in zones:
+            zones.insert(0, current)
+        widget.choices = [(z, z) for z in zones]
+
+    def clean_time_zone(self) -> str:
+        return _clean_tz(self.cleaned_data["time_zone"])
+
+
+class CompanyForm(TimeZoneFormMixin, UIForm):
     name = forms.CharField(max_length=120, label="Company name")
     region = forms.CharField(
         max_length=80, label="Region", help_text="Where you operate, for example Bay Area, California."
     )
     time_zone = _tz_field()
 
-    def clean_time_zone(self) -> str:
-        return _clean_tz(self.cleaned_data["time_zone"])
 
-
-class HubForm(UIForm):
+class HubForm(TimeZoneFormMixin, UIForm):
     code = forms.CharField(
         max_length=12,
         label="Hub code",
@@ -74,9 +112,6 @@ class HubForm(UIForm):
         max_length=80, required=False, label="Area", help_text="The town or neighbourhood the hub serves."
     )
     time_zone = _tz_field()
-
-    def clean_time_zone(self) -> str:
-        return _clean_tz(self.cleaned_data["time_zone"])
 
 
 class InviteForm(UIForm):
