@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}{{ t.code }}{% endblock %}
+{% block content %}
+{% page_header title=t.code back_url="/hub/" back_label="Hub work queue" %}{{ t.title }}{% endpage_header %}
+<section class="card"><h2>About this task</h2>
+<p>{% if t.source_cleared_at %}{% chip "info" "Resolved by the underlying record" %}{% else %}{% chip "neutral" t.get_status_display %}{% endif %} {{ r.type }}{% if t.robot %} · robot {{ t.robot.code }}{% endif %}{% if t.visit %} · visit {{ t.visit.code }}{% endif %}</p>
+<p><b>Owner:</b> {% if t.owner %}{{ t.owner.label }}{% else %}nobody yet{% endif %} · <b>Due:</b> {% if t.due_at %}{{ t.due_at|local_dt }}{% if r.overdue %} {% chip "bad" "Overdue" %}{% endif %}{% else %}no due time{% endif %}</p>
+<p><b>Next step:</b> {{ r.next }}{% if r.link %} <a href="{{ r.link }}">{{ r.link_text }}</a>{% elif r.link_hidden %} <span class="muted">(the {{ r.page|default:"linked page" }} needs another role)</span>{% endif %}</p>
+{% if t.source_cleared_at %}<p class="muted">The record that created this task no longer needs work (since {{ t.source_cleared_at|local_dt }}). Nobody has marked the work done here; close the task.</p>{% endif %}
+{% if t.note %}<p><b>Note:</b> {{ t.note }}</p>{% endif %}
+{% if t.close_reason %}<p><b>Closing note:</b> {{ t.close_reason }}</p>{% endif %}
+<p class="muted">Created {{ t.created_at|local_dt }} {% if t.created_by %}by {{ t.created_by.username }}{% else %}from the records ({{ t.get_source_kind_display|lower }}){% endif %}. A task is a to-do only: it never releases a hold, records an inspection or changes readiness.</p>
+</section>
+{% if r.actions %}<section class="card"><h2>What you can do</h2>
+{% if 'take' in r.actions %}<form method="post" action="/hub/tasks/{{ t.pk }}/take/" class="row">{% csrf_token %}{% form_token %}<input type="hidden" name="version" value="{{ t.version }}"><input type="hidden" name="back" value="/hub/tasks/{{ t.pk }}/"><button class="primary">Take this task</button></form>{% endif %}
+{% if 'assign' in r.actions %}<form method="post" action="/hub/tasks/{{ t.pk }}/assign/" class="row">{% csrf_token %}{% form_token %}<input type="hidden" name="version" value="{{ t.version }}"><input type="hidden" name="back" value="/hub/tasks/{{ t.pk }}/"><label>Owner <select name="owner">{% for code, label in people %}<option value="{{ code }}"{% if t.owner and t.owner.code == code %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><button{% if 'take' not in r.actions %} class="primary"{% endif %}>Assign</button></form>{% endif %}
+{% if 'start' in r.actions %}<form method="post" action="/hub/tasks/{{ t.pk }}/start/" class="row">{% csrf_token %}{% form_token %}<input type="hidden" name="version" value="{{ t.version }}"><input type="hidden" name="back" value="/hub/tasks/{{ t.pk }}/"><button class="primary">Start</button></form>{% endif %}
+{% if 'complete' in r.actions %}<form method="post" action="/hub/tasks/{{ t.pk }}/complete/" class="row">{% csrf_token %}{% form_token %}<input type="hidden" name="version" value="{{ t.version }}"><input type="hidden" name="back" value="/hub/tasks/{{ t.pk }}/"><label>Note (optional) <input name="note" maxlength="300"></label><button class="primary">Mark done</button></form>{% endif %}
+{% if 'cancel' in r.actions %}<form method="post" action="/hub/tasks/{{ t.pk }}/cancel/" class="row">{% csrf_token %}{% form_token %}<input type="hidden" name="version" value="{{ t.version }}"><input type="hidden" name="back" value="/hub/tasks/{{ t.pk }}/"><label>Reason <input name="reason" maxlength="300" required{% if t.source_cleared_at %} value="Resolved by the underlying record"{% endif %}></label><button class="danger">{% if t.source_cleared_at %}Close task{% else %}Cancel task{% endif %}</button></form>{% endif %}
+</section>{% elif t.status != "done" and t.status != "cancelled" %}<p class="waiting">{% if viewer.work %}This task belongs to someone else; the ops lead can reassign it.{% else %}Only the hub technician, the task's owner or the ops lead can work on it.{% endif %}</p>{% endif %}
+{% endblock %}

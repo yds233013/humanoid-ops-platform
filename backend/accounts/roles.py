@@ -7,8 +7,18 @@ ENGINEER = "engineer"
 ENGINEERING_LEAD = "engineering_lead"
 SAFETY_REVIEWER = "safety_reviewer"
 FOUNDER = "founder"
+HUB_TECHNICIAN = "hub_technician"  # v2 02A: the hub work queue only (contract 11, 8.6)
 
-ALL_ROLES = [ADMIN, OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER]
+ALL_ROLES = [
+    ADMIN,
+    OPS_LEAD,
+    FIELD_OPERATOR,
+    ENGINEER,
+    ENGINEERING_LEAD,
+    SAFETY_REVIEWER,
+    FOUNDER,
+    HUB_TECHNICIAN,
+]
 
 # permission -> roles allowed. Slice 1+ add domain permissions here.
 PERMISSIONS: dict[str, set[str]] = {
@@ -101,6 +111,26 @@ PERMISSIONS: dict[str, set[str]] = {
     # Slice 5: operations command center (read-only)
     "operations.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "operations.metrics": {OPS_LEAD, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
+    # v2 02A: hub work queue (docs/11_v2_phase02_contract.md 8.6). Work orders are operational, not evidence.
+    # Open the Hub page: everyone in the matrix's "View Hub queue" row (a field operator sees own tasks only).
+    "hub.view": {HUB_TECHNICIAN, FIELD_OPERATOR, OPS_LEAD, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "hub.view_all": {HUB_TECHNICIAN, OPS_LEAD, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER},
+    # Any work-order write; the command then checks the SPECIFIC task (owner, transition) for non-managers.
+    "hub.work": {HUB_TECHNICIAN, FIELD_OPERATOR, OPS_LEAD, ENGINEER, ENGINEERING_LEAD},
+    # Manage every task: assign to anyone, start / complete / cancel any.
+    "hub.manage_all": {OPS_LEAD, ENGINEER, ENGINEERING_LEAD},
+    # Take an unowned task (assign it to yourself) and work tasks assigned to you.
+    "hub.claim": {HUB_TECHNICIAN},
+    # The Hub navigation tab: the queue roles plus everyone who reads the daily close-out.
+    "hub.nav": {
+        HUB_TECHNICIAN,
+        FIELD_OPERATOR,
+        OPS_LEAD,
+        ENGINEER,
+        ENGINEERING_LEAD,
+        SAFETY_REVIEWER,
+        FOUNDER,
+    },
 }
 
 # Roles that may sign an inspection as performer or verifier.

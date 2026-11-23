@@ -404,6 +404,49 @@ def test_scale_http_endpoints_p95(request, monkeypatch):
     assert not over, f"endpoint p95 over budget (ms): {over}; full: {results}"
 
 
+# ------------------------------------------------------------------ v2 02A: the Hub page
+HUB_MS = 2000  # contract 11, 6 and 8.7: 2 s p95 ceiling (400 ms target)
+
+
+@pytest.mark.perf
+@pytest.mark.django_db(transaction=True)
+def test_hub_page_p95_on_the_scale_fixture(request):
+    """/hub/ (one-statement task refresh + the queue) on the 200-robot scale fixture, as the ops lead."""
+    if not _perf_selected(request.config):
+        pytest.skip("run with -m perf")
+    from django.db import transaction
+    from django.test import Client
+
+    from tests.conftest import make_user
+
+    with transaction.atomic():
+        build()
+    c = Client()
+    c.force_login(make_user("perf_hub_ops", "ops_lead"))
+    assert c.get("/hub/").status_code == 200  # warm-up; creates the derived tasks once
+    samples, statements = [], set()
+    for _ in range(RUNS):
+        counter = Counter()
+        t0 = time.perf_counter()
+        with connection.execute_wrapper(counter):
+            resp = c.get("/hub/")
+        samples.append((time.perf_counter() - t0) * 1000)
+        statements.add(counter.n)
+        assert resp.status_code == 200
+    from hub.models import WorkOrder
+
+    res = {
+        "p95_ms": round(p95(samples), 1),
+        "median_ms": round(sorted(samples)[RUNS // 2], 1),
+        "budget_ms": HUB_MS,
+        "statements": sorted(statements),
+        "tasks": WorkOrder.objects.count(),
+        "samples_ms": [round(x, 1) for x in samples],
+    }
+    print("\n/hub/ on the scale fixture:", json.dumps(res, indent=1))
+    assert res["p95_ms"] <= HUB_MS, res
+
+
 # ------------------------------------------------------------------ 01D release fix: /readiness/
 def _readiness_samples(monkeypatch: Any, user: Any) -> dict[str, Any]:
     from django.test import Client

@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "execution",
     "operations",
     "capacity",
+    "hub",
 ]
 
 MIDDLEWARE = [

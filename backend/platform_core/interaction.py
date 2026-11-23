@@ -46,6 +46,7 @@ ROLE_WORDS = {
     "engineering_lead": "the engineering lead",
     "safety_reviewer": "the safety reviewer",
     "founder": "the founder",
+    "hub_technician": "the hub technician",
 }
 
 

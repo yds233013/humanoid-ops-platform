@@ -103,6 +103,9 @@ CREWS: list[tuple[str, str, str, str]] = [  # (name, lead person, second person,
     ("B", "P-121", "P-122", "VAN-2"),
     ("C", "P-131", "P-132", "VAN-3"),
 ]
+# v2 02A: extra roles. The hub technician keeps field_operator (she signs inspections and records consent in
+# this demo) and gains hub_technician (the hub work queue, contract 11 section 8.6).
+EXTRA_ROLES: dict[str, list[str]] = {"lily.tran": ["hub_technician"]}
 INSPECTORS = ["P-101", "P-110", "P-111", "P-112", "P-121", "P-122", "P-131", "P-132"]
 HUB_TECH = "P-110"
 ON_CALL, ESCALATION = "P-103", "P-102"
@@ -412,8 +415,10 @@ class _Builder:
                 last_name=last.capitalize(),
             )
             RoleGrant.objects.create(user=user, role=role)
+            for extra in EXTRA_ROLES.get(username, []):
+                RoleGrant.objects.create(user=user, role=extra)
             self.u[username] = user
-            self.s.logins.append((username, role, note))
+            self.s.logins.append((username, " + ".join([role, *EXTRA_ROLES.get(username, [])]), note))
         Workspace.ensure()
         update_workspace(self.u["priya.raman"], name=COMPANY, region=REGION, time_zone=TZ)
         Workspace.objects.filter(pk=1).update(demo=True, initialized=True, initialized_at=timezone.now())
@@ -758,6 +763,23 @@ class _Builder:
         self.s.incident = str(reported["code"])
         self.lap("exceptions (holds, incident, blocked and waiting visits)")
 
+    # .............................................................. hub work queue (v2 02A)
+    def hub_tasks(self) -> None:
+        """A few hand-made hub tasks; the ones derived from records (inspections due, holds, failed equipment
+        checks) are created when the Hub page first opens. To-dos only: none of them changes a record."""
+        from hub import services as hs  # noqa: PLC0415
+
+        ops, lily = self.u["dana.ortiz"], self.u["lily.tran"]
+        morning = self.at(self.anchor + timedelta(days=1), dtime(8, 0))
+        hs.create_task(ops, type="kit_low", title="Restock recovery kits: two left on the shelf",
+                       owner_code=HUB_TECH, due_at=morning)  # fmt: skip
+        hs.create_task(ops, type="other", title="Tidy charging bay 2 and coil the cables")
+        started = hs.create_task(
+            lily, type="other", title="Label the spare restraint straps", owner_code=HUB_TECH
+        )
+        hs.start_task(lily, task_id=int(started["entity_id"]))
+        self.lap("hub tasks")
+
     def build(self) -> Summary:
         self.company()
         self.configurations()
@@ -765,6 +787,7 @@ class _Builder:
         self.robots()
         homes = self.homes()
         self.visits(homes)
+        self.hub_tasks()
         return self.s
 
 

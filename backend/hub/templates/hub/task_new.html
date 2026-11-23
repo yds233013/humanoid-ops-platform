@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Add a hub task{% endblock %}
+{% block content %}
+{% page_header title="Add a hub task" back_url="/hub/" back_label="Hub work queue" %}A to-do for the hub team. It changes no robot record; the real work is recorded on its own page.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Add task" cancel_url="/hub/" %}</section>
+{% endblock %}

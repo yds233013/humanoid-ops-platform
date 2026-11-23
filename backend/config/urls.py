@@ -34,6 +34,7 @@ urlpatterns = [
     path("logout/", auth_views.LogoutView.as_view(next_page="/login/")),
     path("account/password/", accounts_views.password_change, name="password-change"),
     path("fleet/", fleet_views.fleet_list, name="fleet-list"),
+    path("", include("hub.urls")),  # v2 02A hub work queue (/hub/, /api/hub/...)
     path("", include("platform_core.setup_urls")),  # v2 01C screens; must precede fleet/<code>/
     # Slice 7 (Engineer C): hold-policy lifecycle and pattern pages; before fleet/<code>/ (it would match)
     path("fleet/hold-policies/", fleet_views.hold_policies, name="fleet-hold-policies"),

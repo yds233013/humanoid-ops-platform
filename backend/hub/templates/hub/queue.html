@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Hub work queue{% endblock %}
+{% block content %}
+{% page_header title="Hub work queue" %}What needs doing at the hub, who is doing it, and what is done. A task is a to-do only: marking it done never releases a hold, records an inspection or changes whether a robot may be booked or leave.{% endpage_header %}
+<div class="row" style="margin:0 0 var(--s3)">{% if viewer.work %}<a class="btn primary" href="/hub/tasks/new/">Add a task</a>{% endif %}{% if own_only %}<span class="muted">You see the tasks assigned to you.</span>{% endif %}</div>
+<div class="tilegroup" data-counts="queue"><h2>Queues</h2><div class="tiles">
+  <a class="tile{% if view == 'all' %} info{% endif %}" href="/hub/" data-count="all"><b class="n">{{ total }}</b><span>All open tasks</span></a>
+  <a class="tile{% if view == 'mine' %} info{% endif %}" href="/hub/?view=mine" data-count="mine"><b class="n">{{ counts.mine }}</b><span>Assigned to me</span></a>
+  <a class="tile{% if counts.overdue %} bad{% endif %}" href="/hub/?view=overdue" data-count="overdue"><b class="n">{{ counts.overdue }}</b><span>Overdue</span></a>
+  <a class="tile{% if counts.unassigned %} warn{% endif %}" href="/hub/?view=unassigned" data-count="unassigned"><b class="n">{{ counts.unassigned }}</b><span>No owner yet</span></a>
+  <a class="tile" href="/hub/?view=resolved" data-count="resolved"><b class="n">{{ counts.resolved }}</b><span>Resolved by the underlying record</span></a>
+</div></div>
+<div class="tilegroup" data-counts="types"><h2>By type</h2><div class="tiles">
+{% for key, label, n in types %}<a class="tile{% if view == 'type:'|add:key %} info{% endif %}" href="/hub/?view=type:{{ key }}" data-type="{{ key }}"><b class="n">{{ n }}</b><span>{{ label }}</span></a>{% endfor %}
+</div></div>
+{% if owners %}<div class="tilegroup" data-counts="owners"><h2>By owner</h2><div class="tiles">
+{% for code, label, n in owners %}<a class="tile" href="/hub/?view=owner:{{ code }}" data-owner="{{ code }}"><b class="n">{{ n }}</b><span>{{ label }}</span></a>{% endfor %}
+</div></div>{% endif %}
+<section class="sec" id="tasks" data-section="tasks"><h2>{% if view == 'all' %}Open tasks{% elif view == 'mine' %}Assigned to me{% elif view == 'overdue' %}Overdue{% elif view == 'unassigned' %}No owner yet{% elif view == 'resolved' %}Resolved by the underlying record{% else %}Filtered tasks{% endif %} <span class="muted">({{ rows|length }})</span></h2>
+{% if rows %}<div class="tablewrap"><table><thead><tr><th>Task</th><th>Type</th><th>Robot</th><th>Due</th><th>Owner</th><th>Status</th><th>Next step</th></tr></thead><tbody>
+{% for r in rows %}<tr data-task="{{ r.t.pk }}" data-status="{{ r.t.status }}"{% if r.t.source_cleared_at %} data-resolved="1"{% endif %}>
+<td><a href="/hub/tasks/{{ r.t.pk }}/">{{ r.t.code }}</a> {{ r.t.title }}</td>
+<td>{{ r.type }}</td>
+<td>{% if r.t.robot %}{{ r.t.robot.code }}{% else %}<span class="muted">-</span>{% endif %}</td>
+<td>{% if r.t.due_at %}{{ r.t.due_at|local_dt }}{% if r.overdue %} {% chip "bad" "Overdue" %}{% endif %}{% else %}<span class="muted">no due time</span>{% endif %}</td>
+<td>{% if r.t.owner %}{{ r.t.owner.label }}{% else %}<span class="muted">nobody yet</span>{% endif %}</td>
+<td>{% if r.t.source_cleared_at %}{% chip "info" "Resolved by the underlying record" %}{% else %}{% chip "neutral" r.t.get_status_display %}{% endif %}</td>
+<td>{{ r.next }}{% if r.link %} <a href="{{ r.link }}">{{ r.link_text }}</a>{% endif %}{% if r.actions %} <a class="btn" href="/hub/tasks/{{ r.t.pk }}/" data-act="1">{% if 'take' in r.actions %}Take it{% elif 'start' in r.actions %}Start{% elif 'complete' in r.actions %}Mark done{% else %}Manage{% endif %}</a>{% endif %}</td>
+</tr>{% endfor %}</tbody></table></div>
+{% else %}{% include "ui/empty.html" with title="Nothing here." text=" No open task matches this queue." %}{% endif %}
+</section>
+{% if recent %}<section class="sec" data-section="recent"><h2>Closed in the last 7 days</h2>
+<div class="tablewrap"><table><thead><tr><th>Task</th><th>Type</th><th>Owner</th><th>Result</th><th>When</th></tr></thead><tbody>
+{% for r in recent %}<tr data-task="{{ r.t.pk }}"><td><a href="/hub/tasks/{{ r.t.pk }}/">{{ r.t.code }}</a> {{ r.t.title }}</td><td>{{ r.type }}</td><td>{{ r.t.owner.label|default:"-" }}</td><td>{{ r.t.get_status_display }}{% if r.t.close_reason %}: {{ r.t.close_reason }}{% endif %}</td><td>{{ r.t.finished_at|local_dt }}</td></tr>{% endfor %}
+</tbody></table></div></section>{% endif %}
+<p class="muted">Tasks are refreshed from the records each time this page opens: periodic inspections due or overdue, robots and configurations on hold, failed equipment checks. The daily close-out is under <a href="/ops/closeout/">Daily close-out</a>.</p>
+{% endblock %}

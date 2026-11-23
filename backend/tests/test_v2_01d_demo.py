@@ -259,6 +259,20 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     assert PASSWORD not in out
     for username in ("priya.raman", "dana.ortiz", "jordan.lee", "elena.vasquez", "kenji.watanabe"):
         assert username in out
+    # v2 02A: the hub technician holds hub_technician (and keeps field_operator); a few hand-made hub tasks
+    lily = User.objects.get(username="lily.tran")
+    assert set(RoleGrant.objects.filter(user=lily).values_list("role", flat=True)) == {
+        "field_operator",
+        "hub_technician",
+    }
+    from hub.models import WorkOrder
+
+    assert WorkOrder.objects.filter(source_kind="manual").count() == 3
+    lily_c = Client()
+    lily_c.force_login(lily)
+    hub_html = lily_c.get("/hub/").content.decode()
+    assert "Hub work queue" in hub_html and "Restock recovery kits" in hub_html
+    assert WorkOrder.objects.filter(source_kind="hold").count() >= 2  # derived on that first page load
     html = c.get("/ops/").content.decode()
     assert html.count("Demo workspace") == 1
     assert not re.search(r"(?i)synthetic", _visible_text(html))

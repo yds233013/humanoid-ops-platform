@@ -315,7 +315,7 @@ NAV: list[tuple[str, str, str, str | None, tuple[str, ...]]] = [
     ("dispatch", "Dispatch", "/planning/", "planning.read", ("/planning/", "/readiness/", "/execution/")),
     ("fleet", "Fleet", "/fleet/", "fleet.read", ("/fleet/",)),
     ("customers", "Customers", "/planning/sites/", "planning.read", ("/planning/sites/",)),
-    ("hub", "Hub", "/ops/closeout/", "operations.read", ("/ops/closeout/",)),
+    ("hub", "Hub", "/hub/", "hub.nav", ("/hub/", "/ops/closeout/")),
     ("issues", "Issues", "/ops/exceptions/", "operations.read", ("/ops/exceptions/", "/ops/incidents/")),
 ]
 
@@ -341,6 +341,7 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     ],
     "customers": [("Sites", "/planning/sites/", "planning.read")],
     "hub": [
+        ("Work queue", "/hub/", "hub.view"),
         ("Daily close-out", "/ops/closeout/", "operations.read"),
         ("Field runs", "/execution/", "execution.read"),
     ],
@@ -383,6 +384,7 @@ SECTION_PREFIXES: list[tuple[str, str]] = [
     ("/ops/capacity/", "reports"),
     ("/planning/sites/", "customers"),
     ("/ops/closeout/", "hub"),
+    ("/hub/", "hub"),
     ("/ops/exceptions/", "issues"),
     ("/ops/incidents/", "issues"),
     ("/execution/incidents/", "issues"),
@@ -445,6 +447,8 @@ def landing_url(roles: set[str]) -> str:
         return "/ops/"
     if _allowed(roles, "platform_core.manage_workspace"):
         return "/settings/setup/"
+    if not _allowed(roles, "fleet.read") and _allowed(roles, "hub.view"):
+        return "/hub/"  # v2 02A: a hub technician's work starts at the hub queue
     return "/fleet/"
 
 
