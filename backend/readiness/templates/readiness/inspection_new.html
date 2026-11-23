@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Submit an inspection{% endblock %}
 {% block content %}
-{% page_header title="Submit an inspection" back_url=back_url back_label="Back" %}Robot {{ robot.code }}{% if visit %} · for visit {{ visit.code }}{% endif %}{% endpage_header %}
+{% page_header title="Submit an inspection" back_url=back_url back_label="Back" %}Robot {{ robot.code }}{% if visit %} · {% if post_visit_run %}post-visit inspection for visit {{ visit.code }} (run {{ post_visit_run }}){% else %}for visit {{ visit.code }}{% endif %}{% endif %}{% endpage_header %}
 {% if not templates %}
 <div class="card"><p class="waiting">This robot has no configuration recorded, so there is no inspection checklist for it yet. Ask the engineer to record the configuration first.</p></div>
 {% else %}

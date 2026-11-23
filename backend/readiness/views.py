@@ -758,9 +758,19 @@ def _inspection_templates(robot: Robot) -> list[dict[str, Any]]:
     return [{"t": t, "usable": usable.get(t.pk, False)} for t in rows]
 
 
+POST_VISIT_NEXT = "Post-visit inspection recorded. Next: the ops lead reconciles the return."
+
+
 def _inspection_page(
-    request: HttpRequest, robot: Robot, *, visit: Visit | None, back_url: str
+    request: HttpRequest,
+    robot: Robot,
+    *,
+    visit: Visit | None,
+    back_url: str,
+    run_code: str | None = None,
 ) -> HttpResponse:
+    """``run_code``: the visit has departed, so this is its POST-visit inspection (01D P2-1): back to the run
+    with the reconciliation as the next step, never the pre-departure evidence prompt."""
     rows = _inspection_templates(robot)
     wanted = request.POST.get("template_version") or request.GET.get("template") or ""
     chosen = next((r for r in rows if r["t"].version == wanted), rows[0] if rows else None)
@@ -790,11 +800,13 @@ def _inspection_page(
         result = str(out.get("result", ""))
         word = {"PASS": "passed", "FAIL": "failed", "INCOMPLETE": "is incomplete"}.get(result, "recorded")
         text = f"Inspection {out.get('entity_id', '')} recorded: it {word}."
+        if run_code:
+            return f"{text} {POST_VISIT_NEXT}"
         return text + (" Next: record it as pre-departure evidence below." if visit else "")
 
     def success(out: dict[str, Any]) -> str:
         # 01D J4-2: back to the visit with the new inspection preselected in the evidence form
-        if visit is None:
+        if visit is None or run_code:
             return back_url
         return f"{back_url}?inspection={out.get('entity_id', '')}#evidence"
 
@@ -815,6 +827,7 @@ def _inspection_page(
             "chosen": chosen,
             "back_url": back_url,
             "base_path": request.path,
+            "post_visit_run": run_code,
         },
     )
 
@@ -830,6 +843,11 @@ def visit_inspection(request: HttpRequest, code: str) -> HttpResponse:
             request, "This visit has no robot yet, so there is nothing to inspect. Plan the visit first."
         )
         return _to_visit(code)
+    run = ExecutionRun.objects.filter(visit=v).only("code").first()
+    if run is not None:  # departed: the post-visit inspection, back to the run (01D P2-1)
+        return _inspection_page(
+            request, rev.robot, visit=v, back_url=f"/execution/runs/{run.code}/", run_code=run.code
+        )
     return _inspection_page(request, rev.robot, visit=v, back_url=f"/readiness/visits/{code}/")
 
 

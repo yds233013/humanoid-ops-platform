@@ -611,7 +611,11 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
             "recs": recs,
             "incidents": incidents,
             "crew": crew,
-            "persons": Person.objects.select_related("user").order_by("code"),
+            # 01D P2-2: the run's crew first (lead, second), then everyone else
+            "persons": crew
+            + list(
+                Person.objects.select_related("user").exclude(pk__in=[p.pk for p in crew]).order_by("code")
+            ),
             "next": {
                 "key": step,
                 "title": title,

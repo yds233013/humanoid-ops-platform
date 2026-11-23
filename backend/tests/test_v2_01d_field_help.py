@@ -313,3 +313,79 @@ def test_a_field_operator_lands_on_my_visits_others_keep_their_landing(w):
     assert client_as(w.ops).get("/")["Location"] == "/ops/"
     lead_and_field = make_user("fh_land_mixed", "field_operator", "ops_lead")
     assert client_as(lead_and_field).get("/")["Location"] == "/ops/"
+
+
+# ------------------------------------------------------------------ pass 2 (P2-1 .. P2-4)
+def _submit_inspection_form(c: Client, url: str, w: Any) -> Any:
+    data = {"template_version": "T1", **{f"item_{k}": v for k, v in w.all_pass.items()}}
+    data.update(performer=w.field.username, verifier=w.field2.username)
+    data["_form_token"] = TOKEN_RE.search(html(c.get(url))).group(1)
+    return c.post(url, data)
+
+
+def test_post_visit_inspection_returns_to_the_run_with_the_reconcile_next_step(w):
+    run = depart_new(w, "R-02")
+    advance(w, run, "at_hub")
+    c = client_as(w.ops)
+    run_page = html(c.get(f"/execution/runs/{run.code}/"))
+    link = f"/readiness/visits/{run.visit.code}/inspection/"
+    assert f'href="{link}"' in run_page  # the next-step link
+    form = html(c.get(link))
+    assert f"post-visit inspection for visit {run.visit.code} (run {run.code})" in form
+    r = _submit_inspection_form(c, link, w)
+    assert r.status_code == 302 and r["Location"] == f"/execution/runs/{run.code}/"
+    page = html(c.get(r["Location"]))
+    assert "Post-visit inspection recorded. Next: the ops lead reconciles the return." in page
+    assert "pre-departure evidence" not in page
+    assert 'data-next-step="reconcile"' in page
+    # the pre-departure flow is unchanged for a visit that has not departed
+    code = fresh_visit(w, robot="R-03")
+    r = _submit_inspection_form(c, f"/readiness/visits/{code}/inspection/", w)
+    assert r["Location"].startswith(f"/readiness/visits/{code}/?inspection=")
+
+
+def test_custody_form_lists_the_crew_first_and_preselects_lead_to_second(w):
+    run = depart_new(w, "R-02")  # crew: lead P-1, second P-2
+    advance(w, run, "arrived_site")
+    page = html(client_as(w.field).get(f"/execution/runs/{run.code}/"))
+    custodian = select_options(page, "custodian")
+    receiver = select_options(page, "received_by")
+    assert re.findall(r'value="(P-\d)"', custodian)[:2] == ["P-1", "P-2"]
+    assert re.findall(r'value="(P-\d)"', receiver)[:2] == ["P-1", "P-2"]
+    assert re.search(r'<option value="P-1" selected>', custodian)
+    assert re.search(r'<option value="P-2" selected>', receiver)
+
+
+def test_inspection_signers_are_shown_as_people(w):
+    w.field.first_name, w.field.last_name = "Amara", "Okafor"
+    w.field.save()
+    form = html(client_as(w.ops).get(f"/readiness/visits/{w.visit}/inspection/"))
+    assert f'<option value="{w.field.username}">P-2 · Amara Okafor</option>' in form
+    assert "(not a qualified inspector)" in form  # roles that cannot sign are still listed and marked
+
+
+def test_time_zone_is_a_select_of_common_zones_and_the_server_still_validates(db):
+    from platform_core.models import Workspace
+
+    admin = make_user("fh_tz_admin", "admin")
+    Workspace.ensure()
+    Workspace.objects.filter(pk=1).update(time_zone="America/Los_Angeles")
+    c = client_as(admin)
+    page = html(c.get("/settings/company/"))
+    assert '<select name="time_zone"' in page
+    assert '<option value="America/Los_Angeles" selected>' in page and '<option value="UTC">' in page
+    Workspace.objects.filter(pk=1).update(time_zone="Europe/Madrid")  # not a listed zone: kept and selected
+    page = html(c.get("/settings/company/"))
+    assert '<option value="Europe/Madrid" selected>' in page
+    base = {"name": "Northbay", "region": "Bay Area"}
+
+    def save(zone: str) -> Any:
+        token = TOKEN_RE.search(html(c.get("/settings/company/"))).group(1)
+        return c.post("/settings/company/", {**base, "time_zone": zone, "_form_token": token})
+
+    bad = save("Mars/Olympus_Mons")
+    assert bad.status_code == 400 and Workspace.objects.get(pk=1).time_zone == "Europe/Madrid"
+    assert save("Asia/Singapore").status_code == 302  # any valid IANA zone is still accepted
+    assert Workspace.objects.get(pk=1).time_zone == "Asia/Singapore"
+    hub = html(c.get("/settings/hubs/new/"))
+    assert '<select name="time_zone"' in hub and '<option value="Asia/Singapore" selected>' in hub
