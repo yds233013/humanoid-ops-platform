@@ -503,7 +503,9 @@ def test_roles_without_operations_read_are_refused_or_sent_to_fleet():
     assert client("admin", name="t_admin_only").get("/ops/").status_code == 403
     assert client(name="t_norole").get("/ops/").status_code == 403
     field = client("field_operator", name="t_field_land")
-    assert field.get("/")["Location"] == "/ops/"  # field operators hold operations.read in this build
+    # 01D J5-1: a login whose only role is field operator lands on its own visits (it still may open /ops/)
+    assert field.get("/")["Location"] == "/execution/mine/"
+    assert field.get("/ops/").status_code != 403
     # 01C ruling: an admin (no operations.read) lands on workspace setup, not on the fleet list
     assert client("admin", name="t_admin_land").get("/")["Location"] == "/settings/setup/"
 
