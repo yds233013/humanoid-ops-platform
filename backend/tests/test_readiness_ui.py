@@ -46,7 +46,11 @@ READ_ROLES = ["ops", "field", "eng", "lead", "safety", "founder"]  # world users
 
 @pytest.fixture
 def w(transactional_db):
-    return build_readiness(prefix="rui_")
+    world = build_readiness(prefix="rui_")
+    # 01D release fix: the /readiness/ list assesses only visits inside the readiness look-ahead (the window
+    # Today uses); the world's visit is weeks ahead, so the look-ahead covers it for the list's label tests.
+    set_setting("ops_readiness_lookahead_min", str(60 * 24 * 400))
+    return world
 
 
 def _client(user: Any, csrf: bool = False) -> Client:

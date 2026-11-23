@@ -307,6 +307,8 @@ HTTP_CASES = {
     "/ops/metrics/": FAST_MS,
     "/ops/exceptions/": READINESS_MS,
     "/ops/timeline/": READINESS_MS,
+    # 01D release fix: /readiness/ lists every confirmed future visit and evaluates at most 10 in the look-ahead
+    "/readiness/": READINESS_MS,
     # Slice 7 X-10 (contract 07a section 14): the close-out page, contract 05 A1 budget (no evaluator)
     "/api/ops/closeout": FAST_MS,
     "/ops/closeout/": FAST_MS,
@@ -400,6 +402,81 @@ def test_scale_http_endpoints_p95(request, monkeypatch):
     print("\nenvironment after:", json.dumps(environment()))
     over = {k: v["p95_ms"] for k, v in results.items() if v["p95_ms"] > v["budget_ms"]}
     assert not over, f"endpoint p95 over budget (ms): {over}; full: {results}"
+
+
+# ------------------------------------------------------------------ 01D release fix: /readiness/
+def _readiness_samples(monkeypatch: Any, user: Any) -> dict[str, Any]:
+    from django.test import Client
+
+    clock = EvaluatorClock(monkeypatch)
+    monkeypatch.setattr("readiness.views.evaluate_readiness", clock)  # the list binds the name at import
+    c = Client()
+    c.force_login(user)
+    assert c.get("/readiness/").status_code == 200  # warm-up
+    samples, evaluator, statements = [], [], set()
+    for _ in range(RUNS):
+        clock.reset()
+        counter = Counter()
+        t0 = time.perf_counter()
+        with connection.execute_wrapper(counter):
+            resp = c.get("/readiness/")
+        samples.append((time.perf_counter() - t0) * 1000)
+        evaluator.append(clock.secs * 1000)
+        statements.add(counter.n)
+        assert resp.status_code == 200
+    body = resp.content.decode()
+    counts = body.split('data-readiness-counts="')[1].split('"')[0]
+    return {
+        "p95_ms": round(p95(samples), 1),
+        "median_ms": round(sorted(samples)[RUNS // 2], 1),
+        "budget_ms": READINESS_MS,
+        "evaluator_calls_per_request": len(clock.calls),  # reset before each request: the last one
+        "evaluator_p95_ms": round(p95(evaluator), 1),
+        "statements": sorted(statements),
+        "counts_all_assessed_not": counts,
+        "samples_ms": [round(x, 1) for x in samples],
+    }
+
+
+@pytest.mark.perf
+@pytest.mark.django_db(transaction=True)
+def test_readiness_list_p95_on_the_scale_fixture(request, monkeypatch):
+    """/readiness/ on the 200-robot scale fixture (2,000 visits): every confirmed future visit listed, the
+    evaluator for at most 10 inside the look-ahead. Budget: the readiness budget (2,000 ms p95)."""
+    if not _perf_selected(request.config):
+        pytest.skip("run with -m perf")
+    from django.db import transaction
+
+    from tests.conftest import make_user
+
+    with transaction.atomic():
+        build()
+    set_setting("ops_readiness_lookahead_min", str(WINDOW))  # every visit qualifies: the cap must hold
+    res = _readiness_samples(monkeypatch, make_user("perf_rl_ops", "ops_lead"))
+    print("\n/readiness/ on the scale fixture:", json.dumps(res, indent=1))
+    assert res["evaluator_calls_per_request"] <= rm.READINESS_CAP
+    assert res["p95_ms"] <= READINESS_MS, res
+
+
+@pytest.mark.perf
+@pytest.mark.django_db(transaction=True)
+def test_readiness_list_p95_on_the_northbay_demo(request, monkeypatch):
+    """/readiness/ on the real demo workspace (build_demo_workspace into the empty perf test database:
+    50 robots, about 85 visits), as the demo ops lead."""
+    if not _perf_selected(request.config):
+        pytest.skip("run with -m perf")
+    from django.contrib.auth import get_user_model
+    from django.core.management import call_command
+
+    monkeypatch.setenv("DEV_SEED_PASSWORD", "perf-demo-password-1")
+    t0 = time.perf_counter()
+    call_command("build_demo_workspace", stdout=__import__("io").StringIO())
+    build_s = round(time.perf_counter() - t0, 1)
+    res = _readiness_samples(monkeypatch, get_user_model().objects.get(username="dana.ortiz"))
+    res["build_s"] = build_s
+    print("\n/readiness/ on the Northbay demo:", json.dumps(res, indent=1))
+    assert res["evaluator_calls_per_request"] <= rm.READINESS_CAP
+    assert res["p95_ms"] <= READINESS_MS, res
 
 
 # ------------------------------------------------------------------ EM perf instruction 2: inbox call accounting

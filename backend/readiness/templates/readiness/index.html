@@ -2,6 +2,8 @@
 {% block title %}Readiness{% endblock %}
 {% block content %}
 {% page_header title="Departure readiness" %}Upcoming confirmed visits. Three separate questions: is the plan feasible, is the checklist complete, and has the ops lead decided it may leave? A decision is not a departure.{% endpage_header %}
+<p class="op-asof" data-readiness-counts="{{ counts.all }}/{{ counts.assessed }}/{{ counts.not_assessed }}"><b>{{ counts.all }} visit{{ counts.all|pluralize }}</b> · {{ counts.assessed }} assessed · {{ counts.not_assessed }} not assessed yet</p>
+<p class="muted">The checklist is assessed here for the visits starting within the readiness look-ahead, at most {{ cap }} at a time. Every visit's own page always checks it in full.</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Visit</th><th>Site</th><th>On site</th><th>Planning</th><th>Readiness</th><th>Authorization</th></tr></thead>
 <tbody>
@@ -10,10 +12,14 @@
   <td><a href="/readiness/visits/{{ r.visit.code }}/"><b>{{ r.visit.code }}</b></a>{% if r.rev.robot %}<div class="muted">{{ r.rev.robot.code }}</div>{% endif %}</td>
   <td>{{ r.visit.site|home_label }}</td>
   <td>{{ r.start|local_dt }}</td>
+  {% if r.assessed %}
   <td><span class="badge {{ r.planning_state }}">{{ r.planning_label }}</span></td>
   <td><span class="badge {{ r.readiness_state }}">{{ r.result.label }}</span>
       {% if r.result.blockers %}<div class="muted">{{ r.result.blockers|length }} blocker{{ r.result.blockers|length|pluralize }}</div>{% endif %}</td>
   <td>{% if r.auth %}<span class="badge {{ r.auth.state }}">{{ r.auth.label }}</span> <span class="muted">{{ r.auth.auth.code }}</span>{% elif r.readiness_state == "ready" %}<span class="muted">None issued</span><div class="muted">Checklist complete - ask the ops lead to approve</div>{% else %}<span class="muted">None issued</span>{% endif %}</td>
+  {% else %}
+  <td colspan="3" data-not-assessed="1"><span class="badge neutral">Not assessed yet</span><div class="muted">{{ r.why }}</div><a href="/readiness/visits/{{ r.visit.code }}/">Check this visit now</a></td>
+  {% endif %}
 </tr>
 {% empty %}<tr><td colspan="6"><div class="empty"><b>No upcoming confirmed visits</b>Confirmed visits that have not finished show up here.</div></td></tr>
 {% endfor %}

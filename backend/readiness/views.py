@@ -9,7 +9,7 @@ SYNTHETIC data only. Nothing here grants real-world clearance, and no page ever 
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -214,11 +214,23 @@ def missing_requirements(result: ReadinessResult) -> list[dict[str, str]]:
     return out
 
 
-def _summary(v: Visit) -> dict[str, Any]:
-    """Planning label, readiness label and the latest authorization / departure label for one visit."""
+def _planning_from(result: ReadinessResult) -> tuple[str, str, list[dict[str, Any]]]:
+    """The planning state read from the evaluator's own planning gate (it runs live_feasibility and reports
+    every non-feasible plan as PLANNING_* blockers), so a list does not run the planning check twice."""
+    found = [b for b in result.blockers if str(b.get("code", "")).startswith("PLANNING_")]
+    levels = {b.get("level", "blocked") for b in found}
+    state = "blocked" if "blocked" in levels else ("review" if levels else "feasible")
+    return state, planning_services.LABELS[state], found
+
+
+def _summary(v: Visit, *, live_planning: bool = True) -> dict[str, Any]:
+    """Planning label, readiness label and the latest authorization / departure label for one visit.
+    ``live_planning=False`` (the list): the planning label comes from the evaluator's planning gate."""
     tz = v.site.timezone
-    p_state, p_label, p_blockers = _planning(v)
+    if v.status == "cancelled" or v.current_revision is None:
+        live_planning = True  # _planning's own wording for these
     result = evaluate_readiness(v)
+    p_state, p_label, p_blockers = _planning(v) if live_planning else _planning_from(result)
     latest = v.authorizations.order_by("-issued_at", "-pk").first()
     auth = _auth_row(latest, tz) if latest is not None else None
     r = v.current_revision
@@ -268,19 +280,75 @@ def _back_policies(request: HttpRequest, **kw: Any) -> HttpResponse:
 
 
 # ------------------------------------------------------------------ pages
+NOT_ASSESSED_OUTSIDE = (
+    "Not assessed yet: it starts after the readiness look-ahead. Open the visit to check it now."
+)
+NOT_ASSESSED_CAP = (
+    "Not assessed yet: more visits fall in the look-ahead than this list checks at once. Open the visit to "
+    "check it now."
+)
+NOT_ASSESSED_UNCONFIGURED = (
+    "Not assessed yet: the readiness look-ahead is not configured. Open the visit to check it now."
+)
+
+
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
+    """Every confirmed future visit is listed; the full evaluator (and the live planning check and the
+    authorization status) runs only for visits inside the look-ahead (``ops_readiness_lookahead_min``,
+    the window Today uses), at most READINESS_CAP of them, in (on-site start, visit) order, exactly like
+    Today's timeline. The others say "Not assessed yet" and why, never a ready or approved state. The visit's
+    own page always runs the full evaluator; nothing here grants or decides anything (01D release fix)."""
     if (deny := _deny(request)) is not None:
         return deny
-    visits = (
-        Visit.objects.select_related("site", "current_revision")
-        .filter(status="confirmed", current_revision__on_site_end__gt=timezone.now())
-        .order_by("current_revision__on_site_start", "code")
+    from operations.readmodels import READINESS_CAP, READINESS_LOOKAHEAD, read_thresholds  # noqa: PLC0415
+
+    now = timezone.now()
+    visits = list(
+        Visit.objects.select_related("site", "current_revision__robot")
+        .filter(status="confirmed", current_revision__on_site_end__gt=now)
+        .order_by("current_revision__on_site_start", "pk")
     )
+    lookahead = read_thresholds()[READINESS_LOOKAHEAD]
+    try:
+        lookahead_end = now + timedelta(minutes=lookahead) if lookahead is not None else None
+    except OverflowError:
+        lookahead_end = datetime.max.replace(tzinfo=now.tzinfo)
+    qualifying = [
+        v
+        for v in visits
+        if lookahead_end is not None
+        and v.current_revision is not None
+        and v.current_revision.on_site_start <= lookahead_end
+    ]
+    chosen = {v.pk for v in qualifying[:READINESS_CAP]}
+    qualifying_ids = {v.pk for v in qualifying}
+    rows: list[dict[str, Any]] = []
+    for v in visits:
+        if v.pk in chosen:
+            rows.append({**_summary(v, live_planning=False), "assessed": True})
+            continue
+        r = v.current_revision
+        if lookahead_end is None:
+            why = NOT_ASSESSED_UNCONFIGURED
+        elif v.pk in qualifying_ids:
+            why = NOT_ASSESSED_CAP
+        else:
+            why = NOT_ASSESSED_OUTSIDE
+        rows.append(
+            {
+                "visit": v,
+                "rev": r,
+                "start": r.on_site_start if r else None,
+                "assessed": False,
+                "why": why,
+            }
+        )
+    counts = {"all": len(visits), "assessed": len(chosen), "not_assessed": len(visits) - len(chosen)}
     return render(
         request,
         "readiness/index.html",
-        {"rows": [_summary(v) for v in visits], **_base(request)},
+        {"rows": rows, "counts": counts, "cap": READINESS_CAP, **_base(request)},
     )
 
 
