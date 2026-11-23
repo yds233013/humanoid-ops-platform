@@ -263,7 +263,7 @@ may error or show partial data; users are signed out.
 | Date | What | Result |
 |---|---|---|
 | 2026-11-21 | `backup_restore_check.sh` on the local Docker PostgreSQL 16: source database migrated to head with `seed_dev` and `seed_fleet` data (53 migrations, 7 users, 7 role grants, 40 audit events, 5 robots), restored into a second empty database | PASSED: every row count equal, audit append-only triggers and workspace singleton constraint present in the restored copy; refused a second run against the now non-empty target (exit 2); the app started on the restored database as the restricted `ops_app` role: `/healthz` 200 `{"status":"ok","database":"ok","migrations":"ok"}`, login and `/fleet/` 200 |
-| (pending) | Restore of a Railway backup into the staging database | not done; needs the owner's Railway access |
+| 2026-11-23 01:4x UTC | Restore of a Railway volume backup into the **staging** database (Postgres -> Backups -> scheduled "Daily" backup of 2026-11-22 20:39 PST / 2026-11-23 01:39 UTC, 175 MB -> Restore -> review staged change: volume swap only, the old volume kept -> Deploy). Before: 93 audit rows, 8 users; after the backup an inactive marker user `restore_marker_after_backup` was created (9 users). | PASSED: after the restore the marker is gone, 8 users, 93 audit rows (exactly the backup state); `/healthz` 200 `{"status":"ok","database":"ok","migrations":"ok"}` with no app redeploy needed. Counts read inside the staging web container (`railway ssh`, runtime role). |
 | (pending) | Rollback rehearsal on staging (section 6) | not done; needs the staging environment |
 
 ## Staging rollback rehearsal (2026-11-21, Railway staging)
