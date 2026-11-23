@@ -51,7 +51,11 @@ WORKFLOW: dict[str, tuple[str, str | None, str]] = {
         "readiness.read",
         "visit readiness",
     ),
-    "charging": ("Charge the robot", None, ""),
+    "charging": (
+        "Charge the robot and record the session; it still needs its battery check before departure",
+        "hub.view",
+        "charging page",
+    ),
     "maintenance_due": ("Do the maintenance", None, ""),
     "kit_low": ("Restock the kit", None, ""),
     "other": ("Do the work described", None, ""),

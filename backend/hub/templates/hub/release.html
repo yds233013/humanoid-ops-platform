@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Release a charger booking{% endblock %}
+{% block content %}
+{% page_header title="Release a charger booking" back_url="/hub/charging/" back_label="Charging" %}{{ r.charger.code }} for {{ r.robot.code }}, {{ r.starts_at|local_dt }} to {{ r.ends_at|local_time }}.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Release booking" danger=True cancel_url="/hub/charging/" %}</section>
+{% endblock %}

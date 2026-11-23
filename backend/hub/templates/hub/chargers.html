@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Chargers{% endblock %}
+{% block content %}
+{% page_header title="Chargers" back_url="/hub/charging/" back_label="Charging" %}The hub's charging bays. Adding one records a fact and approves nothing.{% endpage_header %}
+<section class="card"><h2>Chargers</h2>{% if chargers %}<div class="tablewrap"><table><thead><tr><th>Code</th><th>Name</th><th>State</th><th></th></tr></thead><tbody>
+{% for c in chargers %}<tr><td><b>{{ c.code }}</b></td><td>{{ c.name }}</td><td>{% if c.in_service %}In service{% else %}Out of service{% endif %}</td><td><a href="/hub/charging/chargers/{{ c.code }}/">Change state</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">No charger yet.</p>{% endif %}</section>
+<section class="card"><h2>Add a charger</h2>{% include "ui/form.html" with form=form submit="Add charger" %}</section>
+{% endblock %}

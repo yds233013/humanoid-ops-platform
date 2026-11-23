@@ -121,6 +121,10 @@ PERMISSIONS: dict[str, set[str]] = {
     "hub.manage_all": {OPS_LEAD, ENGINEER, ENGINEERING_LEAD},
     # Take an unowned task (assign it to yourself) and work tasks assigned to you.
     "hub.claim": {HUB_TECHNICIAN},
+    # v2 02B charging (8.6): record a charging session or battery reading; reserve a charger; set up chargers.
+    "hub.record_charging": {HUB_TECHNICIAN, FIELD_OPERATOR, OPS_LEAD, ENGINEER},
+    "hub.reserve_charger": {HUB_TECHNICIAN, OPS_LEAD},
+    "hub.manage_chargers": {ADMIN, OPS_LEAD},  # configuration (hub setup records chargers), not evidence
     # The Hub navigation tab: the queue roles plus everyone who reads the daily close-out.
     "hub.nav": {
         HUB_TECHNICIAN,

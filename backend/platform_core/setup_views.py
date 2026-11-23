@@ -26,6 +26,7 @@ from platform_core.interaction import ConfirmForm, UIForm, command_page, denied
 from platform_core.models import AuditEvent, Hub, Workspace
 
 User = get_user_model()
+DEMO_VALUE_KEYS = ("ops_soc_fresh_min",)  # v2 02B: labelled "Demo value" on a demo workspace
 ADMIN_PERM = "accounts.grant_role"
 DEFAULT_NAMES = {"", "Workspace", "Demo workspace"}
 
@@ -238,11 +239,17 @@ def operating_settings(request: HttpRequest) -> HttpResponse:
     if not has_permission(request.user, perm):
         return denied(request, perm)
     from fleet import provisioning
+    from fleet.services import demo_mode
 
     return render(
         request,
         "settings/operating.html",
-        {"rows": provisioning.rows(), "complete": provisioning.required_complete()},
+        {
+            "rows": provisioning.rows(),
+            "complete": provisioning.required_complete(),
+            "demo": demo_mode(),
+            "demo_keys": DEMO_VALUE_KEYS,
+        },
     )
 
 

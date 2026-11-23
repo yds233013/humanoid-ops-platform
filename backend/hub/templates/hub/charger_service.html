@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Charger {{ c.code }}{% endblock %}
+{% block content %}
+{% page_header title=c.code back_url="/hub/charging/chargers/" back_label="Chargers" %}{{ c.name }}. An out-of-service charger cannot be booked or used for a new session.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Save" %}</section>
+{% endblock %}

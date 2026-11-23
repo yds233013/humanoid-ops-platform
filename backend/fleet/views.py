@@ -40,6 +40,7 @@ from fleet.models import (
     PeriodicInspectionRule,
     Robot,
 )
+from hub.charging import robot_battery_panel
 from platform_core.commands import CommandError
 
 SYNTHETIC_INTERVAL = "SYNTHETIC demo interval, not an engineering value"
@@ -401,6 +402,7 @@ def robot_detail(request: HttpRequest, code: str) -> HttpResponse:
             "roles": sorted(active_roles(request.user)),
             "production": production,
             "periodic": periodic_status([r.pk]).get(r.pk),
+            "battery": robot_battery_panel(r),  # v2 02B: last recorded / estimated at departure / evidence
             "templates": templates,
             "recent_inspections": signer_rows(recent),
             "synthetic_interval": SYNTHETIC_INTERVAL,

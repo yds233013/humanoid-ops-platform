@@ -30,7 +30,8 @@ Rules:
 
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 from typing import Any
 
 from django.db import connection
@@ -88,6 +89,11 @@ facts AS MATERIALIZED (
   JOIN planning_visit v ON v.id = e.visit_id
   JOIN planning_visitrevision vr ON vr.id = v.current_revision_id
   WHERE e.result = 'fail' AND v.status <> 'cancelled' AND vr.on_site_end > %(at)s
+  UNION ALL
+  -- v2 02B: visits today and tomorrow whose robot needs charge before departure (hub.charging forecast)
+  SELECT 'charge_forecast', 'charging', c ->> 'ref', (c ->> 'robot_id')::bigint, (c ->> 'visit_id')::bigint,
+         c ->> 'title', (c ->> 'due_at')::timestamptz, '/hub/charging/'
+  FROM jsonb_array_elements(%(charge)s::jsonb) c
 ),
 ins AS (
   INSERT INTO hub_workorder (type, title, robot_id, visit_id, due_at, owner_id, status, source_kind,
@@ -131,13 +137,47 @@ SELECT (SELECT count(*) FROM ins), (SELECT count(*) FROM upd), (SELECT count(*) 
 )
 
 
+CHARGE_HORIZON = timedelta(days=2)
+
+
+def _charge_facts(at: datetime) -> list[dict[str, Any]]:
+    """v2 02B: one fact per visit in the next two days whose robot Needs charge (two statements, any fleet
+    size). Source ref ``<visit>:<robot>``: re-planning the visit onto another robot is a new fact."""
+    from hub import charging
+    from planning.models import Visit
+
+    if not charging.forecast_configured():
+        return []
+    visits = list(
+        Visit.objects.filter(
+            current_revision__on_site_start__gte=at,
+            current_revision__on_site_start__lt=at + CHARGE_HORIZON,
+            current_revision__robot__isnull=False,
+        )
+        .exclude(status="cancelled")
+        .values_list("id", "code", "current_revision__robot__code")
+    )
+    forecasts = charging.visit_forecasts([v[0] for v in visits], at)
+    out = []
+    for vid, code, robot in visits:
+        f = forecasts.get(vid)
+        if f is not None and f.state == charging.NEEDS:
+            title = f"Charge {robot} before visit {code}" + (
+                " (cannot be charged in time)" if f.cannot_in_time else ""
+            )
+            out.append({"ref": f"{code}:{robot}", "robot_id": f.robot_id, "visit_id": vid, "title": title,
+                        "due_at": f.departure_at.isoformat()})  # fmt: skip
+    return out
+
+
 def refresh(at: datetime | None = None) -> dict[str, Any]:
     """Create missing derived tasks and mark / unmark cleared sources. One statement; safe to run
     concurrently."""
     from django.utils import timezone
 
     at = at or timezone.now()
+    charge = json.dumps(_charge_facts(at), default=str)
     with connection.cursor() as cur:
-        cur.execute(REFRESH_SQL, {"at": at, "rid": current_request_id.get()})
+        cur.execute(REFRESH_SQL, {"at": at, "rid": current_request_id.get(), "charge": charge})
         created, marked, audited = cur.fetchone()
     return {"created": int(created), "marked": int(marked), "audited": int(audited)}

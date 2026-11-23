@@ -5,7 +5,7 @@
 {% if not complete %}<div class="msg warning" role="status" data-incomplete="1">Operating settings incomplete: the required values are not all set, so planning and Today cannot be trusted yet.</div>{% endif %}
 <section class="card"><div class="tablewrap"><table><thead><tr><th>Setting</th><th>What it is for</th><th>Current value</th><th>Who can change it</th></tr></thead><tbody>
 {% for r in rows %}<tr data-key="{{ r.spec.key }}"><td><div><b>{{ r.spec.label }}</b>{% if r.spec.required %}<div class="muted">Required</div>{% endif %}<details><summary class="muted">Details</summary><code>{{ r.spec.key }}</code></details></div></td><td>{{ r.spec.purpose }}</td>
-<td>{% if r.value is None %}Not set - the deployment owner must provision it{% elif r.valid %}{{ r.value }}{% else %}{{ r.value }} <span class="stale">(not a valid value; the deployment owner must correct it)</span>{% endif %}</td>
+<td>{% if r.value is None %}Not set - the deployment owner must provision it{% elif r.valid %}{{ r.value }}{% if demo and r.spec.key in demo_keys %} {% demo_value "A value chosen for the fictional demo, not a company decision." %}{% endif %}{% else %}{{ r.value }} <span class="stale">(not a valid value; the deployment owner must correct it)</span>{% endif %}</td>
 <td>the deployment owner (via provision_settings)</td></tr>{% endfor %}
 </tbody></table></div></section>
 {% endblock %}

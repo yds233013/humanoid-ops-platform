@@ -7,6 +7,7 @@
   <span class="badge {{ state }}">{{ label }}</span> <span class="muted">Planning only - not cleared to depart.</span>
   {% if visit.status != "cancelled" %}<p class="muted" style="margin:6px 0 0">{% if visit.status == "requested" %}Next step: choose a robot, a crew and a vehicle below, then save the plan.{% elif visit.status == "planned" %}Next step: the ops lead confirms the visit once nothing is blocking it.{% else %}Confirmed for planning. Departure is approved separately on the readiness page.{% endif %}</p>{% endif %}
   {% if plain %}<h3>What needs attention</h3>{% include "planning/_blockers.html" %}{% elif visit.status != "cancelled" %}<p>Nothing is blocking this plan.</p>{% endif %}
+  {% if charge %}<p data-charge="{{ charge.state }}"><b>Charge at departure:</b> {% if charge.state == "enough" %}{% chip "neutral" "Enough" %}{% elif charge.state == "needs_charge" %}{% chip "warn" "Needs charge" %}{% else %}{% chip "warn" "Charge forecast unknown" %}{% endif %} {{ charge.reason|capfirst }}. <span class="muted">Planning information: departure still needs the battery check.</span></p>{% endif %}
   <p class="muted">On site {{ start|local_dt }} to {{ end|local_time }} · travel {{ rev.travel_out_min|default:"unknown" }} / {{ rev.travel_back_min|default:"unknown" }} min · tasks {{ rev.tasks|join:", "|default:"-" }}</p>
 </div>
 {% if visit.status != "cancelled" %}

@@ -199,6 +199,7 @@ class Today:
     inbox_cards: list[dict[str, Any]] = field(default_factory=list)
     readiness_cards: list[tuple[VisitRow, list[str], datetime]] = field(default_factory=list)
     unconfigured: list[str] = field(default_factory=list)
+    charge_off: bool = False  # v2 02B: ops_soc_fresh_min missing, so no charge forecast is applied
 
 
 def local_day(at: datetime) -> date:
@@ -335,10 +336,32 @@ def _run_row(r: Any, today: date) -> VisitRow:
     )
 
 
+def _charge_overlay(t: Today, visits: list[Any], rows: list[VisitRow]) -> None:
+    """v2 02B (contract 11, 8.3): a visit whose robot needs charge before departure, or whose charge forecast
+    is unknown, is At risk with that reason. Planning information only: an approval stays as it is, a blocked
+    visit stays blocked, and departure still needs the battery check. Off (with a notice) while
+    ops_soc_fresh_min is not provisioned, like the other owner thresholds."""
+    from hub import charging
+
+    if not charging.forecast_configured():
+        t.charge_off = True
+        return
+    forecasts = charging.visit_forecasts([v.visit_id for v in visits], t.at)
+    for v, row in zip(visits, rows, strict=True):
+        f = forecasts.get(v.visit_id)
+        if f is None or row.status == "approved" or f.state == charging.ENOUGH:
+            continue
+        reason = "Needs charge before departure" if f.state == charging.NEEDS else "Charge forecast unknown"
+        row.why.append(reason)
+        if row.status in ("ready", "scheduled"):
+            row.status, row.label, row.tone, row.note = "at_risk", "At risk", "warn", ""
+
+
 def _read_visits(t: Today) -> None:
     tl = readmodels.timeline(t.at, window_min=window_minutes(t.at, t.local_date))
     approvals = _usable_approvals([v.visit_id for v in tl.visits], t.at)
     rows = [_visit_row(v, approvals.get(v.visit_id), t.local_date) for v in tl.visits]
+    _charge_overlay(t, tl.visits, rows)
     cards: list[tuple[VisitRow, list[str], datetime]] = []
     for v, row in zip(tl.visits, rows, strict=True):
         flag = next((f for f in v.flags if f.code == "READINESS_INCOMPLETE_SOON"), None)
@@ -664,6 +687,15 @@ def _coverage_notice(t: Today) -> None:
                 "coverage",
                 f"Readiness checked for {cov['evaluated']} of {cov['qualifying']} visits. The rest show as "
                 "Scheduled; open the visit to see its checklist.",
+            )
+        )
+    if t.charge_off:
+        t.notices.append(
+            Notice(
+                "charge",
+                "The charge forecast is off: the battery freshness setting is not provisioned, so no visit "
+                "is marked as needing charge. Departure still needs its battery check.",
+                "info",
             )
         )
     if "ops_readiness_lookahead_min" in t.unconfigured:

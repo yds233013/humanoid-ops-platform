@@ -63,7 +63,7 @@ from fleet.models import (
     Robot,
 )
 from planning import services as ps
-from planning.models import ConsentRecord, Site
+from planning.models import ConsentRecord, Site, Visit
 from platform_core.models import Hub, Workspace
 from platform_core.workspace import create_hub, update_workspace
 from readiness import evidence as rx
@@ -207,6 +207,7 @@ SETTINGS = {
     "ops_readiness_lookahead_min": "2880",  # today and tomorrow (provision_settings --with-defaults)
     "ops_closeout_timezone": TZ,
     "ops_periodic_due_lookahead_min": "1440",
+    "ops_soc_fresh_min": "240",  # v2 02B: demo value (labelled on Settings > Operating settings)
 }
 # Visit slots (local on-site start, minutes on site). Two per crew per day never overlap (crew shift: from the
 # inspection 50 min + travel before arrival to the unloading 20 min + travel after leaving).
@@ -780,6 +781,56 @@ class _Builder:
         hs.start_task(lily, task_id=int(started["entity_id"]))
         self.lap("hub tasks")
 
+    # .............................................................. charging (v2 02B)
+    def charging(self) -> None:
+        """Four chargers (one out of service), battery levels read by hand TODAY (stamped now: no invented
+        history), one booking and one session. The forecast then shows Enough, Needs charge and Unknown."""
+        from hub import charging as hc  # noqa: PLC0415
+
+        ops, lily = self.u["dana.ortiz"], self.u["lily.tran"]
+        for code, name in (
+            ("C-1", "Bay 1 by the door"),
+            ("C-2", "Bay 2"),
+            ("C-3", "Bay 3"),
+            ("C-4", "Bay 4 (spare)"),
+        ):
+            hc.create_charger(ops, code=code, name=name)
+        hc.set_charger_in_service(
+            ops, code="C-4", in_service=False, reason="Cable damaged; replacement ordered"
+        )
+        now = timezone.now()
+        tomorrow = self.anchor + timedelta(days=1)
+        robots = list(
+            Visit.objects.filter(
+                current_revision__on_site_start__gte=self.at(tomorrow, dtime(0, 0)),
+                current_revision__on_site_start__lt=self.at(tomorrow + timedelta(days=1), dtime(0, 0)),
+                current_revision__robot__isnull=False,
+            )
+            .exclude(status="cancelled")
+            .order_by("current_revision__on_site_start", "code")
+            .values_list("current_revision__robot__code", flat=True)
+        )
+        robots = list(dict.fromkeys(robots))
+        if len(robots) >= 3:
+            hc.record_soc(lily, robot_code=robots[0], soc_pct=94)  # meets the 80% demo minimum
+            hc.record_soc(lily, robot_code=robots[1], soc_pct=46)  # below it: needs charge
+            # robots[2] and the rest: nothing recorded today, so the forecast is Unknown
+            evening = max(now + timedelta(minutes=10), self.at(self.anchor, dtime(21, 0)))
+            hc.reserve_charger(lily, charger_code="C-1", robot_code=robots[1], starts_at=evening,
+                               ends_at=evening + timedelta(hours=2, minutes=30))  # fmt: skip
+        from platform_core.commands import CommandError  # noqa: PLC0415
+
+        for spare in (code for code in self.pool if code not in robots):  # the first robot free right now
+            try:
+                until = now + timedelta(hours=3)
+                hc.start_charging(
+                    lily, charger_code="C-2", robot_code=spare, planned_until=until, start_soc_pct=58
+                )
+                break
+            except CommandError:
+                continue
+        self.lap("charging")
+
     def build(self) -> Summary:
         self.company()
         self.configurations()
@@ -788,6 +839,7 @@ class _Builder:
         homes = self.homes()
         self.visits(homes)
         self.hub_tasks()
+        self.charging()
         return self.s
 
 

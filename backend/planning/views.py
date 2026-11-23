@@ -15,6 +15,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from accounts.permissions import active_roles, has_permission
+from hub import charging
 from planning import services as p
 from planning.forms import (
     AdultsForm,
@@ -133,6 +134,8 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             .select_related("resource", "revision")
             .order_by("released_at", "starts_at"),
             "options": options,
+            # v2 02B: the assigned robot's charge forecast (planning information, never a departure decision)
+            "charge": charging.visit_forecasts([v.pk]).get(v.pk) if charging.forecast_configured() else None,
             "suggestion": suggestion,
             "site_tz": v.site.timezone,
             "roles": sorted(active_roles(request.user)),

@@ -37,6 +37,7 @@ from django.db import connection
 
 from fleet import services as fleet_services
 from fleet.models import ManifestPattern, Robot
+from hub import charging
 from planning import services as p
 from planning.models import Person, Qualification, Reservation, Vehicle, Visit
 from planning.plain import plain_blockers, robot_reason
@@ -64,6 +65,7 @@ class Option:
 
 @dataclass
 class PlanOptions:
+    charge_on: bool = False
     robots: list[Option] = field(default_factory=list)
     leads: list[Option] = field(default_factory=list)
     seconds: list[Option] = field(default_factory=list)
@@ -170,14 +172,28 @@ def plan_options(visit: Visit) -> PlanOptions:
 
     # robots: the planner's eligibility (same view the fleet overview uses), then conflicts
     robots = {r.pk: r for r in Robot.objects.filter(pk__in=[r[0] for r in robot_rows])}
+    # v2 02B (contract 11, 8.3): the charge forecast for this visit's departure, once for every robot. A robot
+    # is left out ONLY when the approved charge turnaround proves it cannot be charged in time; Unknown stays
+    # selectable and says so. Off (no label) while ops_soc_fresh_min is not provisioned.
+    out.charge_on = charging.forecast_configured()
+    forecasts = (
+        charging.robot_forecasts([r[0] for r in robot_rows if r[3]], start - timedelta(minutes=t_out))
+        if out.charge_on
+        else {}
+    )
     for robot_id, code, pattern, eligible, reasons in robot_rows:
+        f = forecasts.get(robot_id)
         if not eligible:
             shorts = list(dict.fromkeys(robot_reason(x).short for x in reasons))
             status, note = UNUSABLE, "not ready: " + ", ".join(shorts)
+        elif f is not None and f.cannot_in_time:
+            status, note = UNUSABLE, "cannot charge in time"
         elif c := busy.clash("robot", robot_id, *robot_window(pattern)):
             status, note = BUSY, f"busy {c[0]} until {_until(c[2], end)}"
         else:
             status, note = FREE, "free"
+        if status != UNUSABLE and f is not None and f.state != charging.ENOUGH:
+            note += " · needs charge" if f.state == charging.NEEDS else " · charge forecast unknown"
         out.robots.append(
             Option(code, f"{code} · {note}", status, robot_id == rev.robot_id, robots.get(robot_id), note)
         )
@@ -290,9 +306,15 @@ def suggest(visit: Visit, opts: PlanOptions) -> Suggestion:
         )
         if plan.feasibility != "blocked":
             out.robot, out.lead, out.second, out.vehicle = robot, lead, second, vehicle
+            charge = robot.note.split(" · ", 1)[1] if " · " in robot.note else ""
             out.explanations = [
                 f"Robot {robot.code} has no recorded planning conflict and meets the current planning "
-                "checks.",
+                "checks."
+                + (
+                    f" Its {charge}: it must be charged and pass the battery check before it leaves."
+                    if charge
+                    else ""
+                ),
                 f"{lead.obj.label} is qualified as lead and has no other booking in this window.",
                 f"{second.obj.label} is qualified as second and has no other booking in this window.",
                 f"Vehicle {vehicle.code} has a recorded capacity and restraint kit and no other trip "

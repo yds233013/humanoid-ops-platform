@@ -342,6 +342,7 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     "customers": [("Sites", "/planning/sites/", "planning.read")],
     "hub": [
         ("Work queue", "/hub/", "hub.view"),
+        ("Charging", "/hub/charging/", "hub.view"),
         ("Daily close-out", "/ops/closeout/", "operations.read"),
         ("Field runs", "/execution/", "execution.read"),
     ],
@@ -354,6 +355,7 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("Workspace setup", "/settings/setup/", "accounts.grant_role"),
         ("Company", "/settings/company/", "accounts.grant_role"),
         ("Hubs", "/settings/hubs/", "accounts.grant_role"),
+        ("Chargers", "/hub/charging/chargers/", "hub.manage_chargers"),
         ("People and roles", "/settings/users/", "accounts.grant_role"),
         ("Operating settings", "/settings/operating/", "platform_core.read_operating_settings"),
         ("Hold release policies", "/fleet/hold-policies/", "fleet.read"),
