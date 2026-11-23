@@ -94,15 +94,15 @@ class Viewer:
         return out
 
 
-def _next_step(t: WorkOrder) -> str:
-    owner = t.owner.label if t.owner_id and t.owner else ""
+def _next_step(t: WorkOrder, mine: bool = False) -> str:
+    owner = "You" if mine else (t.owner.label if t.owner_id and t.owner else "")
     if t.source_cleared_at is not None:
         return "Resolved by the underlying record. Close this task."
     what = WORKFLOW[t.type][0]
     if t.status == "open":
         return f"Needs an owner. Then: {what.lower()}."
     if t.status == "assigned":
-        return f"{owner} starts it. Then: {what.lower()}."
+        return f"{owner} {'start' if mine else 'starts'} it. Then: {what.lower()}."
     if t.status == "in_progress":
         return f"{owner}: {what.lower()}, then mark it done."
     return ""
@@ -115,7 +115,7 @@ def _row(t: WorkOrder, v: Viewer, now: datetime) -> dict[str, Any]:
         "t": t,
         "type": TYPE_WORDS[t.type],
         "overdue": t.due_at is not None and t.due_at < now and t.status not in FINAL,
-        "next": _next_step(t),
+        "next": _next_step(t, v.mine(t)),
         "link": link,
         "link_text": f"Open the {page}" if page else "",
         "link_hidden": bool(t.link_url and not link),

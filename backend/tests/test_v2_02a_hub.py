@@ -566,3 +566,47 @@ def test_adding_a_task_through_the_page(w):
         w.tech.pk,
     )
     assert t.due_at.astimezone(timezone.get_default_timezone()).strftime("%H:%M") == "07:30"
+
+
+def test_queue_chips_separate_the_number_from_the_label(w):
+    _task(w, owner="P-8", type_="kit_low")
+    html = _client(w.ops).get("/hub/").content.decode()
+    assert re.search(
+        r'<a class="chip [^"]+" href="/hub/" data-count="all"><b class="n">\d+</b> <span>All open tasks</span></a>',
+        html,
+    )
+    assert re.search(r'data-type="kit_low"><b class="n">1</b> <span>Kits low</span></a>', html)
+    assert re.search(r'data-owner="P-8"><b class="n">1</b> <span>P-8 · [^<]+</span></a>', html)
+    assert html.count('class="row hubchips"') == 3 and 'class="tile' not in html
+    # the action link sits on its own line under the next step
+    assert '<div class="hub-act"><a class="btn"' in html
+
+
+def test_next_step_says_you_to_the_owner_and_names_the_owner_to_others(w):
+    tid = _task(w, owner="P-8", type_="kit_low")
+    mine = _client(w.tech).get(f"/hub/tasks/{tid}/").content.decode()
+    assert "You start it. Then: restock the kit." in mine
+    other = _client(w.ops).get(f"/hub/tasks/{tid}/").content.decode()
+    assert (
+        f"{w.tech.username}" in other
+        and "starts it. Then: restock the kit." in other
+        and "You start" not in other
+    )
+    hs.start_task(w.tech, task_id=tid)
+    other_task = _task(w, owner="P-8")
+    hs.start_task(w.tech, task_id=other_task)
+    queue = _client(w.tech).get("/hub/").content.decode()
+    assert "You: do the work described, then mark it done." in queue
+    assert "You: restock the kit, then mark it done." in queue
+
+
+def test_hub_technicians_land_on_the_hub_queue_even_with_field_operator():
+    from platform_core.templatetags.ui import landing_url
+
+    assert landing_url({"hub_technician"}) == "/hub/"
+    assert landing_url({"hub_technician", "field_operator"}) == "/hub/"
+    assert landing_url({"hub_technician", "field_operator", "admin"}) == "/hub/"
+    for other in ("ops_lead", "engineer", "engineering_lead", "safety_reviewer", "founder"):
+        assert landing_url({"hub_technician", "field_operator", other}) != "/hub/", other
+    lily = make_user("lily_dual", "field_operator", "hub_technician")
+    assert _client(lily).get("/")["Location"] == "/hub/"

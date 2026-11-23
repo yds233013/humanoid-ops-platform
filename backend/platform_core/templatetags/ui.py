@@ -440,15 +440,16 @@ FIELD_ONLY_LANDING = "/execution/mine/"
 def landing_url(roles: set[str]) -> str:
     """Where a person lands after login: a crew member (field operator and no other operational role) on My
     visits (01D J5-1); otherwise Today when they may read it; an admin (who manages the workspace but reads no
-    operations) lands on workspace setup; everyone else on Fleet."""
+    operations) lands on workspace setup; everyone else on Fleet. v2 02A: a hub technician whose other
+    roles are only field operator and/or admin lands on the hub work queue."""
+    if "hub_technician" in roles and not (roles - {"hub_technician", "field_operator", "admin"}):
+        return "/hub/"
     if "field_operator" in roles and not (roles - {"field_operator", "admin"}):
         return FIELD_ONLY_LANDING
     if _allowed(roles, "operations.read"):
         return "/ops/"
     if _allowed(roles, "platform_core.manage_workspace"):
         return "/settings/setup/"
-    if not _allowed(roles, "fleet.read") and _allowed(roles, "hub.view"):
-        return "/hub/"  # v2 02A: a hub technician's work starts at the hub queue
     return "/fleet/"
 
 
