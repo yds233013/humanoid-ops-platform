@@ -258,6 +258,23 @@ refuses unless the database is a demo workspace whose fingerprint matches, so a 
 workspace or to staging when staging holds anything but the demo. During the rebuild (about half a minute) pages
 may error or show partial data; users are signed out.
 
+**What visitors see during a refresh (no continuous availability is claimed).** With `DEMO_WORKSPACE=1` the
+app serves a maintenance page (HTTP 503, `Retry-After: 60`, "The demo is being refreshed. Please try again in a
+minute."; `/api/` answers `{"error": "demo_refreshing"}`) whenever the build's completion marker is missing.
+`build_demo_workspace` deletes the marker first and writes it as its very last step
+(`fleet_deploymentsetting` key `demo_build_completed_at`); `--reset` truncates it with everything else. So:
+
+- A daily refresh signs everyone out, deletes every change visitors made, and shows the maintenance page for
+  the length of the rebuild (about 20-40 s), never a half-built workspace.
+- A refresh that fails part-way leaves the marker absent: the maintenance page stays until a rebuild
+  succeeds. Re-run it from the demo cron service (Railway: the service's "Run now", or redeploy it) or from a
+  shell on the demo `web` service: `DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace --reset`
+  (with `DEV_SEED_PASSWORD` and `DEMO_DATABASE_FINGERPRINT` set). Check the cron logs for the cause first.
+- `/healthz` is deliberately NOT affected: it keeps reporting the database and the migrations, so Railway does
+  not restart or roll back the service while the demo is being rebuilt. A green health check therefore does
+  not mean the demo is browsable; the maintenance page is the signal.
+- Without `DEMO_WORKSPACE=1` (every customer workspace) the marker is never read and nothing changes.
+
 ## 9. Rehearsal log
 
 | Date | What | Result |

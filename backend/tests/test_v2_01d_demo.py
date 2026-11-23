@@ -34,6 +34,7 @@ from execution.models import (
 from fleet import services as fs
 from fleet.models import (
     CapabilityApproval,
+    DeploymentSetting,
     Hold,
     HoldPolicy,
     HoldPolicyApproval,
@@ -250,6 +251,9 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         set_setting("demo_mode", "true")
 
     # ---- the badge, once, on Today; the logins in the output, never the password
+    from platform_core.middleware import DEMO_BUILD_MARKER
+
+    assert DeploymentSetting.objects.filter(key=DEMO_BUILD_MARKER).exists()  # written last by a good build
     assert ops.get_full_name() == "Dana Ortiz"  # J5-3: invented names, so labels read "P-101 · Dana Ortiz"
     assert ops.check_password(PASSWORD) and RoleGrant.objects.filter(user=ops, role="ops_lead").exists()
     assert PASSWORD not in out

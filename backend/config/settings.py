@@ -64,6 +64,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "platform_core.middleware.RequestIdMiddleware",
+    # v2 01D: maintenance page while the demo is being rebuilt (DEMO_WORKSPACE=1 only; no read otherwise)
+    "platform_core.middleware.DemoRefreshMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",

@@ -774,5 +774,14 @@ def build(
     """Build the demo workspace into an empty (or just wiped) database. The caller checks first."""
     if not password:
         raise DemoRefused(f"Set {PASSWORD_ENV} (see .env.example): the demo logins use it as their password.")
+    from platform_core.middleware import DEMO_BUILD_MARKER  # noqa: PLC0415
+
+    DeploymentSetting.objects.filter(key=DEMO_BUILD_MARKER).delete()  # maintenance page until we finish
     restart_sequences()
-    return _Builder(password, anchor or workspace_today(), log).build()
+    summary = _Builder(password, anchor or workspace_today(), log).build()
+    # The LAST write: the completion marker. Until it exists, a demo deployment (DEMO_WORKSPACE=1) serves
+    # the "being refreshed" page, never a half-built one (platform_core.middleware.DemoRefreshMiddleware).
+    DeploymentSetting.objects.update_or_create(
+        key=DEMO_BUILD_MARKER, defaults={"value": timezone.now().isoformat()}
+    )
+    return summary
