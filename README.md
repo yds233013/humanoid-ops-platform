@@ -4,6 +4,15 @@ An internal operations platform for a small fleet of home humanoid robots. It co
 
 **Status:** Slices 0-7 built, tested and closed: foundation, fleet core, visit planning and scheduling, deployment readiness and departure authorization, field execution and incident response, operations command center, scaling and capacity model, production guardrail hardening (closure note `docs/07c_slice7_closure_note.md`). Field Operations Playbook v1.1: `docs/08_field_operations_playbook_v1.1.md`. Data is synthetic only; no production deployment is approved.
 
+**v2 Phase 01 (product foundation and onboarding): closed as an engineering milestone** at `13dd04e`
+(`docs/evidence/01d_closure_note.md`). Released for **fictional demonstrations only**, not validated for real robot
+operations; the five-person usability study is unverified.
+
+**Demo:** https://web-northbay.up.railway.app — "Northbay Home Robotics", a fictional 50-robot company with one hub and
+three crews, rebuilt every day at 12:00 UTC (the site shows a short "demo is being refreshed" page and signs everyone
+out while it rebuilds; visitor changes are not kept). Ask the owner for the demo logins.
+Legacy demo (v1 screens, unchanged): https://web-production-3a92454a.up.railway.app
+
 ## Quick start
 
 Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), make.

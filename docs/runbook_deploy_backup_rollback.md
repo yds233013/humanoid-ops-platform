@@ -275,6 +275,22 @@ minute."; `/api/` answers `{"error": "demo_refreshing"}`) whenever the build's c
   not mean the demo is browsable; the maintenance page is the signal.
 - Without `DEMO_WORKSPACE=1` (every customer workspace) the marker is never read and nothing changes.
 
+## 8c. Public demo: Northbay environment (2026-11-23)
+
+- Railway environment `northbay` in the same project (duplicated from staging configuration): its own Postgres,
+  its own secrets (secret key, database passwords, bootstrap token, demo password), `DEMO_WORKSPACE=1`,
+  `OUTBOUND_MESSAGES_ENABLED=false`, `DJANGO_DEBUG=false`, health check `/healthz`,
+  `DEMO_DATABASE_FINGERPRINT` = the value `build_demo_workspace --print-fingerprint` printed on that database.
+  URL: https://web-northbay.up.railway.app . Deployed from a detached checkout of the approved commit.
+- Cron service `demo-refresh` in the same environment: start command `sh deploy/refresh_demo.sh`, schedule
+  `0 12 * * *` (12:00 UTC, 04:00 Pacific). Rehearsed with a temporary `*/5` schedule: the site answered 503
+  ("being refreshed") for about 16 s, then 200.
+- The legacy demo (`production` environment, https://web-production-3a92454a.up.railway.app) and its database are
+  left unchanged.
+- **Rollback of the cutover:** point the published demo link back at the legacy URL. Nothing in Railway needs to be
+  switched; both deployments keep running. A code rollback of the Northbay service uses section 6.
+- Logins: owner-held file, never in git. A refresh recreates the same usernames with the `DEV_SEED_PASSWORD` value.
+
 ## 9. Rehearsal log
 
 | Date | What | Result |
