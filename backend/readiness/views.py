@@ -22,6 +22,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from accounts.permissions import active_roles, has_permission
+from execution.models import ExecutionRun
 from fleet import services as fleet_services
 from fleet.models import Inspection, InspectionTemplate, Robot
 from fleet.services import demo_mode
@@ -79,6 +80,22 @@ AUTH_LABELS = {
     "revoked": "Authorization revoked",
     "used": "Departure recorded",
 }
+KIND_LABELS = dict(EVIDENCE_KINDS)
+EQUIPMENT_LABELS = {"restraint_kit": "Restraint kit", "recovery_kit": "Recovery kit", "charger": "Charger"}
+MODE_LABELS = {"demo": "Demo approval", "production": "Production"}
+DEPART_CONFIRM = (
+    'Refused (invalid input): tick "The robot is leaving now" to record the departure. Nothing was recorded.'
+)
+
+
+def equipment_label(name: str) -> str:
+    return EQUIPMENT_LABELS.get(name, name.replace("_", " ").capitalize())
+
+
+def mode_label(mode: str) -> str:
+    return MODE_LABELS.get(mode, mode)
+
+
 ERROR_KINDS = {
     "conflict": "conflict",
     "invalid": "invalid input",
@@ -124,6 +141,7 @@ def _auth_row(a: DepartureAuthorization, tz: str) -> dict[str, Any]:
         "revocation": getattr(a, "revocation", None),
         "departure": getattr(a, "departure", None),
         "depart_key": uuid.uuid4().hex,
+        "mode_label": mode_label(a.mode),
     }
 
 
@@ -313,6 +331,33 @@ def _robot_inspections(v: Visit) -> list[Inspection]:
     return list(Inspection.objects.filter(robot_id=r.robot_id).order_by("-id")[:10])
 
 
+def usable_inspections(v: Visit) -> list[dict[str, Any]]:
+    """The inspections this visit's pre-departure evidence can use, by the rule readiness.record_evidence
+    applies (01D J4-1): same robot, the robot's CURRENT configuration, recorded for THIS visit. Each row says
+    whether it can count as PASSING evidence (a complete PASS, both signers qualified, and in production a
+    template approved for pre-departure use); one that cannot is offered as a fail only. The server remains
+    the authority; this list only stops offering what it would refuse."""
+    r = v.current_revision
+    if r is None or r.robot_id is None:
+        return []
+    robot = Robot.objects.filter(pk=r.robot_id).only("current_manifest_id").first()
+    if robot is None or robot.current_manifest_id is None:
+        return []
+    rows = list(
+        Inspection.objects.filter(
+            robot_id=r.robot_id, manifest_id=robot.current_manifest_id, visit_ref=v.code
+        ).order_by("-id")[:10]
+    )
+    checks = inspection_warnings([i.pk for i in rows])
+    out = []
+    for i in rows:
+        problems = list(checks.get(i.pk, {}).get("warnings", []))
+        if not (i.result == "PASS" and i.complete):
+            problems.insert(0, f"it is {i.get_result_display().lower()}, not a complete pass")
+        out.append({"i": i, "passing": not problems, "problems": problems})
+    return out
+
+
 @login_required
 def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _deny(request)) is not None:
@@ -349,7 +394,8 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
 
     history: list[dict[str, Any]] = []
     for e in evidence:
-        history.append({"at": e.recorded_at, "what": f"Evidence {e.code} recorded ({e.kind}: {e.result})"})
+        kind_label = KIND_LABELS.get(e.kind, e.kind)
+        history.append({"at": e.recorded_at, "what": f"{kind_label} recorded: {e.result} ({e.code})"})
         void = getattr(e, "void", None)
         if void is not None:
             history.append({"at": void.voided_at, "what": f"Evidence {e.code} voided: {void.reason}"})
@@ -357,7 +403,7 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
         history.append({"at": p.recorded_at, "what": f"Recovery plan {p.pk} recorded"})
     for row in auths:
         a = row["auth"]
-        history.append({"at": a.issued_at, "what": f"Authorization {a.code} issued ({a.mode})"})
+        history.append({"at": a.issued_at, "what": f"Authorization {a.code} issued ({mode_label(a.mode)})"})
         if row["revocation"] is not None:
             history.append(
                 {
@@ -402,10 +448,16 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "history": history,
             "kinds": EVIDENCE_KINDS,
             "equipment": equipment,
-            "persons": Person.objects.order_by("code"),
+            "persons": Person.objects.select_related("user").order_by("code"),
             "authorize_key": uuid.uuid4().hex,
             "missing": missing_requirements(summary["result"]),
             "robot_inspections": _robot_inspections(v),
+            "usable_inspections": (usable := usable_inspections(v)),
+            "preselect": request.GET.get("inspection", ""),
+            "next_evidence": request.GET.get("inspection", "") in {u["i"].code for u in usable},
+            "equipment_rows": [{"name": n, "label": equipment_label(n)} for n in equipment],
+            "departed": departures.first(),
+            "departed_run": ExecutionRun.objects.filter(visit=v).only("code").first(),
             "who_inspect": refusal_text("fleet.submit_inspection"),
             "who_authorize": who_can("readiness.authorize_departure"),
             "valid_auth": next((a for a in auths if a["state"] == "usable"), None),
@@ -464,7 +516,8 @@ def record_evidence_view(request: HttpRequest, code: str) -> HttpResponse:
     except CommandError as exc:
         _refused(request, exc)
         return _to_visit(code)
-    _run(request, rx.record_evidence, f"Evidence recorded ({kind})", **kw)
+    label = KIND_LABELS.get(kind, kind.replace("_", " ").capitalize())
+    _run(request, rx.record_evidence, f"{label} recorded", **kw)
     return _to_visit(code)
 
 
@@ -538,6 +591,11 @@ def authorize_view(request: HttpRequest, code: str) -> HttpResponse:
 @one_time_form(_back_auth)
 def depart_view(request: HttpRequest, code: str) -> HttpResponse:
     a = get_object_or_404(DepartureAuthorization.objects.select_related("visit"), code=code)
+    # 01D J5-4: a confirm tick. Without it nothing runs (a person without the permission still gets the
+    # command's own permission refusal, so the audit log records the denied attempt as before).
+    if request.POST.get("confirm") != "1" and has_permission(request.user, "readiness.record_departure"):
+        messages.error(request, DEPART_CONFIRM)
+        return _to_visit(a.visit.code)
     _run(
         request,
         rc.record_departure,
@@ -731,7 +789,14 @@ def _inspection_page(
     def ok(out: dict[str, Any]) -> str:
         result = str(out.get("result", ""))
         word = {"PASS": "passed", "FAIL": "failed", "INCOMPLETE": "is incomplete"}.get(result, "recorded")
-        return f"Inspection {out.get('entity_id', '')} recorded: it {word}."
+        text = f"Inspection {out.get('entity_id', '')} recorded: it {word}."
+        return text + (" Next: record it as pre-departure evidence below." if visit else "")
+
+    def success(out: dict[str, Any]) -> str:
+        # 01D J4-2: back to the visit with the new inspection preselected in the evidence form
+        if visit is None:
+            return back_url
+        return f"{back_url}?inspection={out.get('entity_id', '')}#evidence"
 
     return command_page(
         request,
@@ -740,7 +805,7 @@ def _inspection_page(
         template="readiness/inspection_new.html",
         call=call,
         ok=ok,
-        success_url=back_url,
+        success_url=success,
         form_kwargs={"template": template},
         initial={"template_version": template.version} if template else None,
         context={

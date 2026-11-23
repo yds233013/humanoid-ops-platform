@@ -216,7 +216,7 @@ def test_evidence_forms_success_denial_refusal_and_replay(w):
     before = ReadinessEvidence.objects.count()
     tok = token_from(c, visit_url(w), url)
     data = {"kind": "battery_check", "result": "pass", "soc_pct": "88", "_form_token": tok}
-    assert "Evidence recorded (battery_check)" in html(c.post(url, data, follow=True))
+    assert "Battery check recorded" in html(c.post(url, data, follow=True))
     assert ReadinessEvidence.objects.count() == before + 1
     assert "already sent" in html(c.post(url, data, follow=True))
     assert ReadinessEvidence.objects.count() == before + 1

@@ -1,0 +1,3 @@
+{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/close/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
+  <button class="primary">Close trip</button><span class="muted">Refused unless the vehicle arrived at the hub and the latest reconciliation is reconciled.</span>
+</form>

@@ -1,0 +1,15 @@
+{% load ui %}<div class="card" data-next-step="{{ next.key }}">
+  <h2>Next step: {{ next.title }}</h2>
+  <p>{{ next.text }}</p>
+  {% if not closed %}
+  {% if next.form == "verify" and can.record_field_event %}{% include "execution/_f_verify.html" %}
+  {% elif next.form == "trip" and can.record_field_event %}{% include "execution/_f_trip.html" %}
+  {% elif next.form == "custody" and can.record_field_event %}{% include "execution/_f_custody.html" with preset=next.preset %}
+  {% elif next.form == "site_check" and can.record_field_event and templates %}{% include "execution/_f_site_check.html" %}
+  {% elif next.form == "session" and can.record_field_event %}{% include "execution/_f_session.html" with preset=next.preset %}
+  {% elif next.form == "inspect" %}<p><a class="btn primary" href="/readiness/visits/{{ run.visit.code }}/inspection/">Submit the post-visit inspection for this visit</a></p>
+  {% elif next.form == "reconcile" and can.reconcile %}{% include "execution/_f_reconcile.html" %}
+  {% elif next.form == "close" and can.close_trip %}{% include "execution/_f_close.html" %}
+  {% elif next.form %}<p class="waiting">This step is recorded by someone else: the crew for field events, the ops lead for reconciliation and closing.</p>{% endif %}
+  {% endif %}
+</div>

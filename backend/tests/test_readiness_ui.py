@@ -213,12 +213,20 @@ def test_authorize_permission_error_and_hidden_button(w):
 def test_record_departure_is_separate_and_renders_history(w):
     a = _authorize(w)
     assert "Record departure" in _html(_client(w.field).get(_visit_url(w)))
-    html = _post(w.field, f"/readiness/authorizations/{a.code}/depart/", {"idempotency_key": "rui-dep-1"})
+    html = _post(
+        w.field,
+        f"/readiness/authorizations/{a.code}/depart/",
+        {"idempotency_key": "rui-dep-1", "confirm": "1"},
+    )
     assert f"Departure recorded on authorization {a.code}" in html
     assert DepartureEvent.objects.filter(authorization=a).count() == 1
     assert "Departure recorded" in html and f"Departure recorded on {a.code}" in html  # label + history
     _assert_safe(html)
-    again = _post(w.field, f"/readiness/authorizations/{a.code}/depart/", {"idempotency_key": "rui-dep-2"})
+    again = _post(
+        w.field,
+        f"/readiness/authorizations/{a.code}/depart/",
+        {"idempotency_key": "rui-dep-2", "confirm": "1"},
+    )
     assert "Refused (" in again
     assert DepartureEvent.objects.filter(authorization=a).count() == 1
 
@@ -263,7 +271,8 @@ def test_record_battery_evidence_and_validation_errors(w):
     url = _visit_url(w) + "evidence/"
     before = ReadinessEvidence.objects.count()
     html = _post(w.field, url, {"kind": "battery_check", "result": "pass", "soc_pct": "91"})
-    assert "Evidence recorded (battery_check)" in html and "Battery 91%" in html
+    assert "(battery_check)" not in html  # 01D J4-3 plain wording
+    assert "Battery check recorded" in html and "Battery 91%" in html
     assert ReadinessEvidence.objects.count() == before + 1
     html = _post(w.field, url, {"kind": "battery_check", "result": "pass", "soc_pct": "abc"})
     assert "Refused (invalid input)" in html and "whole number" in html
@@ -281,7 +290,7 @@ def test_record_equipment_and_inspection_evidence(w):
     data.update({f"item_{k}": v for k, v in items.items()})
     data["extra_items"] = "spare_strap=present"
     html = _post(w.field, url, data)
-    assert "Evidence recorded (equipment_check)" in html
+    assert "Equipment check recorded" in html
     ev = ReadinessEvidence.objects.filter(kind="equipment_check").latest("recorded_at")
     assert ev.details == {"items": {**items, "spare_strap": "present"}}
     html = _post(w.field, url, {**data, "extra_items": "spare_strap"})
@@ -293,7 +302,7 @@ def test_record_equipment_and_inspection_evidence(w):
     assert "Refused (invalid input)" in html
     code = w.record_inspection(w.visit)
     html = _post(w.ops, url, {"kind": "pre_departure_inspection", "result": "pass", "inspection_code": code})
-    assert "Evidence recorded (pre_departure_inspection)" in html and f"Inspection {code}" in html
+    assert "Pre-departure inspection recorded" in html and f"Inspection {code}" in html
 
 
 def test_record_evidence_permission_error_and_hidden_form(w):

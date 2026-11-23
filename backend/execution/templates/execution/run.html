@@ -16,8 +16,10 @@
   </div>
   {% if open_interruptions %}<p>Open interruptions: <b>{{ open_interruptions|join:", " }}</b> (each blocks session start/resume until resolved)</p>{% endif %}
   {% if open_incidents %}<p>Open incidents: {% for c in open_incidents %}<a href="/execution/incidents/{{ c }}/">{{ c }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-  <p class="muted">Crew: {% for p in crew %}{{ p.code }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+  <p class="muted">Crew: {% for p in crew %}{{ p.label }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>
 </div>
+
+{% include "execution/_next_step.html" %}
 
 <div class="card">
   <h2>Custody history</h2>
@@ -25,27 +27,13 @@
   {% for c in custody_rows %}<tr>
     <td>{{ c.ev.seq }}</td><td>{{ c.move }}</td>
     <td><span class="badge {{ c.state }}">{{ c.label }}</span>{% if c.ev.incident %}<div class="muted">Incident <a href="/execution/incidents/{{ c.ev.incident.code }}/">{{ c.ev.incident.code }}</a></div>{% endif %}{% if c.ev.note %}<div class="muted">{{ c.ev.note }}</div>{% endif %}</td>
-    <td>{{ c.ev.custodian.code|default:"-" }}</td><td>{{ c.ev.received_by.code|default:"none" }}</td>
+    <td>{{ c.ev.custodian.label|default:"-" }}</td><td>{{ c.ev.received_by.label|default:"none" }}</td>
     <td class="muted">{{ c.ev.recorded_at|local_dt }}<div>{{ c.ev.recorded_by.username }}</div></td></tr>
   {% empty %}<tr><td colspan="6" class="muted">No custody events.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_field_event and not closed %}
-  {% for ev in unverified %}
-  <form method="post" action="/execution/runs/{{ run.code }}/verify/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
-    <input type="hidden" name="custody_seq" value="{{ ev.seq }}">
-    <span>Custody #{{ ev.seq }} is an administrative assignment - not verified.</span>
-    <label>Verifier (crew) <select name="verifier">{% for p in crew %}<option>{{ p.code }}</option>{% endfor %}</select></label>
-    <button class="primary">Record crew verification of #{{ ev.seq }}</button>
-  </form>{% endfor %}
-  <form method="post" action="/execution/runs/{{ run.code }}/custody/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
-    <b>Record a custody move</b>
-    <label>To <select name="to_kind">{% for k in move_targets %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></label>
-    <label>Custodian <select name="custodian">{% for p in persons %}<option>{{ p.code }}</option>{% endfor %}</select></label>
-    <label>Receiver <select name="received_by"><option value="">-</option>{% for p in persons %}<option>{{ p.code }}</option>{% endfor %}</select></label>
-    <label>Note <input name="note" placeholder="required for a recovery"></label>
-    <button class="primary">Record custody move</button>
-    <span class="muted">Records what the crew report. A move from unaccounted is a recovery (ops lead only) and does not resolve the incident or release its hold.</span>
-  </form>{% endif %}
+  {% if unverified %}{% if next.form == "verify" %}<p class="muted" style="margin-top:10px">Recorded from the Next step card above.</p>{% else %}<details class="fold" data-other="verify"><summary>Other records</summary><p class="muted">Not the next step now ({{ next.title }} comes first). Use this only to add or correct a record.</p>{% include "execution/_f_verify.html" %}</details>{% endif %}{% endif %}
+  {% if next.form == "custody" %}<p class="muted" style="margin-top:10px">Recorded from the Next step card above.</p>{% else %}<details class="fold" data-other="custody"><summary>Other records</summary><p class="muted">Not the next step now ({{ next.title }} comes first). Use this only to add or correct a record.</p>{% include "execution/_f_custody.html" with preset='' %}</details>{% endif %}{% endif %}
 </div>
 
 <div class="card">
@@ -54,12 +42,7 @@
   {% for t in trip_events %}<tr><td>{{ t.te.seq }}</td><td>{{ t.te.get_kind_display }}</td><td>{{ t.local|local_dt }}</td><td>{{ t.te.recorded_by.username }}</td></tr>
   {% empty %}<tr><td colspan="4" class="muted">No trip events yet (in transit to the site).</td></tr>{% endfor %}
   </tbody></table></div>
-  {% if can.record_field_event and not closed and next_trip %}
-  <form method="post" action="/execution/runs/{{ run.code }}/trip-event/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
-    <input type="hidden" name="kind" value="{{ next_trip }}">
-    <button class="primary">Record: {% if next_trip == "arrived_site" %}Vehicle arrived at site{% elif next_trip == "departed_site" %}Vehicle departed site{% else %}Vehicle arrived at hub{% endif %}</button>
-    {% if next_trip == "arrived_hub" %}<span class="muted">Records the vehicle only; the robot's return is a separate custody receipt.</span>{% endif %}
-  </form>{% endif %}
+  {% if can.record_field_event and not closed and next_trip %}{% if next.form == "trip" %}<p class="muted" style="margin-top:10px">Recorded from the Next step card above.</p>{% else %}<details class="fold" data-other="trip"><summary>Other records</summary><p class="muted">Not the next step now ({{ next.title }} comes first). Use this only to add or correct a record.</p>{% include "execution/_f_trip.html" %}</details>{% endif %}{% endif %}
 </div>
 
 <div class="card">
@@ -71,20 +54,10 @@
     <td>{% if c.reasons %}<ul class="reasons">{% for x in c.reasons %}<li>{{ x }}</li>{% endfor %}</ul>{% else %}<span class="muted">Every recorded check passed</span>{% endif %}</td>
     <td>{{ c.sc.adults_present }} / {{ c.sc.consent_count }}</td>
     <td>{{ c.sc.template.version }}{% if c.sc.template.source == "synthetic_demo" %} {% demo_checklist %}{% endif %}</td>
-    <td>{{ c.sc.verifier.code }}</td><td>{{ c.local|local_dt }}</td></tr>
+    <td>{{ c.sc.verifier.label }}</td><td>{{ c.local|local_dt }}</td></tr>
   {% empty %}<tr><td colspan="7" class="muted">No site check recorded. A session cannot start without a Go check.</td></tr>{% endfor %}
   </tbody></table></div>
-  {% if can.record_field_event and not closed and templates %}
-  <form method="post" action="/execution/runs/{{ run.code }}/site-check/" style="margin-top:10px">{% csrf_token %}{% form_token %}
-    <h2>Record a site check</h2>
-    {% for t in templates %}<fieldset><legend><label><input type="radio" name="template" value="{{ t.version }}" {% if forloop.first %}checked{% endif %}> Template {{ t.version }}{% if t.source == "synthetic_demo" %} (demo checklist, not approved for production){% endif %}</label></legend>
-      <div class="row">{% for i in t.items %}<label>{{ i.label }} <select name="cond_{{ i.id }}"><option value="">not checked</option><option value="ok">ok</option><option value="not_ok">not ok</option></select></label>{% endfor %}</div></fieldset>{% endfor %}
-    <div class="row">
-      <label>Adults present <input name="adults_present" type="number" min="0"></label>
-      <label>Verifier (crew) <select name="verifier">{% for p in crew %}<option>{{ p.code }}</option>{% endfor %}</select></label>
-      <button class="primary">Record site check</button>
-    </div>
-  </form>{% endif %}
+  {% if can.record_field_event and not closed and templates %}{% if site_check_ok %}{% if next.form == "site_check" %}<p class="muted" style="margin-top:10px">Recorded from the Next step card above.</p>{% else %}<details class="fold" data-other="site_check"><summary>Other records</summary><p class="muted">Not the next step now ({{ next.title }} comes first). Use this only to add or correct a record.</p>{% include "execution/_f_site_check.html" %}</details>{% endif %}{% else %}<p class="notice neutral" data-site-check-blocked="1" style="margin-top:10px">Hand the robot over to the site first: record a custody move to site with a receiver. A site check recorded before the robot is in site custody would be a permanent No-Go, so it is not offered yet.</p>{% endif %}{% endif %}
 </div>
 
 <div class="card">
@@ -94,14 +67,7 @@
   {% for s in sessions %}<tr><td>{{ s.e.seq }}</td><td>{{ s.e.get_kind_display }}</td><td>{{ s.e.site_check_id|default:"-" }}</td><td>{{ s.e.interruption.code|default:"-" }}</td><td>{{ s.e.note }}</td><td>{{ s.local|local_dt }}</td></tr>
   {% empty %}<tr><td colspan="6" class="muted">No session events.</td></tr>{% endfor %}
   </tbody></table></div>
-  {% if can.record_field_event and not closed %}
-  <form method="post" action="/execution/runs/{{ run.code }}/session/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
-    <label>Event <select name="kind">{% for k in session_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></label>
-    <label>Site check (start/resume) <select name="site_check_id"><option value="">-</option>{% if latest_check %}<option value="{{ latest_check.pk }}" selected>#{{ latest_check.pk }} ({{ latest_check.get_result_display }})</option>{% endif %}</select></label>
-    <label>Note <input name="note"></label>
-    <button class="primary">Record session event</button>
-    <span class="muted">Start and resume are refused unless the latest site check is Go and newer than any pause or interruption, custody at this site is verified, and no hold or open interruption exists.</span>
-  </form>{% endif %}
+  {% if can.record_field_event and not closed %}{% if next.form == "session" %}<p class="muted" style="margin-top:10px">Recorded from the Next step card above.</p>{% else %}<details class="fold" data-other="session"><summary>Other records</summary><p class="muted">Not the next step now ({{ next.title }} comes first). Use this only to add or correct a record.</p>{% include "execution/_f_session.html" with preset='' %}</details>{% endif %}{% endif %}
 </div>
 
 <div class="card">
@@ -177,16 +143,7 @@
   </tbody></table></div>
   {% if closure %}<p><span class="badge closed">Trip closed</span> <span class="muted">{{ closure.recorded_at|local_dt }} by {{ closure.recorded_by.username }} (reconciliation {{ closure.reconciliation_id }}). Holds on the robot, if any, still need the fleet hold-release workflow.</span></p>
   {% else %}
-  {% if can.reconcile %}
-  <form method="post" action="/execution/runs/{{ run.code }}/reconcile/" style="margin-top:10px">{% csrf_token %}{% form_token %}
-    <div class="row"><label>Post-visit inspection code <input name="inspection_code" placeholder="e.g. INS-0002"></label>
-    <label>Discrepancies (one per line)<br><textarea name="discrepancies" rows="2" cols="40"></textarea></label>
-    <button class="primary">Record return reconciliation</button></div>
-    <span class="muted">Reconciled only with a verified hub receipt by a field user, matching cargo, verified custody throughout, a post-visit inspection after the receipt, and no discrepancies; otherwise unresolved.</span>
-  </form>{% endif %}
-  {% if can.close_trip %}
-  <form method="post" action="/execution/runs/{{ run.code }}/close/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
-    <button class="primary">Close trip</button><span class="muted">Refused unless the vehicle arrived at the hub and the latest reconciliation is reconciled.</span>
-  </form>{% endif %}{% endif %}
+  {% if can.reconcile %}{% if reconcile_ok %}{% if next.form == "reconcile" %}<p class="muted" style="margin-top:10px">Recorded from the Next step card above.</p>{% else %}<details class="fold" data-other="reconcile"><summary>Other records</summary><p class="muted">Not the next step now ({{ next.title }} comes first). Use this only to add or correct a record.</p>{% include "execution/_f_reconcile.html" %}</details>{% endif %}{% elif not hub_receipt %}<p class="notice neutral" data-reconcile-blocked="1" style="margin-top:10px">Receive the robot at the hub first (a custody move to hub with a receiver), then record the post-visit inspection. A reconciliation recorded before that would be unresolved, so it is not offered yet.</p>{% else %}<p class="notice neutral" data-reconcile-blocked="1" style="margin-top:10px">Record the post-visit inspection for this visit first (<a href="/readiness/visits/{{ run.visit.code }}/inspection/">submit it</a>). A reconciliation without it would be unresolved, so it is not offered yet.</p>{% endif %}{% endif %}
+  {% if can.close_trip %}{% if next.form == "close" %}<p class="muted" style="margin-top:10px">Recorded from the Next step card above.</p>{% else %}<details class="fold" data-other="close"><summary>Other records</summary><p class="muted">Not the next step now ({{ next.title }} comes first). Use this only to add or correct a record.</p>{% include "execution/_f_close.html" %}</details>{% endif %}{% endif %}{% endif %}
 </div>
 {% endblock %}

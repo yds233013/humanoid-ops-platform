@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import connection
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -64,7 +65,7 @@ from execution.models import (
     SiteCheckTemplate,
     TripEvent,
 )
-from fleet.models import Robot
+from fleet.models import Inspection, Robot
 from fleet.services import demo_mode
 from planning.models import Person, Visit
 from platform_core.commands import CommandError, Invalid
@@ -105,6 +106,10 @@ STATUS_STEPS = ["reported"] + [s for s, _ in INCIDENT_STATUSES]
 STRANDED = ("robot_left_on_site", "robot_unaccounted")
 KIND_TEXT = dict(CUSTODY_KINDS)
 RECOVERY_NOT_BACK = "Robot is NOT back: trip cannot close"
+RECEIVER_REQUIRED = (
+    "Refused (invalid input): choose the receiver. Every custody move is a handoff and needs the person who "
+    "receives the robot. Nothing was recorded."
+)
 EXAMPLE_RULES = {
     "severity_scale": ["low", "medium", "high"],
     "escalation_required_from": "high",
@@ -292,6 +297,134 @@ def _reconciliation_problems(rec: ReturnReconciliation) -> list[str]:
     return problems
 
 
+# ------------------------------------------------------------------ next step (01D J5-2)
+# The run page's guide: from the records alone, the ONE next thing the crew or the ops lead records, in the
+# order the commands accept them. It changes no rule: every command still checks everything itself. Forms
+# whose record would be a permanent negative only because of ordering (a site check before the robot is in
+# site custody is a No-Go; a return reconciliation before the hub receipt or the post-visit inspection is
+# unresolved) are not offered as actionable forms until their precondition holds; the guide names the step
+# that comes first instead.
+NEXT_STEPS: dict[str, tuple[str, str]] = {
+    "done": (
+        "Nothing left to record",
+        "The trip is closed. Holds on the robot, if any, go through the fleet hold-release workflow.",
+    ),
+    "attention": (
+        "The robot's whereabouts need the ops lead",
+        "Custody is unaccounted for or unknown. The ops "
+        "lead records the recovery or a disposition; see Recovery dispositions below.",
+    ),
+    "verify": (
+        "Verify the departure handover",
+        "A crew member confirms the robot is in the vehicle (the "
+        "departure recorded it administratively, not verified).",
+    ),
+    "arrive_site": (
+        "Record the arrival at the site",
+        "When the vehicle reaches the home, record that it arrived.",
+    ),
+    "to_site": (
+        "Hand the robot over to the site",
+        "Record a custody move to site with a receiver from the "
+        "crew. A site check counts only once the robot is in site custody.",
+    ),
+    "site_check": (
+        "Record the site check",
+        "Walk the checklist with the household before the robot works. "
+        "Every item ok and enough consents give a Go.",
+    ),
+    "start": ("Start the session", "The latest site check is Go: start the robot's work session."),
+    "resume": (
+        "Resume or stop the session",
+        "The session is paused. Resuming needs a new Go site check "
+        "recorded after the pause; otherwise stop the session.",
+    ),
+    "stop": ("Stop the session when the work is done", "Record the stop when the robot has finished."),
+    "to_vehicle": (
+        "Move the robot back to the vehicle",
+        "Record a custody move to vehicle with a receiver from the crew.",
+    ),
+    "depart_site": ("Record leaving the site", "Record that the vehicle left the home."),
+    "arrive_hub": (
+        "Record the arrival at the hub",
+        "Record that the vehicle is back at the hub. This records "
+        "the vehicle only; the robot is received separately.",
+    ),
+    "to_hub": (
+        "Receive the robot at the hub",
+        "Record a custody move to hub with the person who receives it.",
+    ),
+    "inspect": (
+        "Record the post-visit inspection",
+        "Inspect the robot after the hub receipt (an inspection "
+        "for this visit). The return can be reconciled only after it.",
+    ),
+    "reconcile": ("Reconcile the return", "Record the return reconciliation with the post-visit inspection."),
+    "close": ("Close the trip", "The return is reconciled: close the trip."),
+}
+STEP_FORM = {
+    "verify": "verify",
+    "arrive_site": "trip",
+    "depart_site": "trip",
+    "arrive_hub": "trip",
+    "to_site": "custody",
+    "to_vehicle": "custody",
+    "to_hub": "custody",
+    "site_check": "site_check",
+    "start": "session",
+    "resume": "session",
+    "stop": "session",
+    "inspect": "inspect",
+    "reconcile": "reconcile",
+    "close": "close",
+}
+STEP_PRESET = {"to_site": "site", "to_vehicle": "vehicle", "to_hub": "hub", "start": "start", "stop": "stop"}
+
+
+def next_step_key(
+    summary: dict[str, Any],
+    *,
+    unverified: bool,
+    latest_check_go: bool,
+    post_inspections: bool,
+    reconciled: bool,
+) -> str:
+    """The next step's key (NEXT_STEPS), from the run's records in command order."""
+    if summary["closed"]:
+        return "done"
+    kind, trip, session = summary["custody"].kind, summary["trip"], summary["session"]
+    if kind in ("unaccounted", "unknown"):
+        return "attention"
+    if unverified:
+        return "verify"
+    if "arrived_site" not in trip:
+        return "arrive_site"
+    if kind == "vehicle" and session == "not_started" and "departed_site" not in trip:
+        return "to_site"
+    if kind == "site" and session == "not_started":
+        return "start" if latest_check_go else "site_check"
+    if session == "paused":
+        return "resume"
+    if session == "active":
+        return "stop"
+    if kind == "site":
+        return "to_vehicle"
+    if "departed_site" not in trip:
+        return "depart_site"
+    if "arrived_hub" not in trip:
+        return "arrive_hub"
+    if kind != "hub":
+        return "to_hub"
+    if not post_inspections:
+        return "inspect"
+    return "close" if reconciled else "reconcile"
+
+
+def site_check_actionable(summary: dict[str, Any]) -> bool:
+    """A site check counts only with the robot in site custody; before that it can only be a No-Go."""
+    return summary["custody"].kind == "site" and not summary["closed"]
+
+
 # ------------------------------------------------------------------ runs
 def _get_run(code: str) -> ExecutionRun:
     return get_object_or_404(
@@ -332,6 +465,53 @@ def index(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+def my_visits(request: HttpRequest) -> HttpResponse:
+    """01D J5-1: the signed-in person's visits today and tomorrow (workspace local days), where they are the
+    lead or the second of the current plan, with links to the readiness checklist and the field run."""
+    if (deny := _deny(request)) is not None:
+        return deny
+    from readiness.models import DepartureEvent  # noqa: PLC0415 - read only
+
+    person = Person.objects.select_related("user").filter(user_id=request.user.pk).first()
+    zone = workspace_zone()
+    today = datetime.now(zone).date()
+    start = datetime.combine(today, datetime.min.time(), tzinfo=zone)
+    end = start + timedelta(days=2)
+    rows: list[dict[str, Any]] = []
+    if person is not None:
+        visits = (
+            Visit.objects.select_related("site", "current_revision__robot", "current_revision__lead__user",
+                                         "current_revision__second__user")
+            .exclude(status="cancelled")
+            .filter(current_revision__on_site_start__gte=start, current_revision__on_site_start__lt=end)
+            .filter(Q(current_revision__lead=person) | Q(current_revision__second=person))
+            .order_by("current_revision__on_site_start", "code")
+        )  # fmt: skip
+        runs = {r.visit_id: r for r in ExecutionRun.objects.filter(visit__in=list(visits))}
+        departed = set(
+            DepartureEvent.objects.filter(visit__in=list(visits)).values_list("visit_id", flat=True)
+        )
+        for v in visits:
+            rev = v.current_revision
+            assert rev is not None
+            local = rev.on_site_start.astimezone(zone)
+            run = runs.get(v.pk)
+            rows.append(
+                {
+                    "visit": v,
+                    "rev": rev,
+                    "day": "Today" if local.date() == today else "Tomorrow",
+                    "role": "Lead" if rev.lead_id == person.pk else "Second",
+                    "run": run,
+                    "departed": v.pk in departed,
+                }
+            )
+    return render(
+        request, "execution/mine.html", {"person": person, "rows": rows, "today": today, **_base(request)}
+    )
+
+
+@login_required
 def run_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _deny(request)) is not None:
         return deny
@@ -341,7 +521,13 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
     custody = [
         custody_row(e)
         for e in CustodyEvent.objects.filter(run=run)
-        .select_related("custodian", "received_by", "incident", "recorded_by", "verification__verified_by")
+        .select_related(
+            "custodian__user",
+            "received_by__user",
+            "incident",
+            "recorded_by",
+            "verification__verified_by",
+        )
         .order_by("seq")
     ]
     unverified = [c["ev"] for c in custody if c["state"] == "unverified"]
@@ -373,9 +559,34 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
         {"i": i, "status": inc.incident_status(i), "severity": incident_severity(i)}
         for i in Incident.objects.filter(run=run).select_related("hold").order_by("id")
     ]
-    crew = [p for p in (run.revision.lead, run.revision.second) if p is not None]
+    crew = [
+        p
+        for p in Person.objects.select_related("user").filter(
+            pk__in=[x for x in (run.revision.lead_id, run.revision.second_id) if x is not None]
+        )
+    ]
+    crew.sort(key=lambda p: 0 if p.pk == run.revision.lead_id else 1)
     latest_check = checks[0]["sc"] if checks else None
     state = summary["session"]
+    hub_receipt = CustodyEvent.objects.filter(run=run, to_kind="hub").order_by("-seq").first()
+    post_inspections = (
+        list(
+            Inspection.objects.filter(
+                robot_id=run.robot_id, visit_ref=run.visit.code, submitted_at__gt=hub_receipt.recorded_at
+            ).order_by("-id")
+        )
+        if hub_receipt is not None
+        else []
+    )
+    reconciled = bool(recs) and getattr(recs[0]["rec"], "outcome", "") == "reconciled"
+    step = next_step_key(
+        summary,
+        unverified=bool(unverified),
+        latest_check_go=getattr(latest_check, "result", "") == "go",
+        post_inspections=bool(post_inspections),
+        reconciled=reconciled,
+    )
+    title, text = NEXT_STEPS[step]
     return render(
         request,
         "execution/run.html",
@@ -400,7 +611,18 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
             "recs": recs,
             "incidents": incidents,
             "crew": crew,
-            "persons": Person.objects.order_by("code"),
+            "persons": Person.objects.select_related("user").order_by("code"),
+            "next": {
+                "key": step,
+                "title": title,
+                "text": text,
+                "form": STEP_FORM.get(step, ""),
+                "preset": STEP_PRESET.get(step, ""),
+            },
+            "site_check_ok": site_check_actionable(summary),
+            "reconcile_ok": hub_receipt is not None and bool(post_inspections) and not summary["closed"],
+            "post_inspections": post_inspections,
+            "hub_receipt": hub_receipt,
             "move_targets": [k for k in ("vehicle", "site", "hub") if k != summary["custody"].kind],
             "event_types": INCIDENT_EVENT_TYPES,
             "knowledge_sources": KNOWLEDGE_SOURCES,
@@ -453,6 +675,10 @@ def trip_event_view(request: HttpRequest, code: str) -> HttpResponse:
 @one_time_form(_back_run)
 def transfer_view(request: HttpRequest, code: str) -> HttpResponse:
     f = request.POST
+    if not f.get("received_by", "").strip():
+        # 01D J5-5: said before the command runs (it refuses the same way: "A handoff needs a receiver")
+        messages.error(request, RECEIVER_REQUIRED)
+        return _to_run(code)
     _run(
         request,
         lg.transfer_custody,

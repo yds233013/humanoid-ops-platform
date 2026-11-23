@@ -826,7 +826,7 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         {"inspection_code": inspection_code, "result": "pass"},
         page=ready_url,
         match={"kind": "pre_departure_inspection"},
-        expect="Evidence recorded",
+        expect="Pre-departure inspection recorded",
         what=f"record pre-departure inspection evidence ({inspection_code})",
     )
     j.submit(
@@ -840,7 +840,7 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         },
         page=ready_url,
         match={"kind": "equipment_check"},
-        expect="Evidence recorded",
+        expect="Equipment check recorded",
         what="equipment check: restraint kit, recovery kit, charger present",
     )
     j.submit(
@@ -849,7 +849,7 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         {"soc_pct": 85, "result": "pass"},
         page=ready_url,
         match={"kind": "battery_check"},
-        expect="Evidence recorded",
+        expect="Battery check recorded",
         what="battery check: 85% (minimum 60%)",
     )
     j.submit(
@@ -869,7 +869,7 @@ def test_first_run_journey_from_empty_database_to_approved_to_leave(monkeypatch:
         ops,
         ready_url,
         "Checklist reads complete, not approved",
-        expect=("Checklist complete - ask the ops lead to approve.",),
+        expect=("Checklist complete - you can approve it now.",),
         absent=("Approved to leave by",),
     )
     assert "data-approved-to-leave" not in page
