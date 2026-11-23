@@ -27,11 +27,28 @@ answers and no migration is unapplied; otherwise `503` with `database: "unreacha
 then keeps the previous deployment serving until the new one is healthy, and marks a deploy failed if it never is. Migrations
 run before gunicorn starts, so a deploy whose migration fails never becomes healthy and never receives traffic.
 
+**Status (2026-11-22).** Staging: Healthcheck Path `/healthz` set (timeout 300 s) and `DJANGO_ALLOWED_HOSTS` extended
+with `healthcheck.railway.app` (Railway probes with that Host header; without it Django answers 400 and the deploy fails);
+redeployed, "Deployment successful", `/healthz` 200. Production: **not set yet on purpose**: production still runs the v1
+code, which has no `/healthz` (404), so a health check now would fail its next deploy.
+
+**Production transition at the 01D release (in this order):**
+1. Take a manual Postgres backup (Postgres -> Backups -> New backup) and note its time.
+2. Add `healthcheck.railway.app` to production `DJANGO_ALLOWED_HOSTS` (variables only, `--skip-deploys`).
+3. Deploy the approved v2 commit to production with the health check still off; confirm `curl /healthz` = 200
+   `{"status":"ok",...}` and the login page loads.
+4. Set Healthcheck Path `/healthz` on production `web` and redeploy the same commit; confirm "Deployment successful".
+5. If step 3 or 4 fails: Rollback to the previous deployment (Deployments -> previous -> Rollback); if a migration ran, follow
+   section 5 (additive migrations only, so the v1 code keeps working on the migrated schema) and, only if data is damaged,
+   restore the step-1 backup (section 4).
+
 ## 3. Daily backup
 
 Two layers; both are needed because a platform backup you have never restored is not a backup.
 
-1. **Railway volume backups (preferred, no code): OWNER ACTION.** In the Railway dashboard open the Postgres service ->
+1. **Railway volume backups (preferred, no code): DONE 2026-11-22** (workspace on Railway Pro): production Postgres Daily
+   (kept 6 days) + Weekly (kept 27 days), staging Postgres Daily (kept 6 days); a manual production backup was taken
+   2026-11-22 10:59 (174 MB). Point-in-time recovery is off (enabling it restarts the database). Original instruction: In the Railway dashboard open the Postgres service ->
    Backups -> enable scheduled backups, Daily, and (if the plan allows) Weekly. Railway backups are restored from the same
    Backups tab into a new volume; they are not downloadable. Record the plan limits and retention in the owner's notes.
 2. **Independent logical dump (belt and braces): OWNER ACTION to schedule.** A Railway cron service (or any scheduler
