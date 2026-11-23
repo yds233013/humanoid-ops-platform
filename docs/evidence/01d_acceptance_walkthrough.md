@@ -38,3 +38,45 @@ All pages measured fit 375 px (scrollWidth = 375): Today, readiness visit, run p
 | J5-5 | Low | J5 | Custody move to site refused "A handoff needs a receiver"; the form does not say Receiver is required. | Mark it required for a handoff and explain. |
 | J2-1 | Low | J2 | "Only 10 of 10 visits have a readiness result" when all are assessed. | "All 10 visits have a readiness result." |
 | J2-2 | Low | J2 | On a phone, "Needs your attention" is far below the counts. | A jump link "N items need your attention" at the top. |
+
+# Pass 2 (after the fix batch), candidate `8f52e5b`
+
+Same method: local server of `8f52e5b`, demo rebuilt from empty, real browser at 1280 x 800 and 375 x 812; J1 on a
+separate empty database (`humanoid_ops_j1`) with a one-time bootstrap token and owner provisioning (runbook 8a). Times
+are scripted by someone who knows the product (lower bound). Five-person usability study: **UNVERIFIED** (no
+participants).
+
+| Journey | Role, width | Completed? | Time | Notes |
+|---|---|---|---|---|
+| J1 Setup from empty | first admin, then invited ops lead, desktop | yes: /setup/ token -> admin -> company, region, time zone -> hub OAK -> invite new.lead -> role ops lead -> new.lead signs in -> forced to "Choose your own password" (/ops/ redirected back) -> changed -> Today | 56 s | robots / configurations / approvals part of J1 covered by the 01C browser gate and `test_v2_01c_journey.py` |
+| J2 Attention today | ops lead, desktop + 375 | yes | < 10 s | "N items need your attention" link at the top; "All N visits have a readiness result" |
+| J3 Book a visit | ops lead, desktop | **yes**: request (words "laundry folding" accepted) -> Suggest -> Mon 10:00 "No suggestion: nobody qualified as lead is free" (all 3 crews booked; manual choice offered) -> moved to Sun 10:00 -> Suggest picked NB-001, Jordan Lee, Amara Okafor, VAN-1 with reasons -> Save plan -> Confirm | 44 s | no code guessing; labels show names and free/busy |
+| J4 Approved to leave | ops lead, desktop | yes (V-0034, DA-0001) | 32 s | no unusable inspection offered; inspection preselected after submit; plain messages; "you can approve it now"; mode "Demo approval" |
+| J5 Field visit | crew A lead, 375 | yes, crew part: lands on My visits -> departure (tick required) -> "Departed - run EX-0001" -> Next step card: verify -> arrive -> hand over to site -> site check (only offered after handover) -> start -> stop -> back to vehicle -> leave site -> arrive hub -> receive at hub -> post-visit inspection -> "Reconcile: recorded by the ops lead" | 138 s | online only; offline is Phase 03 |
+
+All pages measured at 375 px: scrollWidth 375 (no sideways scroll).
+
+## Pass 1 defects: status
+
+J3-1, J3-2, J3-3, J4-1, J4-2, J4-3, J4-4, J5-1, J5-2, J5-3, J5-4, J5-5, J2-1, J2-2: **fixed and re-walked**.
+
+## New defects found in pass 2 (none blocks a journey)
+
+| Id | Sev | What | Proposed |
+|---|---|---|---|
+| P2-1 | Med | After the post-visit inspection the app returns to the readiness page with "Next: record it as pre-departure evidence" | return to the run page with "Post-visit inspection recorded. Next: the ops lead reconciles the return." |
+| P2-2 | Med | Custody handover form lists everyone (P-101 Dana Ortiz first); the receiver defaults to the first person, not the run's crew | list the run's crew first and preselect lead -> second |
+| P2-3 | Low | Inspection form "Done by / Checked by" show usernames, not Person labels | use Person.label |
+| P2-4 | Low | Company / hub time zone is a free-text field | a select of common zones with free text as fallback |
+| P2-5 | Low | My visits on a phone: short values break mid-word ("Tod ay", "Lea d") | no `overflow-wrap:anywhere` on short label cells |
+| P2-6 | Low | When every crew is busy, Suggest says so but offers no next free time | Phase 03 (dispatch board) |
+
+## Performance on `8f52e5b` (perf runs 45098461493 / 45098467132 / 45098471866, 200-robot fixture)
+
+| Path | Ceiling | Target | p95 (three runs) |
+|---|---|---|---|
+| Today `/ops/` | 2,000 ms (hard) | 400 ms | 510 / 260 / 362: ceiling met 3/3, target met 2/3 |
+| Exceptions inbox with readiness | 2,000 | - | 859 / 660 / 667 |
+| Timeline | 2,000 | - | 783 / 623 / 595 |
+| Fleet overview | 400 | - | 142 / 83 / 104 |
+| Metrics | 400 | - | 198 / 120 / 148 |
