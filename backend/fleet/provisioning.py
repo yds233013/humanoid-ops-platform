@@ -79,6 +79,13 @@ SPECS: tuple[Spec, ...] = (
         "How far ahead Today warns that a robot's regular inspection is coming due.",
         "minutes",
     ),
+    Spec(
+        "ops_soc_fresh_min",
+        "Battery reading freshness (minutes)",
+        "How long a recorded battery level counts as current for the charge forecast; without it the "
+        "forecast is Unknown.",
+        "minutes",
+    ),
 )
 BY_KEY = {s.key: s for s in SPECS}
 ALLOWED_KEYS = tuple(BY_KEY)

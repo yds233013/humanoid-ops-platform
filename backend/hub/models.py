@@ -42,6 +42,7 @@ SOURCES = [
     ("periodic_inspection", "Periodic inspection status"),
     ("hold", "Active hold"),
     ("equipment_check", "Failed equipment check"),
+    ("charge_forecast", "Charge forecast"),  # v2 02B: a visit's robot needs charge before departure
 ]
 
 
@@ -110,3 +111,136 @@ class WorkOrder(models.Model):
     @property
     def active(self) -> bool:
         return self.status not in FINAL
+
+
+# ------------------------------------------------ v2 02B: charging (contract 11, 8.3, 8.4, 8.8)
+class Charger(models.Model):
+    """A charging bay at the hub. Configuration (like a hub), not evidence: written by the guarded command
+    hub.charging.create_charger / set_charger_in_service (run_command, audited). The runtime role has SELECT,
+    INSERT and UPDATE on it, never DELETE; flipping ``in_service`` cannot book anything, because every
+    reservation and session is written by a SECURITY DEFINER function that re-checks it under the charger's
+    row lock."""
+
+    code = models.CharField(max_length=12, unique=True)
+    name = models.CharField(max_length=80)
+    hub = models.ForeignKey(
+        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    in_service = models.BooleanField(default=True)
+    note = models.CharField(max_length=200, blank=True, default="")
+    created_by = models.ForeignKey(USER, null=True, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "hub_charger"
+        ordering = ["code"]
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class ChargerReservation(models.Model):
+    """A charger booked for a robot for a period. Written ONLY by hub_reserve_charger() and released only by
+    hub_release_charger_reservation() (ops_app has SELECT). Exclusion constraints: no two active reservations
+    overlap on one charger or on one robot. A reservation is never evidence that charging happened."""
+
+    charger = models.ForeignKey(Charger, on_delete=models.PROTECT, related_name="reservations")
+    robot = models.ForeignKey("fleet.Robot", on_delete=models.PROTECT, related_name="+")
+    visit = models.ForeignKey(
+        "planning.Visit", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField()
+    released_at = models.DateTimeField(null=True, blank=True)
+    released_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    released_reason = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        db_table = "hub_charger_reservation"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(ends_at__gt=models.F("starts_at")), name="hub_charger_res_window"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.charger_id}:{self.robot_id} {self.starts_at}-{self.ends_at}"
+
+
+class ChargingSession(models.Model):
+    """A recorded charging session: facts entered by a person (start, end, start %, end %). Written ONLY by
+    hub_start_charging() / hub_end_charging(). At most one open session per charger and per robot (exclusion
+    on tstzrange(started_at, coalesce(ended_at, 'infinity'))). Never departure battery evidence."""
+
+    charger = models.ForeignKey(Charger, on_delete=models.PROTECT, related_name="sessions")
+    robot = models.ForeignKey("fleet.Robot", on_delete=models.PROTECT, related_name="+")
+    reservation = models.ForeignKey(
+        ChargerReservation, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    started_at = models.DateTimeField()
+    # the expected end given when it starts: other robots' bookings are checked against [started_at,
+    # planned_until) while it is open; the exclusion constraints treat an open session as lasting forever.
+    planned_until = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    start_soc_pct = models.PositiveSmallIntegerField(null=True, blank=True)
+    end_soc_pct = models.PositiveSmallIntegerField(null=True, blank=True)
+    started_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    ended_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+
+    class Meta:
+        db_table = "hub_charging_session"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(ended_at__isnull=True) | Q(ended_at__gt=models.F("started_at")),
+                name="hub_charging_session_window",
+            ),
+            models.CheckConstraint(
+                condition=(Q(start_soc_pct__isnull=True) | Q(start_soc_pct__lte=100))
+                & (Q(end_soc_pct__isnull=True) | Q(end_soc_pct__lte=100)),
+                name="hub_charging_session_pct",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"session {self.pk} {self.robot_id}@{self.charger_id}"
+
+
+SOC_SOURCES = [
+    ("battery_check", "Battery check"),
+    ("charging_session_end", "End of a charging session"),
+    ("manual_reading", "Reading entered by hand"),
+]
+
+
+class RobotSocReading(models.Model):
+    """A recorded state of charge: value, when it was observed, where it came from, who recorded it.
+    Append-only (trigger) and written ONLY by record_soc_reading() / hub_end_charging(). Battery-check
+    readiness evidence is read alongside these rows (source battery_check) and is never copied here."""
+
+    robot = models.ForeignKey("fleet.Robot", on_delete=models.PROTECT, related_name="+")
+    soc_pct = models.PositiveSmallIntegerField()
+    observed_at = models.DateTimeField()
+    source = models.CharField(max_length=24, choices=SOC_SOURCES)
+    session = models.ForeignKey(
+        ChargingSession, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    recorded_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    recorded_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "robot_soc_reading"
+        constraints = [
+            models.CheckConstraint(condition=Q(soc_pct__lte=100), name="robot_soc_reading_pct"),
+            models.CheckConstraint(
+                condition=Q(source__in=[s for s, _ in SOC_SOURCES]), name="robot_soc_reading_source"
+            ),
+            models.CheckConstraint(
+                condition=Q(observed_at__lte=models.F("recorded_at")), name="robot_soc_reading_not_future"
+            ),
+        ]
+        indexes = [models.Index(fields=["robot", "-observed_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.robot_id}: {self.soc_pct}% at {self.observed_at}"
