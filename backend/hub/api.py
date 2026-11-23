@@ -12,6 +12,14 @@ from hub import services as hs
 from hub.models import FINAL, WorkOrder
 
 
+def parse_version(raw: Any) -> int | None:
+    """A task version from a request: a positive whole number, else None (the caller refuses)."""
+    text = str(raw).strip() if raw is not None else ""
+    if not text.isdigit() or len(text) > 9 or int(text) < 1:
+        return None
+    return int(text)
+
+
 def _task(t: WorkOrder) -> dict[str, Any]:
     return {
         "id": t.pk,
@@ -57,8 +65,17 @@ def tasks(request: Request) -> Response:
 @api_view(["POST"])
 def task_action(request: Request, task_id: int, action: str) -> Response:
     d = request.data
-    raw = d.get("version")
-    version = int(str(raw)) if raw not in (None, "") else None
+    if action not in ("assign", "start", "complete", "cancel"):
+        return Response({"error": "not_found"}, status=404)
+    version = parse_version(d.get("version"))
+    if version is None:  # EM 02B hardening: a transition must name the version it was decided on
+        return Response(
+            {
+                "error": "invalid",
+                "detail": "Send the task's current version (a whole number); nothing was changed.",
+            },
+            status=400,
+        )
     if action == "assign":
         result = hs.assign_task(
             request.user, task_id=task_id, owner_code=str(d.get("owner", "")), version=version
@@ -67,10 +84,8 @@ def task_action(request: Request, task_id: int, action: str) -> Response:
         result = hs.start_task(request.user, task_id=task_id, version=version)
     elif action == "complete":
         result = hs.complete_task(request.user, task_id=task_id, version=version, note=str(d.get("note", "")))
-    elif action == "cancel":
+    else:
         result = hs.cancel_task(
             request.user, task_id=task_id, version=version, reason=str(d.get("reason", ""))
         )
-    else:
-        return Response({"error": "not_found"}, status=404)
     return Response(result)

@@ -26,6 +26,7 @@ from accounts.permissions import active_roles
 from accounts.roles import PERMISSIONS
 from hub import derive
 from hub import services as hs
+from hub.api import parse_version
 from hub.models import FINAL, TYPES, WorkOrder
 from planning.models import Person
 from platform_core.commands import CommandError
@@ -285,10 +286,12 @@ def task_action(request: HttpRequest, task_id: int, action: str) -> HttpResponse
         return denied(request, hs.WORK)
     if not spend_form_token(request):
         return redirect(back)
-    try:
-        version = int(request.POST.get("version", ""))
-    except ValueError:
-        version = None
+    version = parse_version(request.POST.get("version"))
+    if version is None:  # EM 02B hardening: never act on a task without the version the form showed
+        messages.error(
+            request, "Refused (check the form): the page was out of date. Reload it; nothing was changed."
+        )
+        return redirect(back)
     try:
         if action == "take":
             if v.person is None:

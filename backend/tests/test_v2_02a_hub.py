@@ -183,9 +183,9 @@ def test_unauthorized_api_and_post_calls_are_refused_and_write_nothing(w, role):
     else:
         assert r.status_code == 403, (role, r.status_code)  # no role here may create for someone else
     for action, body in (("start", {}), ("assign", {"owner": "P-8"}), ("cancel", {"reason": "x"})):
-        r = api.post(f"/api/hub/tasks/{tid}/{action}", body, format="json")
         if role in PERMISSIONS["hub.manage_all"]:
             continue  # managers may (covered elsewhere); stop before changing the shared task
+        r = api.post(f"/api/hub/tasks/{tid}/{action}", {**body, "version": _wo(tid).version}, format="json")
         assert r.status_code == 403, (role, action, r.status_code)
     if role not in PERMISSIONS["hub.manage_all"]:
         after = list(WorkOrder.objects.values_list("id", "status", "owner_id", "version"))
@@ -610,3 +610,40 @@ def test_hub_technicians_land_on_the_hub_queue_even_with_field_operator():
         assert landing_url({"hub_technician", "field_operator", other}) != "/hub/", other
     lily = make_user("lily_dual", "field_operator", "hub_technician")
     assert _client(lily).get("/")["Location"] == "/hub/"
+
+
+# ------------------------------------------------------------------ EM 02B hardening: the version is required
+@pytest.mark.parametrize("bad", [None, "", "abc", "0", "-1", "1.5", "9999999999"])
+def test_api_transitions_require_a_valid_version(w, bad):
+    tid = _task(w, owner="P-8")
+    before = list(WorkOrder.objects.values_list("id", "status", "owner_id", "version"))
+    audit = AuditEvent.objects.count()
+    for action, body in (
+        ("start", {}),
+        ("assign", {"owner": "P-9"}),
+        ("complete", {}),
+        ("cancel", {"reason": "x"}),
+    ):
+        data = dict(body) if bad is None else {**body, "version": bad}
+        r = _api(w.ops).post(f"/api/hub/tasks/{tid}/{action}", data, format="json")
+        assert r.status_code == 400, (action, bad, r.status_code)
+        assert r.json()["error"] == "invalid" and "nothing was changed" in r.json()["detail"]
+    assert list(WorkOrder.objects.values_list("id", "status", "owner_id", "version")) == before
+    assert AuditEvent.objects.count() == audit
+
+
+def test_a_stale_version_changes_nothing_through_api_or_page(w):
+    tid = _task(w, owner="P-8")
+    stale = _wo(tid).version
+    hs.assign_task(w.ops, task_id=tid, owner_code="P-9", version=stale)  # someone else changed it
+    now = _wo(tid)
+    r = _api(w.ops).post(f"/api/hub/tasks/{tid}/start", {"version": stale}, format="json")
+    assert r.status_code == 409 and "changed since you opened it" in r.json()["detail"]
+    c = _client(w.ops)
+    for version in (str(stale), ""):  # stale, then missing
+        page = c.get(f"/hub/tasks/{tid}/").content.decode()
+        token = TOKEN_RE.search(page).group(1)
+        r = c.post(f"/hub/tasks/{tid}/start/", {"_form_token": token, "version": version}, follow=True)
+        assert "Nothing was changed" in r.content.decode() or "nothing was changed" in r.content.decode()
+    t = _wo(tid)
+    assert (t.status, t.owner_id, t.version) == (now.status, now.owner_id, now.version)
