@@ -273,6 +273,32 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     hub_html = lily_c.get("/hub/").content.decode()
     assert "Hub work queue" in hub_html and "Restock recovery kits" in hub_html
     assert WorkOrder.objects.filter(source_kind="hold").count() >= 2  # derived on that first page load
+    # v2 02B: chargers (one out of service), today's hand readings, a booking, a session, mixed forecasts
+    from hub import charging as hc
+    from hub.models import Charger, ChargerReservation, ChargingSession, RobotSocReading
+
+    assert list(Charger.objects.values_list("code", "in_service")) == [
+        ("C-1", True), ("C-2", True), ("C-3", True), ("C-4", False)
+    ]  # fmt: skip
+    readings = list(RobotSocReading.objects.all())
+    assert len(readings) == 2 and {r.source for r in readings} == {"manual_reading"}
+    assert all(
+        timezone.now() - r.observed_at < timedelta(hours=1) for r in readings
+    )  # stamped now, no history
+    assert ChargerReservation.objects.filter(released_at__isnull=True).count() == 1
+    assert ChargingSession.objects.filter(ended_at__isnull=True).count() == 1
+    soon = Visit.objects.filter(
+        current_revision__on_site_start__gt=timezone.now(), current_revision__robot__isnull=False
+    ).values_list("id", flat=True)
+    states = {f.state for f in hc.visit_forecasts(list(soon)).values()}
+    assert {"needs_charge", "unknown"} <= states
+    ops_c = Client()
+    ops_c.force_login(User.objects.get(username="dana.ortiz"))
+    operating = ops_c.get("/settings/operating/").content.decode()
+    soc_row = operating.split('data-key="ops_soc_fresh_min"', 1)[1].split("</tr>", 1)[0]
+    assert "240" in soc_row and "Demo value" in soc_row
+    charging_page = lily_c.get("/hub/charging/").content.decode()
+    assert "Needs charge" in charging_page and "Out of service" in charging_page
     html = c.get("/ops/").content.decode()
     assert html.count("Demo workspace") == 1
     assert not re.search(r"(?i)synthetic", _visible_text(html))

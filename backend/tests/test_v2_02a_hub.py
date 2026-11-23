@@ -156,9 +156,9 @@ def test_the_02a_role_matrix():
     }
     assert PERMISSIONS["hub.manage_all"] == {"ops_lead", "engineer", "engineering_lead"}
     assert PERMISSIONS["hub.claim"] == {"hub_technician"}
-    # hub_technician holds ONLY 02A hub permissions
+    # hub_technician holds ONLY hub permissions (02A, plus the 02B charging rows of 8.6)
     assert {p for p, roles in PERMISSIONS.items() if "hub_technician" in roles} == {
-        "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav"
+        "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav", "hub.record_charging", "hub.reserve_charger"
     }  # fmt: skip
     assert "hub_technician" in ALL_ROLES
 
@@ -333,7 +333,7 @@ def test_a_cleared_source_is_marked_never_completed(w):
 def test_concurrent_refreshes_never_duplicate(first_commits):
     _world("cd_")
     fs.place_hold(_ops("cd_"), scope="robot", target="R-02", source_type="maintenance", reason="noisy wrist")
-    params = {"at": timezone.now(), "rid": ""}
+    params = {"at": timezone.now(), "rid": "", "charge": "[]"}
     a, b = _app_conn(), _app_conn()
     try:
         a.autocommit = b.autocommit = False

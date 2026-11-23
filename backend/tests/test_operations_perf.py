@@ -421,8 +421,32 @@ def test_hub_page_p95_on_the_scale_fixture(request):
 
     with transaction.atomic():
         build()
+    # v2 02B: charging data on the scale fixture (cheap): the forecast on, 4 chargers, a fresh reading for every
+    # third robot (rows written as the schema owner, as fixtures do; the app writes them only via functions)
+    from django.utils import timezone
+
+    from fleet.models import Robot
+    from hub.models import Charger, RobotSocReading
+
+    set_setting("ops_soc_fresh_min", "240")
+    perf_user = make_user("perf_hub_ops", "ops_lead")
+    Charger.objects.bulk_create([Charger(code=f"C-{n}", name=f"Bay {n}") for n in range(1, 5)])
+    now = timezone.now()
+    RobotSocReading.objects.bulk_create(
+        [
+            RobotSocReading(
+                robot=r,
+                soc_pct=30 + (i * 7) % 70,
+                observed_at=now,
+                source="manual_reading",
+                recorded_by=perf_user,
+                recorded_at=now,
+            )  # fmt: skip
+            for i, r in enumerate(Robot.objects.order_by("id")[::3])
+        ]
+    )
     c = Client()
-    c.force_login(make_user("perf_hub_ops", "ops_lead"))
+    c.force_login(perf_user)
     assert c.get("/hub/").status_code == 200  # warm-up; creates the derived tasks once
     samples, statements = [], set()
     for _ in range(RUNS):
@@ -441,10 +465,26 @@ def test_hub_page_p95_on_the_scale_fixture(request):
         "budget_ms": HUB_MS,
         "statements": sorted(statements),
         "tasks": WorkOrder.objects.count(),
+        "charging_tasks": WorkOrder.objects.filter(source_kind="charge_forecast").count(),
         "samples_ms": [round(x, 1) for x in samples],
     }
     print("\n/hub/ on the scale fixture:", json.dumps(res, indent=1))
     assert res["p95_ms"] <= HUB_MS, res
+    # v2 02B: Today and the Charging page with the charge forecast on (Today keeps its readiness budget)
+    for path, budget in (("/ops/", READINESS_MS), ("/hub/charging/", HUB_MS)):
+        assert c.get(path).status_code == 200  # warm-up
+        times, stmts = [], set()
+        for _ in range(RUNS):
+            counter = Counter()
+            t0 = time.perf_counter()
+            with connection.execute_wrapper(counter):
+                assert c.get(path).status_code == 200
+            times.append((time.perf_counter() - t0) * 1000)
+            stmts.add(counter.n)
+        out = {"p95_ms": round(p95(times), 1), "median_ms": round(sorted(times)[RUNS // 2], 1),
+               "budget_ms": budget, "statements": sorted(stmts)}  # fmt: skip
+        print(f"\n{path} with charging on the scale fixture:", json.dumps(out))
+        assert out["p95_ms"] <= budget, (path, out)
 
 
 # ------------------------------------------------------------------ 01D release fix: /readiness/
