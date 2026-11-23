@@ -193,6 +193,7 @@ class Today:
     issue_count_exact: bool = True
     cards: list[dict[str, Any]] = field(default_factory=list)
     more_cards: int = 0
+    attention_total: int = 0  # every attention card, shown or not (the jump link at the top, 01D J2-2)
     blockers_ok: bool = False
     blocker_count: int = 0
     inbox_cards: list[dict[str, Any]] = field(default_factory=list)
@@ -649,6 +650,7 @@ def _merge_cards(t: Today, roles: set[str]) -> None:
     t.issue_count += len(t.readiness_cards)
     cards.sort(key=lambda c: (c["priority"], c["since"], c["code"], c["ref"]))
     t.more_cards = max(0, len(cards) - CARD_LIMIT)
+    t.attention_total = len(cards)
     t.cards = cards[:CARD_LIMIT]
 
 

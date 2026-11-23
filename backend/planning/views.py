@@ -15,7 +15,6 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from accounts.permissions import active_roles, has_permission
-from fleet.models import Robot
 from planning import services as p
 from planning.forms import (
     AdultsForm,
@@ -27,7 +26,8 @@ from planning.forms import (
     SiteForm,
     WithdrawForm,
 )
-from planning.models import Person, Reservation, Site, SiteAssessment, Vehicle, Visit
+from planning.models import Reservation, Site, SiteAssessment, Visit
+from planning.options import plan_options, suggest
 from planning.plain import ALREADY_DONE, plain_blockers, refusal_text, role_words, who_can
 from platform_core.commands import CommandError
 from platform_core.interaction import consume_form_token
@@ -101,23 +101,43 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _guard(request)) is not None:
         return deny
     v = get_object_or_404(Visit.objects.select_related("site"), code=code)
+    can_plan = has_permission(request.user, "planning.plan")
+    wants_suggestion = request.GET.get("suggest") == "1"
+    if wants_suggestion and not can_plan:
+        return HttpResponseForbidden(who_can("planning.plan"))
     card = _card(v)
+    options = suggestion = None
+    if can_plan and v.status != "cancelled":
+        options = plan_options(v)  # read only, a fixed number of statements (planning/options.py)
+        if wants_suggestion:
+            suggestion = suggest(v, options)  # read only: books, reserves and records nothing
+            if suggestion.found:
+                picks = {
+                    "robots": suggestion.robot,
+                    "leads": suggestion.lead,
+                    "seconds": suggestion.second,
+                    "vehicles": suggestion.vehicle,
+                }
+                for name, pick in picks.items():
+                    for o in getattr(options, name):
+                        o.selected = pick is not None and o.code == pick.code
     return render(
         request,
         "planning/visit.html",
         {
             **card,
-            "revisions": v.revisions.order_by("-revision_no"),
+            "revisions": v.revisions.select_related(
+                "robot", "lead__user", "second__user", "vehicle"
+            ).order_by("-revision_no"),
             "reservations": Reservation.objects.filter(revision__visit=v)
             .select_related("resource", "revision")
             .order_by("released_at", "starts_at"),
-            "robots": Robot.objects.filter(lifecycle="in_service").order_by("code"),
-            "persons": Person.objects.order_by("code"),
-            "vehicles": Vehicle.objects.order_by("code"),
+            "options": options,
+            "suggestion": suggestion,
             "site_tz": v.site.timezone,
             "roles": sorted(active_roles(request.user)),
             "can": {
-                "plan": has_permission(request.user, "planning.plan"),
+                "plan": can_plan,
                 "confirm": has_permission(request.user, "planning.confirm"),
             },
             "who_plan": who_can("planning.plan"),
