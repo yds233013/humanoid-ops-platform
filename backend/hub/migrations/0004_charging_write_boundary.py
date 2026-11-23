@@ -257,8 +257,7 @@ END $fn$;
 CREATE OR REPLACE FUNCTION hub_record_soc_reading(p_actor bigint, p_robot bigint, p_soc int,
                                                   p_observed_at timestamptz, p_rid text) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
-DECLARE now_ts timestamptz := clock_timestamp(); obs timestamptz := coalesce(p_observed_at, clock_timestamp());
-        new_id bigint; rb fleet_robot;
+DECLARE now_ts timestamptz := clock_timestamp(); obs timestamptz; new_id bigint; rb fleet_robot;
 BEGIN
   IF NOT hub_actor_has(p_actor, ARRAY['hub_technician', 'field_operator', 'ops_lead', 'engineer']) THEN
     PERFORM hub_deny('Only the hub technician, a field operator, the ops lead or an engineer can record a battery level');
@@ -266,7 +265,10 @@ BEGIN
   IF p_soc IS NULL OR p_soc < 0 OR p_soc > 100 THEN
     PERFORM fleet_fail('The battery level is a whole number from 0 to 100');
   END IF;
-  IF obs > now_ts THEN PERFORM fleet_fail('A reading cannot be in the future'); END IF;
+  obs := coalesce(p_observed_at, now_ts);
+  -- two minutes of tolerance for the app host's clock; a reading is never stored later than its recording
+  IF obs > now_ts + interval '2 minutes' THEN PERFORM fleet_fail('A reading cannot be in the future'); END IF;
+  obs := least(obs, now_ts);
   IF obs < now_ts - interval '24 hours' THEN
     PERFORM fleet_fail('Enter readings from the last 24 hours; older ones are not recorded');
   END IF;

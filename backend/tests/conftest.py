@@ -30,7 +30,16 @@ def _allow_test_teardown_to_flush_audit():
             t
             for t in tables
             if t.startswith(
-                ("platform_core_", "fleet_", "planning_", "readiness_", "execution_", "operations_")
+                (
+                    "platform_core_",
+                    "fleet_",
+                    "planning_",
+                    "readiness_",
+                    "execution_",
+                    "operations_",
+                    "hub_",
+                    "robot_soc_",
+                )
             )
         ]
         # Test-only: teardown TRUNCATEs ~100 tables; on a loaded Docker host that alone can exceed the app's
