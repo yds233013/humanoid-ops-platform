@@ -39,12 +39,36 @@ def parse_codes(text: str) -> list[str]:
     return [t for t in (x.strip() for x in text.replace(";", ",").split(",")) if t]
 
 
+TASK_WORDS_MAX = 2
+
+
+def normalize_task(token: str) -> str:
+    """01D J3-3: a task may be typed as words. ``laundry folding`` -> ``laundry_folding`` (lowercase, spaces
+    to underscores). Still no sentences: at most two words of letters, and no capitalised second word (a name
+    such as "Mrs Smith" is refused). A single token (``T-04``) is kept exactly as typed."""
+    words = token.split()
+    if len(words) <= 1:
+        return token
+    if len(words) > TASK_WORDS_MAX:
+        raise forms.ValidationError(
+            "Use a short task name of one or two words, for example laundry folding. Never a sentence."
+        )
+    if (
+        not all(w.isascii() and w.isalpha() for w in words)
+        or any(w[1:] != w[1:].lower() for w in words)
+        or (words[1][0].isupper())
+    ):
+        raise forms.ValidationError("Task words are plain lowercase words, for example laundry folding.")
+    return "_".join(w.lower() for w in words)
+
+
 class CodesField(forms.CharField):
-    """Comma-separated task codes such as ``T-04, T-07``. Codes only, so no sentence can be typed here."""
+    """Comma-separated task codes such as ``T-04, laundry folding``. Short codes or two-word task names only
+    (normalized to ``laundry_folding``), so no sentence can be typed here."""
 
     def to_python(self, value: Any) -> Any:
         text = super().to_python(value) or ""
-        codes = parse_codes(text)
+        codes = [normalize_task(c) for c in parse_codes(text)]
         for c in codes:
             CODE(c)
         return codes
@@ -104,7 +128,8 @@ class AssessmentForm(forms.Form):
     excluded_tasks = CodesField(
         label="Tasks not allowed at this home",
         required=False,
-        help_text="Task codes separated by commas, for example T-04, T-07. Leave blank if none.",
+        help_text="Task codes or short task names separated by commas, for example T-04, laundry folding "
+        "(saved as laundry_folding). Leave blank if none.",
     )
     supersedes = forms.ChoiceField(
         label="Replaces",
@@ -170,7 +195,10 @@ class BookForm(forms.Form):
         label="Travel back (minutes)", min_value=1, max_value=600, required=False
     )
     tasks = CodesField(
-        label="Tasks", required=False, help_text="Task codes separated by commas, for example T-04."
+        label="Tasks",
+        required=False,
+        help_text="Task codes or short task names separated by commas, for example T-04, laundry folding "
+        "(saved as laundry_folding).",
     )
     scopes = forms.MultipleChoiceField(
         label="Consent the visit needs",
@@ -216,7 +244,7 @@ class PlanForm(forms.Form):
     def __init__(self, *args: Any, **kw: Any) -> None:
         super().__init__(*args, **kw)
         blank = [("", "-")]
-        robots = Robot.objects.filter(lifecycle="in_service").order_by("code")
+        robots = Robot.objects.exclude(lifecycle="retired").order_by("code")  # the service refuses the rest
         people = blank + [(x.code, x.code) for x in Person.objects.order_by("code")]
         self.fields["robot"].choices = blank + [(r.code, r.code) for r in robots]  # type: ignore[attr-defined]
         self.fields["lead"].choices = people  # type: ignore[attr-defined]

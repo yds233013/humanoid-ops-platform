@@ -11,11 +11,22 @@
 </div>
 {% if visit.status != "cancelled" %}
 <div class="card"><h2>Plan or reschedule</h2>
-{% if can.plan %}<form method="post" action="/planning/visits/{{ visit.code }}/plan/" class="row">{% csrf_token %}{% form_token %}
-  <label>Robot <select name="robot"><option value="">-</option>{% for r in robots %}<option {% if rev.robot_id == r.id %}selected{% endif %}>{{ r.code }}</option>{% endfor %}</select></label>
-  <label>Lead <select name="lead"><option value="">-</option>{% for x in persons %}<option {% if rev.lead_id == x.id %}selected{% endif %}>{{ x.code }}</option>{% endfor %}</select></label>
-  <label>Second <select name="second"><option value="">-</option>{% for x in persons %}<option {% if rev.second_id == x.id %}selected{% endif %}>{{ x.code }}</option>{% endfor %}</select></label>
-  <label>Vehicle <select name="vehicle"><option value="">-</option>{% for x in vehicles %}<option {% if rev.vehicle_id == x.id %}selected{% endif %}>{{ x.code }}</option>{% endfor %}</select></label>
+{% if can.plan %}<p class="muted" style="margin:0 0 6px">Each option says whether it is free for this visit's window (inspection, travel, on site, return and charging). Free options are listed first. The plan is checked again when you save it.</p>
+<p style="margin:0 0 10px"><a class="btn" href="?suggest=1#plan" data-suggest="1">Suggest a free robot, crew and vehicle</a></p>
+{% if suggestion %}<div class="suggestion" data-suggestion="{% if suggestion.found %}found{% else %}none{% endif %}" role="status">
+{% if suggestion.found %}<h3>Suggested assignment · Not yet saved</h3>
+<p><b>Available when checked — revalidated when saved.</b> The form below is filled in; press Save plan to keep it, or change any field.</p>
+<ul class="plainlist">{% for line in suggestion.explanations %}<li>{{ line }}</li>{% endfor %}</ul>
+<p class="muted">Planning eligibility is not departure readiness: departure is checked separately on the readiness page.</p>
+{% else %}<h3>No suggestion</h3>
+<ul class="plainlist">{% for line in suggestion.why_not %}<li>{{ line }}</li>{% endfor %}</ul>
+<p class="muted">You can still choose a robot, crew and vehicle yourself below; the labels say what is free.</p>{% endif %}
+</div>{% endif %}
+<form method="post" action="/planning/visits/{{ visit.code }}/plan/" class="row" id="plan">{% csrf_token %}{% form_token %}
+  <label>Robot <select name="robot"><option value="">-</option>{% for o in options.robots %}<option value="{{ o.code }}"{% if o.selected %} selected{% endif %} data-status="{{ o.status }}">{{ o.label }}</option>{% endfor %}</select></label>
+  <label>Lead <select name="lead"><option value="">-</option>{% for o in options.leads %}<option value="{{ o.code }}"{% if o.selected %} selected{% endif %} data-status="{{ o.status }}">{{ o.label }}</option>{% endfor %}</select></label>
+  <label>Second <select name="second"><option value="">-</option>{% for o in options.seconds %}<option value="{{ o.code }}"{% if o.selected %} selected{% endif %} data-status="{{ o.status }}">{{ o.label }}</option>{% endfor %}</select></label>
+  <label>Vehicle <select name="vehicle"><option value="">-</option>{% for o in options.vehicles %}<option value="{{ o.code }}"{% if o.selected %} selected{% endif %} data-status="{{ o.status }}">{{ o.label }}</option>{% endfor %}</select></label>
   <label>New start ({{ site_tz }}) <input type="datetime-local" name="start"></label>
   <label>New end <input type="datetime-local" name="end"></label>
   <label>Reason for change <input name="reason" maxlength="200"></label><button class="primary">Save plan</button>
@@ -33,6 +44,6 @@
 <div class="card"><h2>Revision history</h2>
 <div class="tablewrap"><table><thead><tr><th>Rev</th><th>When</th><th>Result at the time</th><th>Robot / crew / vehicle</th><th>Reason</th></tr></thead><tbody>
 {% for r in revisions %}<tr><td>r{{ r.revision_no }}</td><td class="muted">{{ r.created_at|local_dt }}</td><td>{{ r.get_feasibility_display }}</td>
-<td>{{ r.robot.code|default:"-" }} / {{ r.lead.code|default:"-" }}, {{ r.second.code|default:"-" }} / {{ r.vehicle.code|default:"-" }}</td><td>{{ r.reason }}</td></tr>{% endfor %}
+<td>{{ r.robot.code|default:"-" }} / {{ r.lead.label|default:"-" }}, {{ r.second.label|default:"-" }} / {{ r.vehicle.code|default:"-" }}</td><td>{{ r.reason }}</td></tr>{% endfor %}
 </tbody></table></div></div>
 {% endblock %}

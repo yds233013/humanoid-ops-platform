@@ -8,6 +8,7 @@ plain words that name the responsible role, and (c) holds the double-submit mess
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from accounts.roles import PERMISSIONS
@@ -146,7 +147,13 @@ def plain_blocker(b: dict[str, str]) -> dict[str, str]:
         what = "robot handling" if m["role"] is None else m["role"]
         sentence = f"{m['who']} is not qualified for {what} for the whole activity."
     elif code == "ROBOT_NOT_ELIGIBLE" and ":" in msg:
-        sentence = f"Robot {msg.split(':', 1)[0]} is not ready for planning."
+        robot, _, rest = msg.partition(":")
+        reasons = [robot_reason(r) for r in rest.split("; ") if r.strip()]
+        if reasons:
+            sentence = f"Robot {robot} is not ready for planning: " + "; ".join(r.long for r in reasons) + "."
+            action = "Pick another robot, or: " + " ".join(dict.fromkeys(r.fix for r in reasons))
+        else:
+            sentence = f"Robot {robot} is not ready for planning."
     elif code == "CONSENT" and msg:
         sentence = msg.rstrip(".") + "."
     return {
@@ -160,6 +167,110 @@ def plain_blocker(b: dict[str, str]) -> dict[str, str]:
 
 def plain_blockers(blockers: list[dict[str, str]]) -> list[dict[str, str]]:
     return [plain_blocker(b) for b in blockers]
+
+
+# ------------------------------------------------------------------ robot eligibility reasons (01D J3-2)
+@dataclass(frozen=True)
+class RobotReason:
+    short: str  # for an option label: "on hold"
+    long: str  # for a sentence: "it is on hold (Robot hold H-0003 ...)"
+    fix: str  # who can fix it: "The ops lead or the engineering lead can release the hold."
+
+
+# (prefix of the fleet eligibility reason, short words, long words, permission that fixes it, what they do)
+_ROBOT_REASONS: list[tuple[str, str, str, str, str]] = [
+    (
+        "Lifecycle is",
+        "not in service",
+        "it is not in service",
+        "fleet.transition_lifecycle",
+        "move it into service",
+    ),
+    (
+        "No configuration manifest",
+        "no configuration recorded",
+        "no configuration is recorded",
+        "fleet.record_manifest",
+        "record its configuration",
+    ),
+    (
+        "Configuration hold",
+        "on hold",
+        "its configuration is on hold",
+        "fleet.release_hold",
+        "release the hold",
+    ),
+    ("Robot hold", "on hold", "it is on hold", "fleet.release_hold", "release the hold"),
+    (
+        "Configuration",
+        "configuration not approved",
+        "its configuration is not approved for home use",
+        "fleet.decide_pattern",
+        "approve the configuration for home use",
+    ),
+    (
+        "No base home-use authorization",
+        "no home-use authorization",
+        "it has no home-use authorization",
+        "fleet.base_authorization",
+        "authorize it for home use",
+    ),
+    (
+        "No approved capability profile",
+        "no approved capability profile",
+        "its configuration has no approved capability profile",
+        "fleet.approve_capability",
+        "approve the capability profile",
+    ),
+    (
+        "Capability unknown",
+        "capability not complete",
+        "a capability value is not known",
+        "fleet.publish_capability",
+        "publish the missing capability value",
+    ),
+    (
+        "Capability profile is synthetic",
+        "capability is demo data",
+        "its capability profile is demo data",
+        "fleet.publish_capability",
+        "publish engineering capability values",
+    ),
+    (
+        "Periodic inspection overdue",
+        "inspection overdue",
+        "its periodic inspection is overdue",
+        "fleet.submit_inspection",
+        "record a periodic inspection",
+    ),
+    (
+        "No qualifying periodic inspection",
+        "inspection missing",
+        "it has no qualifying periodic inspection",
+        "fleet.submit_inspection",
+        "record a periodic inspection",
+    ),
+    (
+        "Periodic inspection interval unknown",
+        "inspection interval unknown",
+        "no periodic inspection interval is approved",
+        "fleet.approve_periodic_rule",
+        "approve a periodic inspection rule",
+    ),
+]
+
+
+def robot_reason(reason: str) -> RobotReason:
+    """Plain words for one fleet eligibility reason (fleet.services.evaluate_eligibility or the
+    operations_robot_eligibility view, which use the same wording) and who can fix it. Decides nothing."""
+    from platform_core.interaction import who_can as roles_who_can
+
+    reason = reason.strip()
+    for prefix, short, long, perm, what in _ROBOT_REASONS:
+        if reason.startswith(prefix):
+            who = roles_who_can(perm)
+            return RobotReason(short, f"{long} ({reason})", f"{who[0].upper()}{who[1:]} can {what}.")
+    return RobotReason(reason[:40], reason, "Ask the engineering lead.")
 
 
 # ------------------------------------------------------------------ double-submit message

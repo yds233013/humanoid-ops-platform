@@ -31,6 +31,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 {% endblock %}
 {% block content %}
 <div class="today-head"><div><h1>Today, {{ t.local_date_text }}</h1><div class="sub muted op-asof" data-as-of="{{ as_of_iso }}">As of <b>{{ as_of_iso|local_dt }}</b> · one consistent snapshot; reload for a newer one</div></div></div>
+{% if t.attention_total %}<p class="jump" style="margin:var(--s1) 0 var(--s3)"><a href="#attention" data-jump="attention">{{ t.attention_total }} item{{ t.attention_total|pluralize:" needs,s need" }} your attention</a></p>{% endif %}
 
 {% for n in t.notices %}<div class="notice {{ n.tone }}" role="alert" data-notice="{{ n.key }}">{{ n.text }}</div>{% endfor %}
 
@@ -40,7 +41,9 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
   <div class="tile" data-coverage="assessed"><b class="n">{{ t.coverage_counts.assessed }}</b><span>Readiness assessed: {{ t.coverage_counts.assessed }}</span></div>
   <div class="tile{% if t.coverage_counts.unassessed %} warn{% endif %}" data-coverage="unassessed"><b class="n">{{ t.coverage_counts.unassessed }}</b><span>Not yet assessed: {{ t.coverage_counts.unassessed }}</span></div>
 </div>
-<p class="muted" style="margin:var(--s1) 0 0" data-coverage-note="1">Only {{ t.coverage_counts.assessed }} of {{ t.coverage_counts.all }} visit{{ t.coverage_counts.all|pluralize }} {{ t.coverage_counts.assessed|pluralize:"has,have" }} a readiness result. The counts below describe those {{ t.coverage_counts.assessed }} only, not the whole fleet. Open a visit that is not yet assessed to see its checklist.</p>
+{% if t.coverage_counts.all and t.coverage_counts.assessed == t.coverage_counts.all %}<p class="muted" style="margin:var(--s1) 0 0" data-coverage-note="all">All {{ t.coverage_counts.all }} visit{{ t.coverage_counts.all|pluralize:" has,s have" }} a readiness result.</p>
+{% elif t.coverage_counts.all %}<p class="muted" style="margin:var(--s1) 0 0" data-coverage-note="1">Only {{ t.coverage_counts.assessed }} of {{ t.coverage_counts.all }} visit{{ t.coverage_counts.all|pluralize }} {{ t.coverage_counts.assessed|pluralize:"has,have" }} a readiness result. The counts below describe those {{ t.coverage_counts.assessed }} only, not the whole fleet. Open a visit that is not yet assessed to see its checklist.</p>
+{% else %}<p class="muted" style="margin:var(--s1) 0 0" data-coverage-note="none">No visits today or tomorrow.</p>{% endif %}
 {% else %}<div class="tiles"><div class="tile off" data-count-unavailable="coverage"><b class="n">&ndash;</b><span>Could not load</span></div></div>{% endif %}</div>
 
 <div class="tilegroup" data-counts="visits"><h2>Visits today, of {{ t.coverage_counts.today_assessed }} assessed</h2>
