@@ -1,0 +1,9 @@
+{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/custody/" class="row" style="margin-top:10px" data-custody-form="1">{% csrf_token %}{% form_token %}
+  <b>Record a custody move</b>
+  <label>To <select name="to_kind">{% for k in move_targets %}<option value="{{ k }}"{% if k == preset %} selected{% endif %}>{{ k }}</option>{% endfor %}</select></label>
+  <label>Custodian <select name="custodian">{% for p in persons %}<option value="{{ p.code }}"{% if p.pk == crew.0.pk %} selected{% endif %}>{{ p.label }}</option>{% endfor %}</select></label>
+  <label>Receiver (required) <select name="received_by" required aria-describedby="receiver-help-{{ preset|default:'any' }}"><option value="">Choose who receives the robot</option>{% for p in persons %}<option value="{{ p.code }}">{{ p.label }}</option>{% endfor %}</select></label>
+  <label>Note <input name="note" placeholder="required for a recovery"></label>
+  <button class="primary">Record custody move</button>
+  <span class="muted" id="receiver-help-{{ preset|default:'any' }}" data-receiver-help="1">Receiver is required: every move (to the site, back to the vehicle, into the hub) is a handoff to the person who receives the robot. Handoffs to and from the site are between the run's crew. A move from unaccounted is a recovery (ops lead only) and does not resolve the incident or release its hold.</span>
+</form>

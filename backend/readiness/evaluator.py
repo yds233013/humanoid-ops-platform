@@ -468,7 +468,8 @@ def _gate_evidence(
             elif others.exists():
                 b.add(EVIDENCE_MISSING, f"{label} was voided", f"Record a new {label.lower()}")
             else:
-                b.add(EVIDENCE_MISSING, f"No {label.lower()} recorded", f"Record a {label.lower()}")
+                article = "an" if label[:1].lower() in "aeiou" else "a"
+                b.add(EVIDENCE_MISSING, f"No {label.lower()} recorded", f"Record {article} {label.lower()}")
             continue
         if ev.result != "pass":
             reported.add(kind)

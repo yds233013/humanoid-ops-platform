@@ -1,0 +1,5 @@
+{% load ui %}{% if next_trip %}<form method="post" action="/execution/runs/{{ run.code }}/trip-event/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
+  <input type="hidden" name="kind" value="{{ next_trip }}">
+  <button class="primary">Record: {% if next_trip == "arrived_site" %}Vehicle arrived at site{% elif next_trip == "departed_site" %}Vehicle departed site{% else %}Vehicle arrived at hub{% endif %}</button>
+  {% if next_trip == "arrived_hub" %}<span class="muted">Records the vehicle only; the robot's return is a separate custody receipt.</span>{% endif %}
+</form>{% endif %}

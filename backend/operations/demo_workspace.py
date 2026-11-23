@@ -404,7 +404,13 @@ class _Builder:
             DeploymentSetting.objects.update_or_create(key=key, defaults={"value": value})
         encoded = make_password(self.password)  # hashed once; every demo login shares the env password
         for username, role, _code, note in LOGINS:
-            user = User.objects.create(username=username, password=encoded)
+            first, _, last = username.partition(".")  # invented people: "jordan.lee" -> Jordan Lee
+            user = User.objects.create(
+                username=username,
+                password=encoded,
+                first_name=first.capitalize(),
+                last_name=last.capitalize(),
+            )
             RoleGrant.objects.create(user=user, role=role)
             self.u[username] = user
             self.s.logins.append((username, role, note))

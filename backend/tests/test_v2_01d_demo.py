@@ -250,6 +250,7 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         set_setting("demo_mode", "true")
 
     # ---- the badge, once, on Today; the logins in the output, never the password
+    assert ops.get_full_name() == "Dana Ortiz"  # J5-3: invented names, so labels read "P-101 · Dana Ortiz"
     assert ops.check_password(PASSWORD) and RoleGrant.objects.filter(user=ops, role="ops_lead").exists()
     assert PASSWORD not in out
     for username in ("priya.raman", "dana.ortiz", "jordan.lee", "elena.vasquez", "kenji.watanabe"):

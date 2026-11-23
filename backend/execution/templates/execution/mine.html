@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}My visits{% endblock %}
+{% block content %}
+{% page_header title="My visits" %}{% if person %}{{ person.label }} · today and tomorrow{% else %}Today and tomorrow{% endif %}{% endpage_header %}
+{% if not person %}{% include "ui/empty.html" with title="You are not registered as crew" text="Only people registered as crew have visits here. The ops lead registers people on the People page." %}
+{% elif rows %}
+<div class="tablewrap"><table><thead><tr><th>When</th><th>Visit</th><th>Home</th><th>Robot</th><th>Your part</th><th>Next</th></tr></thead><tbody>
+{% for r in rows %}<tr data-my-visit="{{ r.visit.code }}">
+  <td><b>{{ r.day }}</b><div class="muted">{{ r.rev.on_site_start|local_dt }} to {{ r.rev.on_site_end|local_time }}</div></td>
+  <td>{{ r.visit.code }}<div class="muted">{{ r.visit|visit_status }}</div></td>
+  <td>{{ r.visit.site|home_label }}</td>
+  <td>{{ r.rev.robot.code|default:"not assigned yet" }}</td>
+  <td>{{ r.role }}<div class="muted">with {% if r.role == "Lead" %}{{ r.rev.second.label|default:"-" }}{% else %}{{ r.rev.lead.label|default:"-" }}{% endif %}</div></td>
+  <td>{% if r.run %}<a class="btn primary" href="/execution/runs/{{ r.run.code }}/">Open the field run {{ r.run.code }}</a>{% else %}<a class="btn" href="/readiness/visits/{{ r.visit.code }}/">Open the readiness checklist</a>{% endif %}</td>
+</tr>{% endfor %}</tbody></table></div>
+{% else %}{% include "ui/empty.html" with title="No visits for you today or tomorrow" text="Visits where you are the lead or the second person of the plan appear here." %}{% endif %}
+<p class="muted"><a href="/execution/">All field runs</a> · <a href="/planning/">Planner</a></p>
+{% endblock %}

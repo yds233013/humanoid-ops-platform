@@ -8,6 +8,7 @@ app_name = "execution"
 
 urlpatterns = [
     path("", views.index, name="index"),
+    path("mine/", views.my_visits, name="mine"),
     path("runs/<str:code>/", views.run_detail, name="run"),
     path("runs/<str:code>/verify/", views.verify_view, name="verify"),
     path("runs/<str:code>/trip-event/", views.trip_event_view, name="trip-event"),

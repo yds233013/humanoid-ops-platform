@@ -312,10 +312,10 @@ def refusal(message: Any) -> dict[str, Any] | None:
 # (key, label, url, permission or None, url prefixes that make it the active section)
 NAV: list[tuple[str, str, str, str | None, tuple[str, ...]]] = [
     ("today", "Today", "/ops/", "operations.read", ("/ops/", "/ops/timeline/")),
-    ("dispatch", "Dispatch", "/planning/", "planning.read", ("/planning/", "/readiness/")),
+    ("dispatch", "Dispatch", "/planning/", "planning.read", ("/planning/", "/readiness/", "/execution/")),
     ("fleet", "Fleet", "/fleet/", "fleet.read", ("/fleet/",)),
     ("customers", "Customers", "/planning/sites/", "planning.read", ("/planning/sites/",)),
-    ("hub", "Hub", "/ops/closeout/", "operations.read", ("/ops/closeout/", "/execution/")),
+    ("hub", "Hub", "/ops/closeout/", "operations.read", ("/ops/closeout/",)),
     ("issues", "Issues", "/ops/exceptions/", "operations.read", ("/ops/exceptions/", "/ops/incidents/")),
 ]
 
@@ -328,6 +328,8 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     "dispatch": [
         ("Planner", "/planning/", "planning.read"),
         ("Departure readiness", "/readiness/", "readiness.read"),
+        ("Field runs", "/execution/", "execution.read"),
+        ("My visits", "/execution/mine/", "execution.read"),
     ],
     "fleet": [
         ("Robots", "/fleet/", "fleet.read"),
@@ -386,7 +388,7 @@ SECTION_PREFIXES: list[tuple[str, str]] = [
     ("/execution/incidents/", "issues"),
     ("/ops/timeline/", "today"),
     ("/ops/", "today"),
-    ("/execution/", "hub"),
+    ("/execution/", "dispatch"),  # field runs and My visits (01D J5-1)
     ("/planning/", "dispatch"),
     ("/readiness/", "dispatch"),
     ("/fleet/", "fleet"),
@@ -430,9 +432,15 @@ def workspace_demo_mode(request: HttpRequest) -> bool:
     return cached
 
 
+FIELD_ONLY_LANDING = "/execution/mine/"
+
+
 def landing_url(roles: set[str]) -> str:
-    """Where a person lands after login: Today when they may read it; an admin (who manages the workspace but
-    reads no operations) lands on workspace setup; everyone else on Fleet."""
+    """Where a person lands after login: a crew member (field operator and no other operational role) on My
+    visits (01D J5-1); otherwise Today when they may read it; an admin (who manages the workspace but reads no
+    operations) lands on workspace setup; everyone else on Fleet."""
+    if "field_operator" in roles and not (roles - {"field_operator", "admin"}):
+        return FIELD_ONLY_LANDING
     if _allowed(roles, "operations.read"):
         return "/ops/"
     if _allowed(roles, "platform_core.manage_workspace"):
