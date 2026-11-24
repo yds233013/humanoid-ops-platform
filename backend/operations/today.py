@@ -287,6 +287,12 @@ def _visit_row(v: Any, approval: dict[str, Any] | None, today: date) -> VisitRow
     if v.robot is None:
         hard = True
         why.append("No robot is assigned")
+    if v.maintenance_reasons:  # v2 02C: "Blocked: maintenance ..." and who can clear it (gate active only)
+        from planning.plain import robot_reason  # noqa: PLC0415 - planning imports operations helpers
+
+        hard = True
+        first = v.maintenance_reasons[0]
+        why.append(f"{first}. {robot_reason(first).fix}")
     if v.readiness_evaluated:
         codes = list(v.readiness_blockers)
         if codes:

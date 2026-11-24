@@ -59,11 +59,23 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "'fleet_holdpolicyregistry', 'fleet_holdrebaseactivation', "
             # Phase 02B (contract 8.8): charger reservations, charging sessions and battery readings are written
             # only through SECURITY DEFINER functions (hub/0004); the runtime role has SELECT only. Asserted below.
-            "'hub_charger_reservation', 'hub_charging_session', 'robot_soc_reading') "
+            "'hub_charger_reservation', 'hub_charging_session', 'robot_soc_reading', "
+            # Phase 02C (contract 8.8): maintenance rules, their approvals and withdrawals, and maintenance
+            # records are written only through SECURITY DEFINER functions (fleet/0010). Asserted below.
+            "'fleet_maintenancerule', 'fleet_maintenanceruleapproval', 'fleet_maintenancerulewithdrawal', "
+            "'fleet_maintenancerecord') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
-        for table in ("hub_charger_reservation", "hub_charging_session", "robot_soc_reading"):
+        for table in (
+            "hub_charger_reservation",
+            "hub_charging_session",
+            "robot_soc_reading",
+            "fleet_maintenancerule",
+            "fleet_maintenanceruleapproval",
+            "fleet_maintenancerulewithdrawal",
+            "fleet_maintenancerecord",
+        ):
             cur.execute(
                 "SELECT has_table_privilege(current_user, %s, 'SELECT'), "
                 "has_table_privilege(current_user, %s, 'INSERT'), "

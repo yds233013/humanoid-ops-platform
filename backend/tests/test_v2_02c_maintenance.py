@@ -920,3 +920,23 @@ def test_robot_panel_and_maintenance_page_with_record_for_qualified_users(w):
     assert _client(w.field).post(page, {"requirement_code": "JOINT"}).status_code == 403
     assert _client(make_user("mn_admin", "admin")).get(page).status_code == 403
     assert "<script" not in body.split("<main", 1)[-1].split("</main>")[0]
+
+
+def test_today_shows_blocked_maintenance_and_who_clears_it(w):
+    from operations import readmodels, today  # noqa: PLC0415
+
+    rule(w)
+    record(w, "R-02")
+    at = Visit.objects.get(code=w.visit).current_revision.on_site_start - timedelta(hours=2)
+    tl = readmodels.timeline(at, window_min=24 * 60)
+    row = next(v for v in tl.visits if v.visit == w.visit)
+    assert row.maintenance_reasons == []  # the gate is not active: nothing blocks, nothing is shown
+    gate(True)
+    tl = readmodels.timeline(at, window_min=24 * 60)
+    row = next(v for v in tl.visits if v.visit == w.visit)
+    assert row.maintenance_reasons == [
+        "Maintenance JOINT status unknown: no maintenance record for this robot"
+    ]
+    out = today._visit_row(row, None, at.date())
+    assert out.status == "blocked" and out.why[0].startswith("Maintenance JOINT status unknown")
+    assert "can record the maintenance" in out.why[0]

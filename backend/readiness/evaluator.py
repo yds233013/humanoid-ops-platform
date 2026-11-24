@@ -227,7 +227,7 @@ def _signer_person_ids(inspection_ids: list[int]) -> list[int]:
 
 def _periodic_status(
     robot: Robot, pattern: ManifestPattern | None, at: datetime | None, production: bool
-) -> tuple[fleet_services.PeriodicStatus, list[str], datetime | None]:
+) -> fleet_services.PeriodicStatus:
     """X-3 status from the authoritative SQL function readiness_periodic_inspection_status (EM Option B):
     ONE statement, independent of the robot's inspection history. ``at`` None means the database clock
     (clock_timestamp(), as db_now()). The independent Python implementation
@@ -246,13 +246,29 @@ def _periodic_status(
             {"r": robot.pk, "p": production, "at": at},
         )
         state, due_at, inspection_id, rule_id, m_reasons, m_due = cur.fetchone()
-    return (
-        fleet_services.PeriodicStatus(
-            state, due_at, inspection_id, rule_id, pattern.code if pattern is not None else None
-        ),
-        list(m_reasons or []),
-        m_due,
+    return fleet_services.PeriodicStatus(
+        state,
+        due_at,
+        inspection_id,
+        rule_id,
+        pattern.code if pattern is not None else None,
+        maintenance_reasons=list(m_reasons or []),
+        maintenance_due=m_due,
     )
+
+
+def _maintenance(robot: Robot, at: datetime | None, production: bool) -> tuple[list[str], datetime | None]:
+    """The maintenance part of ``_periodic_status`` on its own (used only when the periodic status came from
+    elsewhere, e.g. the Python oracle in tests)."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT fleet_maintenance_block_reasons(%(r)s, %(p)s, coalesce(%(at)s, clock_timestamp())),"
+            " CASE WHEN fleet_maintenance_gate_active() THEN (SELECT min(m.due_at) FROM"
+            " fleet_maintenance_status(%(r)s, %(p)s, coalesce(%(at)s, clock_timestamp())) m) END",
+            {"r": robot.pk, "p": production, "at": at},
+        )
+        reasons, due = cur.fetchone()
+    return list(reasons or []), due
 
 
 def _read_world(visit: Visit, at: datetime | None = None) -> _World:
@@ -272,9 +288,14 @@ def _read_world(visit: Visit, at: datetime | None = None) -> _World:
     plan = _select_recovery_plan(v, rev, manifest_id)
     production = not fleet_services.demo_mode()
     latest = _latest_evidence_for(v, rev, manifest_id)
-    periodic, m_reasons, m_due = (
-        _periodic_status(robot, pattern, at, production) if robot is not None else (None, None, None)
-    )
+    periodic = _periodic_status(robot, pattern, at, production) if robot is not None else None
+    m_reasons: list[str] | None = None
+    m_due: datetime | None = None
+    if robot is not None and periodic is not None:
+        if periodic.maintenance_reasons is None:
+            m_reasons, m_due = _maintenance(robot, at, production)
+        else:
+            m_reasons, m_due = periodic.maintenance_reasons, periodic.maintenance_due
     # Dependency persons (contract 07a section 7.2, P0-1), deduplicated: the revision's lead and second, the
     # recovery plan's two people, and the signers of BOTH relied inspections (the latest pre-departure
     # evidence's inspection and the periodic inspection the database will select).

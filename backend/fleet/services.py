@@ -377,6 +377,9 @@ class PeriodicStatus:
     rule_version: int | None = None
     rule_source: str | None = None
     interval_min: int | None = None
+    # v2 02C: read in the same statement by the readiness evaluator (None = not read with this status)
+    maintenance_reasons: list[str] | None = None
+    maintenance_due: datetime | None = None
 
 
 def qualifying_periodic_inspection(robot: Robot, *, production: bool) -> Inspection | None:
