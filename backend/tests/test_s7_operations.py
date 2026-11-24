@@ -455,9 +455,10 @@ def test_production_blockers_panel_both_modes_and_inbox_in_production_only():
     assert set(inbox) == {(b.code, b.entity_ref) for b in panel.items}
     for (code, _), x in inbox.items():
         assert x.priority == 1 and x.since == at and not x.resolvable
-        assert x.owner_role == (
-            "safety_reviewer" if code == "ESCALATION_DEADLINES_NOT_APPROVED" else "engineering_lead"
-        )
+        assert x.owner_role == {
+            "ESCALATION_DEADLINES_NOT_APPROVED": "safety_reviewer",
+            "MAINTENANCE_GATE_INACTIVE": "ops_lead",  # v2 02C: switched on by the owner command
+        }.get(code, "engineering_lead")
         assert x.message.startswith("Production blocker: ")
     assert inbox[("HOLD_UNRELEASABLE", hold)].action_url == "/fleet/R-02/"
     assert inbox[("HOLD_POLICY_NOT_APPROVED", "hold-policy")].action_url == "/fleet/hold-policies/"

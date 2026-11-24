@@ -264,6 +264,8 @@ BLOCKER_LABELS = {
     "INSPECTION_TEMPLATE_NOT_APPROVED": "Inspection template not approved for pre-departure use",
     "PERIODIC_INTERVAL_NOT_APPROVED": "Periodic inspection interval not approved",
     "ESCALATION_DEADLINES_NOT_APPROVED": "Escalation deadlines not owner approved",
+    "MAINTENANCE_RULE_NOT_APPROVED": "Maintenance rules not approved for production",
+    "MAINTENANCE_GATE_INACTIVE": "Maintenance gate not yet activated",
 }
 
 
@@ -322,6 +324,8 @@ def _blocker_url(code: str, ref: str, robot: str | None, pattern: str | None) ->
         return "/fleet/hold-policies/"
     if code == "ESCALATION_DEADLINES_NOT_APPROVED":
         return "/execution/escalation-deadlines/"
+    if code == "MAINTENANCE_GATE_INACTIVE":
+        return "/settings/operating/"
     if code == "HOLD_UNRELEASABLE":
         return robot_url(robot) if robot else f"/fleet/patterns/{pattern}/"
     return f"/fleet/patterns/{ref}/"
