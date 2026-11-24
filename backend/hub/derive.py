@@ -14,6 +14,11 @@ Facts (all read from the authoritative records, nothing re-decided):
   task links to the hold page; releasing stays J7 (approvals), never this task.
 * ``equipment_check`` -> ``equipment_failure``: the latest non-voided equipment check of each visit that
   is not cancelled and not over yet, when it failed. Ref: the evidence code.
+* ``maintenance_status`` -> ``maintenance_due`` (v2 02C): due soon, overdue, unknown or required inspection
+  missing, per robot and requirement (fleet_maintenance_status_set). Ref: ``<robot>:<requirement>:<rule
+  version>:<last record id or none>``: stable while one maintenance cycle runs (due soon -> overdue keeps the
+  task); a new record starts a new cycle and so a new fact, as a new inspection does for ``inspection_due``.
+  A task never records maintenance.
 
 Rules:
 
@@ -94,6 +99,24 @@ facts AS MATERIALIZED (
   SELECT 'charge_forecast', 'charging', c ->> 'ref', (c ->> 'robot_id')::bigint, (c ->> 'visit_id')::bigint,
          c ->> 'title', (c ->> 'due_at')::timestamptz, '/hub/charging/'
   FROM jsonb_array_elements(%(charge)s::jsonb) c
+  UNION ALL
+  -- v2 02C: maintenance due soon, overdue, unknown or waiting for its inspection, per robot and
+  -- requirement, from fleet_maintenance_status_set (the function the planning and authorization gates
+  -- use), whether or not the gate is active yet (the tasks are how the hub works towards activation)
+  SELECT 'maintenance_status', 'maintenance_due',
+         ms.robot_code || ':' || ms.requirement_code || ':' || ms.rule_version || ':'
+           || coalesce(ms.record_id::text, 'none'),
+         ms.robot_id, NULL::bigint,
+         'Maintenance ' || ms.requirement_code || ' of ' || ms.robot_code || CASE ms.state
+           WHEN 'overdue' THEN ' is overdue'
+           WHEN 'unknown' THEN ' has an unknown status'
+           WHEN 'inspection_missing' THEN ' needs its post-maintenance inspection'
+           ELSE ' is due soon' END,
+         ms.due_at, '/fleet/' || ms.robot_code || '/maintenance/'
+  FROM fleet_maintenance_status_set(ARRAY(SELECT id FROM fleet_robot WHERE lifecycle <> 'retired'),
+                                    (SELECT production FROM mode), %(at)s) ms
+  WHERE ms.state IN ('due_soon', 'overdue', 'unknown', 'inspection_missing')
+    AND ms.requirement_code IS NOT NULL
 ),
 ins AS (
   INSERT INTO hub_workorder (type, title, robot_id, visit_id, due_at, owner_id, status, source_kind,

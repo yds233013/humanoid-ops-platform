@@ -92,6 +92,8 @@ PRIORITY: dict[str, int] = {
     "INSPECTION_TEMPLATE_NOT_APPROVED": 1,
     "PERIODIC_INTERVAL_NOT_APPROVED": 1,
     "ESCALATION_DEADLINES_NOT_APPROVED": 1,
+    "MAINTENANCE_RULE_NOT_APPROVED": 1,  # v2 02C
+    "MAINTENANCE_GATE_INACTIVE": 1,  # v2 02C
 }
 BLOCKER_CODES = (
     "HOLD_POLICY_NOT_APPROVED",
@@ -99,6 +101,8 @@ BLOCKER_CODES = (
     "INSPECTION_TEMPLATE_NOT_APPROVED",
     "PERIODIC_INTERVAL_NOT_APPROVED",
     "ESCALATION_DEADLINES_NOT_APPROVED",
+    "MAINTENANCE_RULE_NOT_APPROVED",
+    "MAINTENANCE_GATE_INACTIVE",
 )
 CODES = tuple(sorted(PRIORITY))
 
@@ -131,6 +135,9 @@ RESOLVABLE: dict[str, bool] = {
     "INSPECTION_TEMPLATE_NOT_APPROVED": False,
     "PERIODIC_INTERVAL_NOT_APPROVED": False,
     "ESCALATION_DEADLINES_NOT_APPROVED": False,
+    # v2 02C: rules need company input; the deployment owner switches the gate on (outside the app)
+    "MAINTENANCE_RULE_NOT_APPROVED": False,
+    "MAINTENANCE_GATE_INACTIVE": False,
 }
 
 SortKey = tuple[int, datetime, str, str]  # (priority, since, code, entity_ref)
@@ -629,14 +636,17 @@ ex AS (
   -- only (the overview panel shows them in both modes). The one-time filter skips the view in demo mode.
   SELECT pb.code,
          CASE pb.code WHEN 'HOLD_UNRELEASABLE' THEN 'hold' WHEN 'HOLD_POLICY_NOT_APPROVED' THEN 'hold_policy'
-                      WHEN 'ESCALATION_DEADLINES_NOT_APPROVED' THEN 'setting' ELSE 'pattern' END,
+                      WHEN 'ESCALATION_DEADLINES_NOT_APPROVED' THEN 'setting'
+                      WHEN 'MAINTENANCE_GATE_INACTIVE' THEN 'setting' ELSE 'pattern' END,
          pb.entity_ref, hb.robot_code, NULL::text, %(since_at)s::timestamptz,
          CASE WHEN pb.code = 'ESCALATION_DEADLINES_NOT_APPROVED' THEN 'safety_reviewer'
+              WHEN pb.code = 'MAINTENANCE_GATE_INACTIVE' THEN 'ops_lead'
               ELSE 'engineering_lead' END,
          'Production blocker: ' || pb.detail,
          CASE pb.code
            WHEN 'HOLD_POLICY_NOT_APPROVED' THEN '/fleet/hold-policies/'
            WHEN 'ESCALATION_DEADLINES_NOT_APPROVED' THEN '/execution/escalation-deadlines/'
+           WHEN 'MAINTENANCE_GATE_INACTIVE' THEN '/settings/operating/'
            WHEN 'HOLD_UNRELEASABLE' THEN coalesce('/fleet/' || hb.robot_code || '/',
                                                   '/fleet/patterns/' || hb.pattern_code || '/')
            ELSE '/fleet/patterns/' || pb.entity_ref || '/' END,

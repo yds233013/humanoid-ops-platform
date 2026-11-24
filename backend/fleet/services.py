@@ -377,6 +377,9 @@ class PeriodicStatus:
     rule_version: int | None = None
     rule_source: str | None = None
     interval_min: int | None = None
+    # v2 02C: read in the same statement by the readiness evaluator (None = not read with this status)
+    maintenance_reasons: list[str] | None = None
+    maintenance_due: datetime | None = None
 
 
 def qualifying_periodic_inspection(robot: Robot, *, production: bool) -> Inspection | None:
@@ -467,8 +470,25 @@ class Eligibility:
     periodic: PeriodicStatus | None = field(default=None)
 
 
+def maintenance_block_reasons(robot: Robot, at: datetime | None = None) -> list[str]:
+    """v2 02C: the blocking maintenance reasons of ``robot`` from fleet_maintenance_block_reasons (the SQL the
+    eligibility view, the planning triggers and the authorization function use), in the current mode at ``at``
+    (None = database time). Empty while the owner-provisioned gate is not active. One statement."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT fleet_maintenance_block_reasons(%s, fleet_production_mode(),"
+            " coalesce(%s, clock_timestamp()))",
+            [robot.pk, at],
+        )
+        return list(cur.fetchone()[0] or [])
+
+
 def evaluate_eligibility(
-    robot: Robot, at: datetime | None = None, *, periodic: PeriodicStatus | None = None
+    robot: Robot,
+    at: datetime | None = None,
+    *,
+    periodic: PeriodicStatus | None = None,
+    maintenance: list[str] | None = None,
 ) -> Eligibility:
     """Fleet eligibility only: may this robot be CONSIDERED when planning a visit? It never means the
     robot may depart - that needs a visit-specific departure authorization (later slice).
@@ -476,7 +496,11 @@ def evaluate_eligibility(
     Slice 7 (X-3, EM decision 7): time-dependent. The periodic inspection must be known, present and not
     overdue at ``at`` (None = database time), in the current deployment mode. ``periodic``: the caller's
     already computed ``periodic_inspection_status(robot, at, production=production_mode())`` for this same
-    robot, time and mode (the readiness evaluator computes it once and shares it, so it is not read twice)."""
+    robot, time and mode (the readiness evaluator computes it once and shares it, so it is not read twice).
+
+    v2 02C: while the maintenance gate is active, the blocking maintenance reasons follow the periodic reason
+    (same wording and position as operations_robot_eligibility). ``maintenance``: the caller's already read
+    ``maintenance_block_reasons(robot, at)`` (the readiness evaluator reads it with the periodic status)."""
     reasons: list[str] = []
     pattern = None
     shared, periodic = periodic, None
@@ -514,6 +538,7 @@ def evaluate_eligibility(
         why = periodic_eligibility_reason(periodic)
         if why:
             reasons.append(why)
+        reasons.extend(maintenance if maintenance is not None else maintenance_block_reasons(robot, at))
     for h in Hold.objects.filter(scope="robot", robot=robot, released_at__isnull=True, blocking=True):
         reasons.append(f"Robot hold {h.code} ({h.get_source_type_display()}): {h.reason}")
     ok = not reasons

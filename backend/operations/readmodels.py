@@ -264,6 +264,8 @@ BLOCKER_LABELS = {
     "INSPECTION_TEMPLATE_NOT_APPROVED": "Inspection template not approved for pre-departure use",
     "PERIODIC_INTERVAL_NOT_APPROVED": "Periodic inspection interval not approved",
     "ESCALATION_DEADLINES_NOT_APPROVED": "Escalation deadlines not owner approved",
+    "MAINTENANCE_RULE_NOT_APPROVED": "Maintenance rules not approved for production",
+    "MAINTENANCE_GATE_INACTIVE": "Maintenance gate not yet activated",
 }
 
 
@@ -322,6 +324,8 @@ def _blocker_url(code: str, ref: str, robot: str | None, pattern: str | None) ->
         return "/fleet/hold-policies/"
     if code == "ESCALATION_DEADLINES_NOT_APPROVED":
         return "/execution/escalation-deadlines/"
+    if code == "MAINTENANCE_GATE_INACTIVE":
+        return "/settings/operating/"
     if code == "HOLD_UNRELEASABLE":
         return robot_url(robot) if robot else f"/fleet/patterns/{pattern}/"
     return f"/fleet/patterns/{ref}/"
@@ -442,6 +446,9 @@ class TimelineVisit:
     hold_codes: list[str]
     flags: list[Flag]
     url: str
+    # v2 02C: the planned robot's blocking maintenance reasons (fleet_maintenance_status_set), only while the
+    # maintenance gate is active; read in the same statement as the visits
+    maintenance_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -481,7 +488,25 @@ class Timeline:
 # Confirmed, undeparted visits (current revision) still ahead of or in progress at `at`, starting before the
 # window end. Hold codes: active blocking holds on the planned robot or its current pattern (by id).
 TIMELINE_VISITS_SQL = """
+WITH cand AS MATERIALIZED (
+  SELECT v.id, v.code, rv.id AS rev_id, rv.robot_id
+  FROM planning_visit v JOIN planning_visitrevision rv ON rv.id = v.current_revision_id
+  WHERE v.status = 'confirmed'
+    AND NOT EXISTS (SELECT 1 FROM readiness_departureevent d WHERE d.visit_id = v.id)
+    AND rv.on_site_end > %(at)s
+    AND rv.on_site_start < %(window_end)s
+),
+-- v2 02C: blocking maintenance of the planned robots, once (set-based), only while the gate is active
+mnt AS MATERIALIZED (
+  SELECT s.robot_id, array_agg(s.reason ORDER BY s.requirement_code NULLS FIRST) AS reasons
+  FROM (SELECT 1 WHERE fleet_maintenance_gate_active()) g
+  CROSS JOIN LATERAL fleet_maintenance_status_set(
+    ARRAY(SELECT DISTINCT robot_id FROM cand WHERE robot_id IS NOT NULL), fleet_production_mode(), %(at)s) s
+  WHERE s.blocking
+  GROUP BY s.robot_id
+)
 SELECT v.id AS visit_id, v.code AS visit_code, rv.on_site_start, rv.on_site_end, rb.code AS robot_code,
+       coalesce((SELECT mnt.reasons FROM mnt WHERE mnt.robot_id = rv.robot_id), '{}') AS maintenance_reasons,
        ARRAY(SELECT h.code::text FROM fleet_hold h
              WHERE h.blocking AND h.released_at IS NULL
                AND ((h.scope = 'robot' AND h.robot_id = rv.robot_id)
@@ -646,6 +671,7 @@ def timeline(at: datetime, *, window_min: int) -> Timeline:
                 hold_codes=list(r["hold_codes"]),
                 flags=flags,
                 url=readiness_url(r["visit_code"]),
+                maintenance_reasons=list(r["maintenance_reasons"]),
             )
         )
 

@@ -1726,7 +1726,12 @@ def test_production_blockers_view(w):
     } <= rows
     _production_world(w)
     with connection.cursor() as cur:
-        cur.execute("SELECT code FROM operations_production_blockers WHERE entity_ref = 'P-A'")
+        # v2 02C adds MAINTENANCE_RULE_NOT_APPROVED (no maintenance rule in this Slice 7 world); it has its own
+        # tests in tests/test_v2_02c_maintenance.py. Every Slice 7 code stays cleared exactly as before.
+        cur.execute(
+            "SELECT code FROM operations_production_blockers WHERE entity_ref = 'P-A' "
+            "AND code <> 'MAINTENANCE_RULE_NOT_APPROVED'"
+        )
         assert cur.fetchall() == []
 
 

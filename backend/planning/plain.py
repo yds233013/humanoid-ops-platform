@@ -257,6 +257,28 @@ _ROBOT_REASONS: list[tuple[str, str, str, str, str]] = [
         "fleet.approve_periodic_rule",
         "approve a periodic inspection rule",
     ),
+    # v2 02C: the maintenance reasons of fleet_maintenance_status (only while the maintenance gate is active)
+    (
+        "Maintenance rule",
+        "no maintenance rule in force",
+        "no maintenance rule is in force for its configuration",
+        "fleet.approve_maintenance_rule",
+        "approve a maintenance rule",
+    ),
+    (
+        "No approved maintenance rule",
+        "no maintenance rule",
+        "its configuration has no approved maintenance rule",
+        "fleet.approve_maintenance_rule",
+        "approve a maintenance rule",
+    ),
+    (
+        "Maintenance ",
+        "maintenance not up to date",
+        "its maintenance is not up to date",
+        "fleet.record_maintenance",
+        "record the maintenance (with a maintenance technician qualification)",
+    ),
 ]
 
 

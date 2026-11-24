@@ -172,7 +172,8 @@ DJANGO_DB_IDENTITY=owner python manage.py provision_settings \
 
 - Allowlist: `consent_form_version`, `pre_visit_inspection_min`, `ops_readiness_lookahead_min` (these three are
   required), `ops_closeout_timezone`, `ops_custody_verify_grace_min`, `ops_return_grace_min`,
-  `ops_inspection_grace_min`, `ops_periodic_due_lookahead_min`. Anything else is refused; `demo_mode` and
+  `ops_inspection_grace_min`, `ops_periodic_due_lookahead_min`, `ops_soc_fresh_min`, `maintenance_gate_active`
+  (true or false; see 8a-1). Anything else is refused; `demo_mode` and
   `allow_draft_policies` can never be set this way.
 - Values come from options or `PROVISION_<KEY>` environment variables (`PROVISION_CONSENT_FORM_VERSION=CF-v1`).
   `deploy/start.sh` runs the command after migrations when any `PROVISION_*` variable is present.
@@ -182,6 +183,51 @@ DJANGO_DB_IDENTITY=owner python manage.py provision_settings \
 - It takes the settings advisory lock exclusively, validates everything before writing, and records one audit
   event. Settings > Operating settings (read-only) shows what is set; /settings/setup/ shows
   "Operating settings incomplete" until the required values exist.
+
+## 8a-1. Maintenance gate rollout (v2 02C)
+
+Maintenance overdue is a database gate for planning and departure (contract 11, sections 3.2 and 8.2). Migrating an
+existing database must not stop it from working before any maintenance rule exists, so the gate has an owner switch,
+`maintenance_gate_active` (allowlisted in `provision_settings`; absent means inactive):
+
+- **Inactive** (absent or `false`): the maintenance status of every robot is computed and shown (robot page, Hub
+  tasks), with "Maintenance gate not yet activated". Planning, readiness and `readiness_issue_authorization` are NOT
+  blocked by maintenance. In production mode the inactive gate is itself a production blocker
+  (`MAINTENANCE_GATE_INACTIVE` on Production readiness), next to `MAINTENANCE_RULE_NOT_APPROVED` for each
+  configuration without an approved production rule.
+- **Active** (`true`): fail closed. Overdue, Unknown (no baseline record, or a run with a session start but no stop),
+  no approved rule (in production also a demo rule) and a missing required post-maintenance inspection all block
+  planning (view, plan command, planning triggers) and authorization; the departure re-checks it.
+
+Order (each step is safe to stop after; nothing is blocked until the last one):
+
+1. `migrate` (fleet 0009/0010, planning 0007/0008, operations 0007, readiness 0009, hub 0006). Nothing changes for
+   planning or departure; Production readiness now lists the two maintenance blockers.
+2. Engineering proposes the maintenance rules on each configuration page (Fleet > configuration > Maintenance rules:
+   requirement code, triggers, warning margin, optional post-maintenance inspection template, effective time,
+   `engineering_doc` source with its procedure reference).
+3. The engineering lead and a safety reviewer approve each version (two different people, neither the author).
+4. The safety reviewer grants `maintenance_technician` to the people who sign maintenance (the existing qualification
+   grant: never to oneself, not backdated, with a training-record reference). Only hub technicians, engineers and the
+   engineering lead can record maintenance, and only while qualified.
+5. Record a baseline maintenance record for every robot and requirement (robot page > Maintenance details and
+   records), stamped at the time it is recorded (no back-dated history). Check the robot pages and the Hub queue:
+   no robot that should keep working may show Unknown or Overdue, and required inspections are recorded.
+6. Activate, as the schema owner:
+
+```
+DJANGO_DB_IDENTITY=owner python manage.py provision_settings --maintenance-gate-active true
+```
+
+   Activation needs no `--allow-change`. It runs under the settings lock (no plan, authorization or departure
+   straddles it) and writes one audit event. Do not leave `PROVISION_MAINTENANCE_GATE_ACTIVE` in the deploy
+   environment unless the rollout above is complete: `deploy/start.sh` would apply it after migrations.
+
+Deactivation is a deliberate weakening: `provision_settings --maintenance-gate-active false --allow-change` (refused
+without `--allow-change`; audited; shown again as a production blocker). Authorizations already issued are re-checked
+at departure in the current gate state, as Slice 7 does for periodic inspections: an authorization issued while a
+robot was clear cannot depart once the robot is blocked, and `expires_at` is bounded by the earliest calendar due
+time.
 
 ## 8b. Demo workspace (v2 01D)
 

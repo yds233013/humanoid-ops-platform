@@ -156,9 +156,11 @@ def test_the_02a_role_matrix():
     }
     assert PERMISSIONS["hub.manage_all"] == {"ops_lead", "engineer", "engineering_lead"}
     assert PERMISSIONS["hub.claim"] == {"hub_technician"}
-    # hub_technician holds ONLY hub permissions (02A, plus the 02B charging rows of 8.6)
+    # hub_technician holds ONLY hub permissions (02A, plus the 02B charging rows of 8.6), plus 02C "Record
+    # maintenance" (8.6: "if qualified"; the database also requires the maintenance_technician qualification)
     assert {p for p, roles in PERMISSIONS.items() if "hub_technician" in roles} == {
-        "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav", "hub.record_charging", "hub.reserve_charger"
+        "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav", "hub.record_charging", "hub.reserve_charger",
+        "fleet.record_maintenance",
     }  # fmt: skip
     assert "hub_technician" in ALL_ROLES
 

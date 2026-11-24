@@ -21,7 +21,7 @@ class Spec:
     key: str
     label: str
     purpose: str
-    kind: str  # "text" | "minutes" | "timezone"
+    kind: str  # "text" | "minutes" | "timezone" | "boolean"
     required: bool = False
     default: str | None = None  # offered only with --with-defaults
 
@@ -86,6 +86,16 @@ SPECS: tuple[Spec, ...] = (
         "forecast is Unknown.",
         "minutes",
     ),
+    # v2 02C (incremental deployment safety): absent = inactive. While inactive the maintenance status is
+    # computed and shown but does not block planning or departure, and production lists the inactive gate as a
+    # blocker. Switching it OFF again needs --allow-change (see the provision_settings command).
+    Spec(
+        "maintenance_gate_active",
+        "Maintenance gate active",
+        "When true, overdue or unknown maintenance blocks planning and departure. Turn it on only after the "
+        "maintenance rules are approved, technicians are qualified and every robot has a baseline record.",
+        "boolean",
+    ),
 )
 BY_KEY = {s.key: s for s in SPECS}
 ALLOWED_KEYS = tuple(BY_KEY)
@@ -101,6 +111,10 @@ def validate(key: str, raw: str) -> str:
         if parse_threshold(value) is None:
             raise ValueError(f"{key} must be a whole number of minutes from 1 to {MAX_THRESHOLD_MIN}")
         return str(int(value))
+    if spec.kind == "boolean":
+        if value not in ("true", "false"):
+            raise ValueError(f"{key} must be true or false")
+        return value
     if spec.kind == "timezone":
         if len(value) > TIMEZONE_MAX_LEN or not python_knows_timezone(value):
             raise ValueError(f"{key} must be a known time zone name such as America/Los_Angeles")

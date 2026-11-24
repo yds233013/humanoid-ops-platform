@@ -15,6 +15,7 @@
 </div>
 
 {% include "hub/_battery_panel.html" %}
+{% include "fleet/_maintenance_panel.html" with m=maintenance %}
 <div class="card" id="home-authorization">
   <h2>Home-use authorization</h2>
   {% can "fleet.base_authorization" as may_auth %}

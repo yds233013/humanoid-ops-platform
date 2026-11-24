@@ -1,0 +1,28 @@
+{% load ui %}<div class="card" id="maintenance-rules">
+  <h2>Maintenance rules</h2>
+  <p class="muted">One rule per requirement, in versions. A version is a proposal until the engineering lead and a safety reviewer, two different people and neither of them its author, approve it. The approved version with the highest number applies from its effective time; if that version is withdrawn there is no rule for the requirement (no fallback). Triggers: calendar days, completed visits or active hours, whichever is reached first. The platform never supplies an interval.</p>
+  <div class="tablewrap"><table><thead><tr><th>Requirement</th><th>Triggers</th><th>Inspection after</th><th>Source</th><th>Status</th><th>Approvals</th><th>Actions</th></tr></thead><tbody>
+  {% for x in maintenance_rules %}<tr data-maintenance-rule="{{ x.rule.requirement_code }}:{{ x.rule.version_no }}" data-status="{{ x.status }}">
+    <td><b>{{ x.rule.requirement_code }} v{{ x.rule.version_no }}</b><div class="muted">from {{ x.rule.effective_from|local_dt }} · by {{ x.rule.created_by.username }}</div></td>
+    <td>{% if x.rule.calendar_days %}<div>{{ x.rule.calendar_days }} days</div>{% endif %}{% if x.rule.visit_count %}<div>{{ x.rule.visit_count }} completed visits</div>{% endif %}{% if x.rule.active_hours %}<div>{{ x.rule.active_hours }} active hours</div>{% endif %}<div class="muted">due soon at {{ x.rule.warning_pct }}% before the limit</div>{% if x.demo %}{% demo_value maintenance_demo_label %}{% endif %}</td>
+    <td>{% if x.rule.inspection_template %}template {{ x.rule.inspection_template.version }}{% else %}<span class="muted">not required</span>{% endif %}</td>
+    <td>{% source_label x.rule.source x.rule.get_source_display %}{% if x.rule.procedure_ref %}<div class="muted">procedure {{ x.rule.procedure_ref }}</div>{% endif %}</td>
+    <td>{% if x.status == "approved" %}{% if x.demo %}Demo approval{% else %}Approved{% endif %}{% elif x.status == "withdrawn" %}Withdrawn<div class="muted">by {{ x.withdrawal.withdrawn_by.username }}: {{ x.withdrawal.reason }}</div>{% else %}Proposal, not in force{% endif %}</td>
+    <td>{% for slot, label in slots %}<div>{{ label }}: {% with a=x.approvals|get_item:slot %}{% if a %}{{ a.approver.username }}{% else %}<span class="muted">pending</span>{% if can.approve_maintenance_rule and x.status != "withdrawn" %}
+      <form method="post" action="/fleet/patterns/{{ pattern.code }}/maintenance-rules/approve/" style="display:inline">{% csrf_token %}{% form_token %}<input type="hidden" name="rule" value="{{ x.rule.pk }}"><input type="hidden" name="slot" value="{{ slot }}"><button class="primary">Approve</button></form>{% endif %}{% endif %}{% endwith %}</div>{% endfor %}</td>
+    <td>{% if can.withdraw_maintenance_rule and x.status != "withdrawn" %}<form method="post" action="/fleet/patterns/{{ pattern.code }}/maintenance-rules/withdraw/" class="row">{% csrf_token %}{% form_token %}<input type="hidden" name="rule" value="{{ x.rule.pk }}"><input name="reason" placeholder="Withdrawal reason (required)" aria-label="Withdrawal reason (required)"><button class="primary">Withdraw</button></form>{% endif %}</td>
+  </tr>{% empty %}<tr><td colspan="7" class="muted">No maintenance rule for this configuration. In production that is a blocker; once the maintenance gate is active it stops planning and departure.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can.propose_maintenance_rule %}
+  <form method="post" action="/fleet/patterns/{{ pattern.code }}/maintenance-rules/create/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
+    <label>Requirement code <input name="requirement_code" size="14" placeholder="e.g. JOINT-SERVICE" required></label>
+    <label>Calendar days <input name="calendar_days" size="5" inputmode="numeric"></label>
+    <label>Completed visits <input name="visit_count" size="5" inputmode="numeric"></label>
+    <label>Active hours <input name="active_hours" size="5" inputmode="numeric"></label>
+    <label>Warning margin (%) <input name="warning_pct" size="3" value="10" inputmode="numeric"></label>
+    <label>Inspection after maintenance <select name="inspection_template"><option value="">not required</option>{% for t in maintenance_templates %}<option value="{{ t.pk }}">template {{ t.version }}</option>{% endfor %}</select></label>
+    <label>Effective from (empty = when approved) <input type="datetime-local" name="effective_from"></label>
+    <label>Source <select name="source">{% for v, lbl in template_sources %}<option value="{{ v }}"{% if v == "engineering_doc" %} selected{% endif %}>{{ lbl|source_option }}</option>{% endfor %}</select></label>
+    <label>Procedure reference <input name="procedure_ref"></label><label>Notes <input name="notes"></label>
+    <button class="primary">Propose a rule version</button></form>{% endif %}
+</div>
