@@ -95,7 +95,7 @@ def propose_rule(
     calendar_days: int | None = None,
     visit_count: int | None = None,
     active_hours: int | None = None,
-    warning_pct: int = 10,
+    warning_pct: int | None = 10,
     inspection_template_id: int | None = None,
     effective_from: datetime | None = None,
     source: str,

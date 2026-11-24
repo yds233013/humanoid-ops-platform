@@ -22,7 +22,10 @@ What is fictional and what is not:
   execution record, because those commands stamp database time and would date a "past" event at the build.
   Screens show such a visit as "Historical scheduled visit", never as completed. The only events stamped
   at build time are current facts: today's periodic robot inspections (planning eligibility needs them), one
-  failed inspection that holds a robot, one maintenance hold, one incident reported this morning.
+  failed inspection that holds a robot, one maintenance hold, one incident reported this morning, and (v2 02C)
+  the baseline maintenance records of today: demo maintenance rules labelled "Demo value, not an engineering
+  requirement", the hub technician qualified as maintenance technician by the safety reviewer, the maintenance
+  gate active, and one in-service robot without a baseline (Unknown, so blocked and never booked).
 * No visit of today or later is authorized. The visit prepared for journey J4 has everything it needs except
   the checks a crew records on the day; the ops lead's decision is made in the app by a person.
 
@@ -55,10 +58,12 @@ from execution import escalation_deadlines as ed
 from execution import incidents as inc
 from execution import policy as ipol
 from execution.models import SiteCheckTemplate
+from fleet import maintenance as fm
 from fleet import services as fs
 from fleet.models import (
     CapabilityProfile,
     DeploymentSetting,
+    InspectionTemplate,
     PeriodicInspectionRule,
     Robot,
 )
@@ -140,6 +145,15 @@ ROBOTS = 50
 IN_SERVICE = 45  # NB-001 .. NB-045 on HX-430; NB-046..048 HX-440 in validation; NB-049..050 commissioning
 INCIDENT_ROBOT, INSPECTION_HOLD_ROBOT, MAINTENANCE_ROBOT = "NB-007", "NB-012", "NB-019"
 NEVER_INSPECTED = "NB-048"  # beta robot in validation, no periodic inspection on its configuration yet
+# v2 02C: an in-service robot with no baseline maintenance record: its maintenance status is Unknown, so it is
+# blocked (the gate is active in the demo) and never booked.
+NO_MAINTENANCE_BASELINE = "NB-044"
+# v2 02C demo maintenance rules (synthetic_demo, labelled "Demo value, not an engineering requirement"):
+# (requirement code, calendar days, completed visits, active hours, warning %, post-maintenance inspection)
+MAINTENANCE_RULES: list[tuple[str, int | None, int | None, int | None, int, bool]] = [
+    ("JOINT-SERVICE", 30, 40, 60, 20, False),
+    ("HAND-SERVICE", None, 25, None, 20, True),
+]
 
 CHECKLIST: list[dict[str, Any]] = [
     {"id": "R1", "label": "Body shell, joints and covers undamaged", "robot_condition": True},
@@ -208,6 +222,9 @@ SETTINGS = {
     "ops_closeout_timezone": TZ,
     "ops_periodic_due_lookahead_min": "1440",
     "ops_soc_fresh_min": "240",  # v2 02B: demo value (labelled on Settings > Operating settings)
+    # v2 02C: the maintenance gate is ACTIVE in the demo (the build records the rules, the qualification and
+    # the baselines before any visit is planned: the rollout order of docs/runbook_deploy_backup_rollback.md)
+    "maintenance_gate_active": "true",
 }
 # Visit slots (local on-site start, minutes on site). Two per crew per day never overlap (crew shift: from the
 # inspection 50 min + travel before arrival to the unloading 20 min + travel after leaving).
@@ -393,7 +410,7 @@ class _Builder:
         self.s = Summary(anchor=anchor)
         self.t0 = time.perf_counter()
         # Robots booked on visits: in service and not one that this build puts on a hold.
-        held = (MAINTENANCE_ROBOT, INSPECTION_HOLD_ROBOT, INCIDENT_ROBOT)
+        held = (MAINTENANCE_ROBOT, INSPECTION_HOLD_ROBOT, INCIDENT_ROBOT, NO_MAINTENANCE_BASELINE)
         self.pool = [f"NB-{n:03d}" for n in range(1, IN_SERVICE + 1) if f"NB-{n:03d}" not in held]
 
     def lap(self, name: str) -> None:
@@ -464,6 +481,18 @@ class _Builder:
             rule = PeriodicInspectionRule.objects.get(pattern__code=code, version_no=1)
             fs.approve_periodic_rule(lead, rule_id=rule.pk, slot="engineering")
             fs.approve_periodic_rule(safety, rule_id=rule.pk, slot="safety")
+            # v2 02C: demo maintenance rules, proposed by the engineer, approved by the engineering lead and
+            # the safety reviewer (synthetic_demo: never usable in production, a production blocker there)
+            template = InspectionTemplate.objects.get(pattern__code=code, version="T1")
+            for req, days, visits, hours, warn, inspect in MAINTENANCE_RULES:
+                m = fm.propose_rule(
+                    eng, pattern_code=code, requirement_code=req, calendar_days=days, visit_count=visits,
+                    active_hours=hours, warning_pct=warn,
+                    inspection_template_id=template.pk if inspect else None, source="synthetic_demo",
+                    notes="Demo value, not an engineering requirement",
+                )  # fmt: skip
+                fm.approve_rule(lead, rule_id=m["rule_id"], slot="engineering")
+                fm.approve_rule(safety, rule_id=m["rule_id"], slot="safety")
         version = int(
             rx.create_readiness_policy(
                 lead, requirements=READINESS_REQUIREMENTS, source="synthetic_demo", notes="Departure checks"
@@ -518,6 +547,15 @@ class _Builder:
                 valid_to=end,
                 basis_ref=f"TRN-2026-{code[2:]}",
             )
+        # v2 02C: the hub technician signs maintenance records (granted by the safety reviewer, as inspectors)
+        ps.grant_qualification(
+            safety,
+            person_code=HUB_TECH,
+            kind="maintenance_technician",
+            valid_from=None,
+            valid_to=end,
+            basis_ref=f"TRN-MNT-2026-{HUB_TECH[2:]}",
+        )
         for _name, _lead, _second, van in CREWS:
             ps.register_vehicle(ops, code=van, robot_capacity=1, restraint_kit="Seat rail and strap kit")
         ps.register_vehicle(ops, code="VAN-4")  # spare van: capacity and restraint not recorded yet
@@ -549,6 +587,18 @@ class _Builder:
             # sign; planning eligibility needs it), except NEVER_INSPECTED: the beta robot nobody inspected
             # on its configuration yet, which Today shows as overdue for its regular inspection (true now).
             # NB-046..048 stay in validation (beta build), NB-049..050 in commissioning.
+            # v2 02C: the baseline maintenance records, stamped now (no invented history), BEFORE the
+            # day's inspection, which is then also the post-maintenance inspection HAND-SERVICE requires.
+            # Every robot with a configuration except NO_MAINTENANCE_BASELINE (Unknown, blocked) and the
+            # commissioning ones.
+            if n <= IN_SERVICE + 3 and code != NO_MAINTENANCE_BASELINE:
+                for req, *_rest in MAINTENANCE_RULES:
+                    fm.record_maintenance(
+                        self.u["lily.tran"],
+                        robot_code=code,
+                        requirement_code=req,
+                        notes="Baseline at go-live",
+                    )
             if code != NEVER_INSPECTED:
                 self.inspect(code)
         self.lap("robots")

@@ -1,0 +1,38 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}{{ robot.code }} maintenance{% endblock %}
+{% block content %}
+{% if fleet_access %}{% page_header title="Maintenance of "|add:robot.code back_url="/fleet/"|add:robot.code|add:"/" back_label=robot.code %}{{ robot.get_lifecycle_display }}{% endpage_header %}{% else %}{% page_header title="Maintenance of "|add:robot.code back_url="/hub/" back_label="Hub" %}{{ robot.get_lifecycle_display }}{% endpage_header %}{% endif %}
+
+{% if not status.gate_active %}<div class="card" data-maintenance-gate="inactive"><p>{% chip "warn" gate_inactive_label %} The status is computed and shown, but overdue or unknown maintenance does not block planning or departure until the deployment owner activates the gate.</p></div>{% endif %}
+
+<div class="card" id="maintenance-status">
+  <h2>Status per requirement</h2>
+  <p class="muted">Counted from the records only: calendar time from the last maintenance record, completed visits from closed visit runs, active hours from the recorded session start and stop events. There is no telemetry. A run with a start but no stop makes the hours Unknown, never zero.</p>
+  <div class="tablewrap"><table><thead><tr><th>Requirement</th><th>Status</th><th>Calendar</th><th>Completed visits</th><th>Active hours</th><th>Inspection after maintenance</th></tr></thead><tbody>
+  {% for x in rows %}{% with q=x.q %}<tr data-requirement="{{ q.requirement_code|default:'none' }}" data-state="{{ q.state }}">
+    <td>{% if q.requirement_code %}<b>{{ q.requirement_code }}</b>{% if q.rule_version %} v{{ q.rule_version }}{% endif %}{% else %}<span class="muted">configuration</span>{% endif %}{% if q.demo %}{% demo_value demo_label %}{% endif %}</td>
+    <td>{% if q.blocking %}{% chip "bad" q.label %}{% elif q.state == "due_soon" %}{% chip "warn" q.label %}{% else %}{% chip "neutral" q.label %}{% endif %}{% if q.reason %}<div class="muted" data-reason="1">{{ q.reason }}</div>{% endif %}
+      {% if x.record %}<div class="muted">last record {{ x.record.performed_at|local_dt }} by {{ x.record.performed_by.username }}</div>{% endif %}</td>
+    <td>{% if q.calendar_days %}{% if x.record %}{{ x.days_used }} of {{ q.calendar_days }} days<div class="muted">source: time since the record; due {{ q.due_at|local_dt }}</div>{% else %}limit {{ q.calendar_days }} days<div class="muted">Unknown: no record</div>{% endif %}{% else %}<span class="muted">no limit</span>{% endif %}</td>
+    <td>{% if q.visit_count %}{% if x.record %}{{ q.visits_used }} of {{ q.visit_count }}<div class="muted">source: closed visit runs since the record</div>{% else %}limit {{ q.visit_count }}<div class="muted">Unknown: no record</div>{% endif %}{% else %}<span class="muted">no limit</span>{% endif %}</td>
+    <td>{% if q.active_hours %}{% if not x.record %}limit {{ q.active_hours }}<div class="muted">Unknown: no record</div>{% elif q.open_runs %}<b>Unknown</b> (at least {{ q.hours_used }} of {{ q.active_hours }})<div class="muted">run {{ q.open_runs }} has a session start but no stop</div>{% else %}{{ q.hours_used }} of {{ q.active_hours }}<div class="muted">source: session start and stop events since the record</div>{% endif %}{% else %}<span class="muted">no limit</span>{% endif %}</td>
+    <td>{% if x.template %}template {{ x.template.version }}: {% if x.inspection %}passed ({{ x.inspection.code }}){% elif x.record %}<b>missing</b> · <a href="/readiness/robots/{{ robot.code }}/inspection/">record the inspection</a>{% else %}after the next record{% endif %}{% else %}<span class="muted">not required</span>{% endif %}</td>
+  </tr>{% endwith %}{% empty %}<tr><td colspan="6" class="muted">No maintenance status.</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="muted">Recording maintenance never releases a hold. Holds are released only through their approvals.</p>
+</div>
+
+<div class="card" id="record-maintenance">
+  <h2>Record maintenance</h2>
+  {% if may_record and qualified and requirements %}
+  <form method="post" action="/fleet/{{ robot.code }}/maintenance/" class="row">{% csrf_token %}{% form_token %}
+    <label>Requirement <select name="requirement_code">{% for c in requirements %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></label>
+    <label>Notes <input name="notes" maxlength="1000"></label>
+    <button class="primary">Record maintenance</button>
+  </form>
+  <p class="muted">You sign this record as the person who did the work, at the current database time.</p>
+  {% elif may_record and not qualified %}<p class="waiting" data-refusal="1">Recording maintenance needs a valid maintenance technician qualification. {% who_can "planning.grant_inspector_qualification" as who %}Only {{ who }} can grant it.</p>
+  {% elif not requirements %}<p class="muted">There is no maintenance rule in force for this robot's configuration, so nothing can be recorded yet.</p>
+  {% else %}{% refusal_note "fleet.record_maintenance" %}{% endif %}
+</div>
+{% endblock %}

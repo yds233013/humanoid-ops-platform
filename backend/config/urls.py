@@ -48,6 +48,11 @@ urlpatterns = [
     path("fleet/patterns/<str:code>/periodic-rules/create/", fleet_views.periodic_rule_create_view),
     path("fleet/patterns/<str:code>/periodic-rules/approve/", fleet_views.periodic_rule_approve_view),
     path("fleet/patterns/<str:code>/periodic-rules/withdraw/", fleet_views.periodic_rule_withdraw_view),
+    # v2 02C maintenance rules (configuration page) and the robot maintenance panel
+    path("fleet/patterns/<str:code>/maintenance-rules/create/", fleet_views.maintenance_rule_create_view),
+    path("fleet/patterns/<str:code>/maintenance-rules/approve/", fleet_views.maintenance_rule_approve_view),
+    path("fleet/patterns/<str:code>/maintenance-rules/withdraw/", fleet_views.maintenance_rule_withdraw_view),
+    path("fleet/<str:code>/maintenance/", fleet_views.robot_maintenance, name="fleet-maintenance"),
     path("fleet/<str:code>/", fleet_views.robot_detail, name="fleet-detail"),
     path("fleet/<str:code>/hold/", fleet_views.place_hold_view),
     path("fleet/<str:code>/approve/", fleet_views.approve_view),

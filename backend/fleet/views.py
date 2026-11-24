@@ -15,6 +15,7 @@ or ready.
 
 import json
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from django.contrib import messages
@@ -25,6 +26,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from accounts.permissions import active_roles, has_permission
+from fleet import maintenance as mnt
 from fleet import services as s
 from fleet.models import (
     APPROVAL_SLOTS,
@@ -36,12 +38,15 @@ from fleet.models import (
     HoldRebase,
     Inspection,
     InspectionTemplate,
+    MaintenanceRecord,
     ManifestPattern,
     PeriodicInspectionRule,
     Robot,
 )
 from hub.charging import robot_battery_panel
 from platform_core.commands import CommandError
+from platform_core.interaction import spend_form_token
+from platform_core.timezones import workspace_zone
 
 SYNTHETIC_INTERVAL = "SYNTHETIC demo interval, not an engineering value"
 UNUSABLE_TEMPLATE_WARNING = (
@@ -76,6 +81,11 @@ FLEET_ACTIONS = [
     "approve_release",
     "release_hold",
     "check_eligibility",
+    # v2 02C maintenance
+    "propose_maintenance_rule",
+    "approve_maintenance_rule",
+    "withdraw_maintenance_rule",
+    "record_maintenance",
 ]
 
 
@@ -403,6 +413,7 @@ def robot_detail(request: HttpRequest, code: str) -> HttpResponse:
             "production": production,
             "periodic": periodic_status([r.pk]).get(r.pk),
             "battery": robot_battery_panel(r),  # v2 02B: last recorded / estimated at departure / evidence
+            "maintenance": mnt.robot_status(r),  # v2 02C: one statement (fleet_maintenance_status)
             "templates": templates,
             "recent_inspections": signer_rows(recent),
             "synthetic_interval": SYNTHETIC_INTERVAL,
@@ -448,6 +459,10 @@ def pattern_detail(request: HttpRequest, code: str) -> HttpResponse:
             "production": production,
             "templates": template_rows(pattern, production),
             "rules": periodic_rule_rows(pattern, production),
+            # v2 02C: maintenance rules (every version) and the templates a rule may require
+            "maintenance_rules": mnt.pattern_rules(pattern),
+            "maintenance_templates": mnt.pattern_templates(pattern),
+            "maintenance_demo_label": mnt.DEMO_LABEL,
             "robots": [{"robot": r, "periodic": periodic.get(r.pk)} for r in robots],
             "purposes": TEMPLATE_PURPOSES,
             "slots": APPROVAL_SLOTS,
@@ -828,4 +843,165 @@ def rebase_approve_view(request: HttpRequest, code: str) -> HttpResponse:
         redirect("fleet-detail", code=code),
         rebase_id=_int(p.get("rebase")),
         slot=p.get("slot", ""),
+    )
+
+
+# ------------------------------------------------------------------ v2 02C maintenance screens
+def _mnt_post(
+    request: HttpRequest, permission: str, go: Callable[[], Any], ok: str, back: str
+) -> HttpResponse:
+    """POST-redirect-GET for a maintenance command: role check (403), one-time form token, then the command
+    (the SECURITY DEFINER function re-checks role, qualification and invariants)."""
+    if not has_permission(request.user, permission):
+        return HttpResponseForbidden("You do not have permission for this action.")
+    if not spend_form_token(request):
+        return redirect(back)
+    try:
+        go()
+        messages.success(request, ok)
+    except CommandError as exc:
+        messages.error(request, f"Refused: {str(exc).rstrip('.')}. Nothing was changed.")
+    return redirect(back)
+
+
+def _local_datetime(raw: str | None) -> datetime | None:
+    """A ``datetime-local`` value in the workspace display zone, or None when empty."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        naive = datetime.fromisoformat(raw)
+    except ValueError:
+        raise CommandError("The effective time is not a valid date and time") from None
+    return naive.replace(tzinfo=workspace_zone()) if naive.tzinfo is None else naive
+
+
+@login_required
+@require_POST
+def maintenance_rule_create_view(request: HttpRequest, code: str) -> HttpResponse:
+    p = request.POST
+
+    def go() -> None:
+        mnt.propose_rule(
+            request.user,
+            pattern_code=code,
+            requirement_code=p.get("requirement_code", ""),
+            calendar_days=_int(p.get("calendar_days")),
+            visit_count=_int(p.get("visit_count")),
+            active_hours=_int(p.get("active_hours")),
+            warning_pct=_int(p.get("warning_pct")) if p.get("warning_pct", "").strip() else 10,
+            inspection_template_id=_int(p.get("inspection_template")),
+            effective_from=_local_datetime(p.get("effective_from")),
+            source=p.get("source", "engineering_doc"),
+            procedure_ref=p.get("procedure_ref", "").strip(),
+            notes=p.get("notes", ""),
+        )
+
+    return _mnt_post(
+        request,
+        mnt.PROPOSE,
+        go,
+        "Maintenance rule proposal recorded. It is not in force until the engineering lead and a safety "
+        "reviewer approve it.",
+        f"/fleet/patterns/{code}/#maintenance-rules",
+    )
+
+
+@login_required
+@require_POST
+def maintenance_rule_approve_view(request: HttpRequest, code: str) -> HttpResponse:
+    p = request.POST
+    return _mnt_post(
+        request,
+        mnt.APPROVE,
+        lambda: mnt.approve_rule(request.user, rule_id=_int(p.get("rule")) or 0, slot=p.get("slot", "")),
+        "Maintenance rule approval recorded",
+        f"/fleet/patterns/{code}/#maintenance-rules",
+    )
+
+
+@login_required
+@require_POST
+def maintenance_rule_withdraw_view(request: HttpRequest, code: str) -> HttpResponse:
+    p = request.POST
+    return _mnt_post(
+        request,
+        mnt.WITHDRAW,
+        lambda: mnt.withdraw_rule(request.user, rule_id=_int(p.get("rule")) or 0, reason=p.get("reason", "")),
+        "Maintenance rule withdrawn; there is no fallback to an older version",
+        f"/fleet/patterns/{code}/#maintenance-rules",
+    )
+
+
+def _maintainer_now(user_id: int) -> bool:
+    with connection.cursor() as cur:
+        cur.execute("SELECT planning_maintainer_covered(%s, clock_timestamp())", [user_id])
+        return bool(cur.fetchone()[0])
+
+
+@login_required
+def robot_maintenance(request: HttpRequest, code: str) -> HttpResponse:
+    """The robot's maintenance panel: status per requirement, counters with their sources, why a status is
+    Unknown, the required inspection, and "Record maintenance" for a qualified person. Readable with fleet
+    access or the record permission (the hub technician, who has no other fleet page)."""
+    r = get_object_or_404(Robot, code=code)
+    if request.method == "POST":
+        p = request.POST
+        return _mnt_post(
+            request,
+            mnt.RECORD,
+            lambda: mnt.record_maintenance(
+                request.user, robot_code=code, requirement_code=p.get("requirement_code", ""),
+                notes=p.get("notes", ""),
+            ),
+            "Maintenance recorded. It never releases a hold; a required post-maintenance inspection is "
+            "recorded separately.",
+            f"/fleet/{code}/maintenance/",
+        )  # fmt: skip
+    if not (has_permission(request.user, "fleet.read") or has_permission(request.user, mnt.RECORD)):
+        return HttpResponseForbidden("No fleet access")
+    status = mnt.robot_status(r)
+    now = s.db_now()
+    records = {
+        x.pk: x
+        for x in MaintenanceRecord.objects.filter(pk__in=[q.record_id for q in status.rows if q.record_id])
+        .select_related("performed_by")
+    }  # fmt: skip
+    templates = {
+        t.pk: t
+        for t in InspectionTemplate.objects.filter(
+            pk__in=[q.inspection_template_id for q in status.rows if q.inspection_template_id]
+        )
+    }
+    inspections = {
+        i.pk: i
+        for i in Inspection.objects.filter(pk__in=[q.inspection_id for q in status.rows if q.inspection_id])
+    }
+    rows = []
+    for q in status.rows:
+        rec = records.get(q.record_id) if q.record_id else None
+        rows.append(
+            {
+                "q": q,
+                "record": rec,
+                "days_used": (now - q.performed_at).days if q.performed_at else None,
+                "template": templates.get(q.inspection_template_id) if q.inspection_template_id else None,
+                "inspection": inspections.get(q.inspection_id) if q.inspection_id else None,
+            }
+        )
+    may_record = has_permission(request.user, mnt.RECORD)
+    return render(
+        request,
+        "fleet/maintenance.html",
+        {
+            "robot": r,
+            "status": status,
+            "rows": rows,
+            "may_record": may_record,
+            "qualified": may_record and _maintainer_now(request.user.pk),
+            "requirements": [q.requirement_code for q in status.rows if q.rule_id and q.state != "no_rule"],
+            "demo_label": mnt.DEMO_LABEL,
+            "gate_inactive_label": mnt.GATE_INACTIVE_LABEL,
+            "fleet_access": has_permission(request.user, "fleet.read"),
+        },
     )
