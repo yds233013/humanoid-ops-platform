@@ -43,6 +43,7 @@ SOURCES = [
     ("hold", "Active hold"),
     ("equipment_check", "Failed equipment check"),
     ("charge_forecast", "Charge forecast"),  # v2 02B: a visit's robot needs charge before departure
+    ("maintenance_status", "Maintenance status"),  # v2 02C: maintenance due soon, overdue or unknown
 ]
 
 

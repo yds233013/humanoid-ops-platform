@@ -105,6 +105,7 @@ _BLOCKER_WORDS = {
     "PERIODIC_INSPECTION_MISSING": "The robot has no valid periodic inspection",
     "PERIODIC_INSPECTION_DUE_BEFORE_RETURN": "A periodic inspection falls due before the robot is back",
     "INSPECTOR_NOT_QUALIFIED": "An inspection was signed by someone who is not qualified",
+    "MAINTENANCE_DUE_BEFORE_RETURN": "Maintenance falls due before the robot is back",
     "PLANNING_ROBOT_MISSING": "No robot is assigned",
     "PLANNING_CREW_INCOMPLETE": "The crew is incomplete",
     "PLANNING_CREW_SAME_PERSON": "The lead and the second person must be different people",

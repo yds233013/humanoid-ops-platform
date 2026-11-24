@@ -193,9 +193,11 @@ def evaluate(
     vehicle: Vehicle | None,
     visit: Visit | None = None,
     periodic: fleet_services.PeriodicStatus | None = None,
+    maintenance: list[str] | None = None,
 ) -> Plan:
     """``periodic``: an already computed X-3 periodic status of ``robot`` in the current mode, reused for its
-    eligibility instead of reading it again (readiness evaluator; see fleet.services.evaluate_eligibility)."""
+    eligibility instead of reading it again (readiness evaluator; see fleet.services.evaluate_eligibility).
+    ``maintenance``: likewise, the robot's already read blocking maintenance reasons (v2 02C)."""
     b: list[dict[str, str]] = []
     snap: dict[str, Any] = {
         "evaluated_at": timezone.now().isoformat(),
@@ -258,7 +260,7 @@ def evaluate(
     if robot is None:
         _add(b, "blocked", "ROBOT_MISSING", "No robot assigned", "Assign a planning-eligible robot")
     else:
-        e = fleet_services.evaluate_eligibility(robot, periodic=periodic)
+        e = fleet_services.evaluate_eligibility(robot, periodic=periodic, maintenance=maintenance)
         snap.update(
             {
                 "robot": robot.code,
@@ -638,9 +640,16 @@ def register_person(actor: Any, *, username: str, code: str) -> dict[str, Any]:
 INSPECTOR_KIND = "readiness_inspector"
 
 
+MAINTAINER_KIND = "maintenance_technician"
+# Kinds a safety reviewer grants (never to oneself, never backdated, with a training record):
+# readiness_inspector (07a section 7.2) and, v2 02C, maintenance_technician (contract 11, 8.6).
+SAFETY_GRANTED_KINDS = (INSPECTOR_KIND, MAINTAINER_KIND)
+
+
 def _qualification_permission(kind: str, *, revoke: bool) -> str:
-    """readiness_inspector has its own grant / revoke permissions (07a section 7.2, EM decision 18)."""
-    if kind == INSPECTOR_KIND:
+    """readiness_inspector and maintenance_technician have their own grant / revoke permissions (07a section
+    7.2, EM decision 18; contract 11, 8.6)."""
+    if kind in SAFETY_GRANTED_KINDS:
         return (
             "planning.revoke_inspector_qualification" if revoke else "planning.grant_inspector_qualification"
         )
@@ -664,7 +673,7 @@ def grant_qualification(
     def handler() -> Outcome:
         if kind not in dict(Qualification.KINDS):
             raise Invalid(f"Unknown qualification {kind}")
-        if valid_from is None and kind != INSPECTOR_KIND:
+        if valid_from is None and kind not in SAFETY_GRANTED_KINDS:
             raise Invalid("valid_from is required for this qualification")
         for name, value in (("valid_from", valid_from), ("valid_to", valid_to)):
             if value is not None and value.tzinfo is None:
@@ -672,17 +681,15 @@ def grant_qualification(
         p = _person(person_code)
         assert p is not None
         lock_guards(update_persons=[p.pk], label="planning.grant_qualification")
-        if kind == INSPECTOR_KIND:
+        if kind in SAFETY_GRANTED_KINDS:
             if p.user_id == actor.pk:
-                raise Conflict("A readiness_inspector qualification cannot be granted to oneself")
+                raise Conflict(f"A {kind} qualification cannot be granted to oneself")
             if not basis_ref.strip():
-                raise Invalid(
-                    "A readiness_inspector qualification needs a training record reference (basis_ref)"
-                )
+                raise Invalid(f"A {kind} qualification needs a training record reference (basis_ref)")
             now = _db_now()
             if valid_from is not None and valid_from < now:
                 raise Invalid(
-                    "A readiness_inspector qualification cannot be backdated; "
+                    f"A {kind} qualification cannot be backdated; "
                     "leave valid_from empty for an immediate grant"
                 )
             if valid_to <= (valid_from or now):
@@ -959,6 +966,8 @@ def plan_visit(
         )
         pid = fleet_services._current_pattern_id(robot) if robot else None
         lock_guards(
+            # v2 02C: the maintenance gate setting (and the mode) cannot change until this plan commits
+            share_settings=True,
             share_sites=[v.site_id],
             share_patterns=[pid] if pid else [],
             update_robots=[robot.pk] if robot else [],
@@ -1069,9 +1078,15 @@ def plan_visit(
     )
 
 
-def live_feasibility(v: Visit, *, periodic: fleet_services.PeriodicStatus | None = None) -> Plan:
+def live_feasibility(
+    v: Visit,
+    *,
+    periodic: fleet_services.PeriodicStatus | None = None,
+    maintenance: list[str] | None = None,
+) -> Plan:
     """Re-evaluate the current revision against the world as it is NOW (consent withdrawn, hold placed...).
-    Never trusts the stored result or the existence of reservations. ``periodic``: see ``evaluate``."""
+    Never trusts the stored result or the existence of reservations. ``periodic``, ``maintenance``: see
+    ``evaluate``."""
     r = v.current_revision
     assert r is not None
     return evaluate(
@@ -1088,6 +1103,7 @@ def live_feasibility(v: Visit, *, periodic: fleet_services.PeriodicStatus | None
         vehicle=r.vehicle,
         visit=v,
         periodic=periodic,
+        maintenance=maintenance,
     )
 
 

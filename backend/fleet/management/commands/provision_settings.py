@@ -5,6 +5,10 @@ Values come from options (``--consent-form-version``) or the environment
 (``PROVISION_CONSENT_FORM_VERSION``); an option wins. Takes the settings advisory lock EXCLUSIVE first,
 validates everything before writing anything, is idempotent (same value: unchanged), refuses to change an
 existing different value without ``--allow-change``, and writes one audit event for what it changed.
+
+v2 02C: ``--maintenance-gate-active true`` activates the maintenance gate (no --allow-change needed: the
+safe direction); ``false`` over an existing ``true`` deactivates it and needs ``--allow-change``. Both are
+audited and run under the settings lock, so no plan, authorization or departure straddles the switch.
 """
 
 import os
@@ -19,6 +23,12 @@ from platform_core.locks import SETTINGS_LOCK_KEY
 from platform_core.models import AuditEvent
 
 COMMAND = "fleet.provision_settings"
+GATE = "maintenance_gate_active"
+
+
+def _activation(key: str, value: str) -> bool:
+    """v2 02C: turning the maintenance gate ON is the safe direction and needs no --allow-change."""
+    return key == GATE and value == "true"
 
 
 def _opt(key: str) -> str:
@@ -81,7 +91,13 @@ class Command(BaseCommand):
                     + ". Give them as options or PROVISION_<KEY> environment variables."
                 )
 
-            blocked = [k for k, v in clean.items() if k in have and have[k] != v and not opts["allow_change"]]
+            blocked = [
+                k
+                for k, v in clean.items()
+                if k in have and have[k] != v and not opts["allow_change"] and not _activation(k, v)
+            ]
+            # v2 02C: turning the maintenance gate ON needs no --allow-change; turning it OFF (true -> false)
+            # does, like any other change of an existing value.
             if blocked:
                 raise CommandError(
                     "Nothing was changed. These already have a different value: "

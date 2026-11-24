@@ -92,6 +92,8 @@ PERIODIC_INSPECTION_INTERVAL_UNKNOWN = "PERIODIC_INSPECTION_INTERVAL_UNKNOWN"  #
 PERIODIC_INSPECTION_MISSING = "PERIODIC_INSPECTION_MISSING"  # X-3
 PERIODIC_INSPECTION_DUE_BEFORE_RETURN = "PERIODIC_INSPECTION_DUE_BEFORE_RETURN"  # X-3: due_at <= unload_end
 INSPECTOR_NOT_QUALIFIED = "INSPECTOR_NOT_QUALIFIED"  # X-8
+# v2 02C "Maintenance up to date": the maintenance calendar due time is not after the planned unloading end.
+MAINTENANCE_DUE_BEFORE_RETURN = "MAINTENANCE_DUE_BEFORE_RETURN"
 
 BLOCKER_CODES = (
     VISIT_NOT_CONFIRMED,
@@ -117,6 +119,7 @@ BLOCKER_CODES = (
     PERIODIC_INSPECTION_MISSING,
     PERIODIC_INSPECTION_DUE_BEFORE_RETURN,
     INSPECTOR_NOT_QUALIFIED,
+    MAINTENANCE_DUE_BEFORE_RETURN,
 )
 
 
@@ -167,6 +170,10 @@ class _World:
     latest: dict[str, ReadinessEvidence | None] = field(default_factory=dict)
     periodic: fleet_services.PeriodicStatus | None = None
     persons: dict[int, int] = field(default_factory=dict)  # person id -> version
+    # v2 02C: blocking maintenance reasons (empty while the gate is inactive) and, while it is active, the
+    # earliest maintenance calendar due time; read in the same statement as the periodic status.
+    maintenance: list[str] | None = None
+    maintenance_due: datetime | None = None
 
 
 def _select_recovery_plan(
@@ -220,20 +227,31 @@ def _signer_person_ids(inspection_ids: list[int]) -> list[int]:
 
 def _periodic_status(
     robot: Robot, pattern: ManifestPattern | None, at: datetime | None, production: bool
-) -> fleet_services.PeriodicStatus:
+) -> tuple[fleet_services.PeriodicStatus, list[str], datetime | None]:
     """X-3 status from the authoritative SQL function readiness_periodic_inspection_status (EM Option B):
     ONE statement, independent of the robot's inspection history. ``at`` None means the database clock
     (clock_timestamp(), as db_now()). The independent Python implementation
-    fleet_services.periodic_inspection_status stays the oracle in tests (test_s7_integration)."""
+    fleet_services.periodic_inspection_status stays the oracle in tests (test_s7_integration).
+
+    v2 02C: the same statement also reads the maintenance status (fleet_maintenance_block_reasons and, while
+    the gate is active, the earliest calendar due time of fleet_maintenance_status), so the evaluator's
+    statement count does not grow with the new gate."""
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT state, due_at, inspection_id, rule_id"
-            " FROM readiness_periodic_inspection_status(%s, %s, coalesce(%s, clock_timestamp()))",
-            [robot.pk, production, at],
+            "SELECT s.state, s.due_at, s.inspection_id, s.rule_id,"
+            " fleet_maintenance_block_reasons(%(r)s, %(p)s, coalesce(%(at)s, clock_timestamp())),"
+            " CASE WHEN fleet_maintenance_gate_active() THEN (SELECT min(m.due_at) FROM"
+            " fleet_maintenance_status(%(r)s, %(p)s, coalesce(%(at)s, clock_timestamp())) m) END"
+            " FROM readiness_periodic_inspection_status(%(r)s, %(p)s, coalesce(%(at)s, clock_timestamp())) s",
+            {"r": robot.pk, "p": production, "at": at},
         )
-        state, due_at, inspection_id, rule_id = cur.fetchone()
-    return fleet_services.PeriodicStatus(
-        state, due_at, inspection_id, rule_id, pattern.code if pattern is not None else None
+        state, due_at, inspection_id, rule_id, m_reasons, m_due = cur.fetchone()
+    return (
+        fleet_services.PeriodicStatus(
+            state, due_at, inspection_id, rule_id, pattern.code if pattern is not None else None
+        ),
+        list(m_reasons or []),
+        m_due,
     )
 
 
@@ -254,7 +272,9 @@ def _read_world(visit: Visit, at: datetime | None = None) -> _World:
     plan = _select_recovery_plan(v, rev, manifest_id)
     production = not fleet_services.demo_mode()
     latest = _latest_evidence_for(v, rev, manifest_id)
-    periodic = _periodic_status(robot, pattern, at, production) if robot is not None else None
+    periodic, m_reasons, m_due = (
+        _periodic_status(robot, pattern, at, production) if robot is not None else (None, None, None)
+    )
     # Dependency persons (contract 07a section 7.2, P0-1), deduplicated: the revision's lead and second, the
     # recovery plan's two people, and the signers of BOTH relied inspections (the latest pre-departure
     # evidence's inspection and the periodic inspection the database will select).
@@ -272,7 +292,19 @@ def _read_world(visit: Visit, at: datetime | None = None) -> _World:
     person_ids += _signer_person_ids(relied_inspections)
     persons = dict(Person.objects.filter(pk__in=set(person_ids)).values_list("pk", "version"))
     return _World(
-        v, rev, robot, manifest_id, pattern, plan, current_policy(), production, latest, periodic, persons
+        v,
+        rev,
+        robot,
+        manifest_id,
+        pattern,
+        plan,
+        current_policy(),
+        production,
+        latest,
+        periodic,
+        persons,
+        m_reasons,
+        m_due,
     )
 
 
@@ -346,7 +378,7 @@ def _gate_planning(w: _World, b: _Blockers) -> Plan | None:
         return None
     # Slice 7 X-3: the periodic status read once in _read_world (same robot, time and mode) is shared with the
     # planning eligibility check instead of being computed a second time there.
-    plan = live_feasibility(w.visit, periodic=w.periodic)
+    plan = live_feasibility(w.visit, periodic=w.periodic, maintenance=w.maintenance)
     if plan.feasibility != "feasible":
         for x in plan.blockers:
             b.add(PLANNING_PREFIX + x["code"], x["message"], x["action"], level=x.get("level", "blocked"))
@@ -647,6 +679,26 @@ def _gate_periodic_inspection(w: _World, plan: Plan | None, b: _Blockers) -> dat
     return st.due_at
 
 
+def _gate_maintenance(w: _World, plan: Plan | None, b: _Blockers) -> datetime | None:
+    """Gate 1d, v2 02C "Maintenance up to date" (contract 11, 8.2), backed by fleet_maintenance_status, the
+    function readiness_issue_authorization calls. Overdue, unknown, no approved rule and a missing required
+    inspection already arrive through PLANNING_ROBOT_NOT_ELIGIBLE (the same reasons from the same function)
+    and are not repeated here, as the periodic gate does. This gate adds the calendar due time: it must be
+    strictly after the planned unloading end, and it bounds the expiry. Nothing while the gate is inactive."""
+    due = w.maintenance_due
+    if due is None or w.robot is None:
+        return None
+    unload_end = _unload_end(plan)
+    if unload_end is not None and due <= unload_end:
+        b.add(
+            MAINTENANCE_DUE_BEFORE_RETURN,
+            f"Maintenance of {w.robot.code} falls due at {fleet_services.format_db_time(due)}, "
+            f"not after the planned unloading end {fleet_services.format_db_time(unload_end)}",
+            "Record the maintenance before the visit, or re-plan the visit",
+        )
+    return due
+
+
 def _gate_inspection_provenance(
     w: _World, latest: dict[str, ReadinessEvidence | None], reported: set[str], b: _Blockers
 ) -> None:
@@ -698,6 +750,7 @@ def evaluate_readiness(visit: Visit, at: datetime | None = None) -> ReadinessRes
     _gate_custody(w, b)  # 1b (Slice 4, C3)
     plan = _gate_planning(w, b)  # 2
     periodic_due = _gate_periodic_inspection(w, plan, b)  # 1c (Slice 7 X-3; needs the plan timeline)
+    maintenance_due = _gate_maintenance(w, plan, b)  # 1d (v2 02C)
     _gate_reservations(w, plan, b)  # 3
     _gate_policy(w, b)  # 4
     latest = _latest_evidence(w)
@@ -713,6 +766,8 @@ def evaluate_readiness(visit: Visit, at: datetime | None = None) -> ReadinessRes
         bounds += [x for x in relied.values() if x is not None]
         if periodic_due is not None:
             bounds.append(periodic_due)  # X-3: expires_at <= due_at (defence in depth)
+        if maintenance_due is not None:
+            bounds.append(maintenance_due)  # v2 02C: the same rule for the maintenance calendar due time
         expires_at = min(bounds)
         if expires_at <= at:
             b.add(

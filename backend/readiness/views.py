@@ -181,6 +181,7 @@ BLOCKER_PERMISSION: list[tuple[tuple[str, ...], str]] = [
     (("INSPECTION_TEMPLATE_NOT_APPROVED",), "fleet.approve_inspection_template"),
     (("PERIODIC_INSPECTION_INTERVAL_UNKNOWN",), "fleet.manage_periodic_rule"),
     (("PERIODIC_INSPECTION_",), "fleet.submit_inspection"),
+    (("MAINTENANCE_",), "fleet.record_maintenance"),  # v2 02C
     (("BATTERY_MIN_UNKNOWN",), "fleet.publish_capability"),
     (("EVIDENCE_", "BATTERY_", "EQUIPMENT_"), "readiness.record_evidence"),
     (("RECOVERY_",), "readiness.record_recovery_plan"),

@@ -56,6 +56,12 @@ PERMISSIONS: dict[str, set[str]] = {
     "fleet.manage_periodic_rule": {ENGINEER, ENGINEERING_LEAD},
     "fleet.approve_periodic_rule": {ENGINEERING_LEAD, SAFETY_REVIEWER},
     "fleet.withdraw_periodic_rule": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    # v2 02C (contract 11, 8.6): maintenance rules and records. The database functions re-check the role,
+    # and a record also needs a valid maintenance_technician qualification (a role never stands in for it).
+    "fleet.propose_maintenance_rule": {ENGINEER, ENGINEERING_LEAD},
+    "fleet.approve_maintenance_rule": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "fleet.withdraw_maintenance_rule": {ENGINEERING_LEAD, SAFETY_REVIEWER},
+    "fleet.record_maintenance": {HUB_TECHNICIAN, ENGINEER, ENGINEERING_LEAD},
     "fleet.place_hold": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "fleet.approve_release": {OPS_LEAD, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "fleet.release_hold": {OPS_LEAD, ENGINEERING_LEAD},
