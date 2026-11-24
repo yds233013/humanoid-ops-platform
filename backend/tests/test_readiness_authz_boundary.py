@@ -727,6 +727,8 @@ SQL_COVERAGE: dict[str, Any] = {
     "PERIODIC_INSPECTION_MISSING": "periodic inspection none on the current configuration",
     "PERIODIC_INSPECTION_DUE_BEFORE_RETURN": "not after the planned unloading end",
     "INSPECTOR_NOT_QUALIFIED": "is not a qualified readiness inspector",  # planning_inspection_signer_problem
+    # v2 02C "Maintenance up to date" (readiness/0009): the calendar due time against the unloading end
+    "MAINTENANCE_DUE_BEFORE_RETURN": "maintenance falls due at",
 }
 ALLOWED_GAPS = {"RECOVERY_ONCALL_NOT_ENGINEER"}
 

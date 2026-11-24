@@ -405,7 +405,8 @@ def test_the_02b_role_matrix():
     assert PERMISSIONS["hub.reserve_charger"] == {"hub_technician", "ops_lead"}
     assert PERMISSIONS["hub.manage_chargers"] == {"admin", "ops_lead"}
     assert {p for p, roles in PERMISSIONS.items() if "hub_technician" in roles} == {
-        "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav", "hub.record_charging", "hub.reserve_charger"
+        "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav", "hub.record_charging", "hub.reserve_charger",
+        "fleet.record_maintenance",  # v2 02C (8.6 "Record maintenance: if qualified")
     }  # fmt: skip
 
 
