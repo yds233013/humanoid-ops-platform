@@ -113,7 +113,10 @@ def test_options_are_labelled_for_the_window_and_free_first(w):
     assert "Free options are listed first" in html
 
 
-def test_labels_cost_a_fixed_number_of_statements(w):
+def test_labels_cost_a_fixed_number_of_statements(w, monkeypatch):
+    from platform_core import interaction as ia
+
+    monkeypatch.setattr(ia.secrets, "randbelow", lambda n: 1)  # no random form-token clean-up in the counts
     v2 = new_visit(w, d=DAY + timedelta(days=1))
     c = _client(w.ops)
     c.get(
