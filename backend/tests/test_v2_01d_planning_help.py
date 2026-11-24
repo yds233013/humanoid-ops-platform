@@ -116,6 +116,9 @@ def test_options_are_labelled_for_the_window_and_free_first(w):
 def test_labels_cost_a_fixed_number_of_statements(w):
     v2 = new_visit(w, d=DAY + timedelta(days=1))
     c = _client(w.ops)
+    c.get(
+        f"/planning/visits/{v2}/"
+    )  # warm-up: the first render may also prune expired form tokens (one statement)
     with CaptureQueriesContext(connection) as small:
         c.get(f"/planning/visits/{v2}/")
     for n in range(3, 9):

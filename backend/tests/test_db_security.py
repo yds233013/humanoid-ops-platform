@@ -56,10 +56,22 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "'readiness_departureauthorization', 'execution_executionrun', "
             # Slice 7 (07a 5.3): the registry is a lock-only row; activations are written only by the final
             # rebase-approval trigger (SECURITY DEFINER). Both asserted below.
-            "'fleet_holdpolicyregistry', 'fleet_holdrebaseactivation') "
+            "'fleet_holdpolicyregistry', 'fleet_holdrebaseactivation', "
+            # Phase 02B (contract 8.8): charger reservations, charging sessions and battery readings are written
+            # only through SECURITY DEFINER functions (hub/0004); the runtime role has SELECT only. Asserted below.
+            "'hub_charger_reservation', 'hub_charging_session', 'robot_soc_reading') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
+        for table in ("hub_charger_reservation", "hub_charging_session", "robot_soc_reading"):
+            cur.execute(
+                "SELECT has_table_privilege(current_user, %s, 'SELECT'), "
+                "has_table_privilege(current_user, %s, 'INSERT'), "
+                "has_table_privilege(current_user, %s, 'UPDATE'), "
+                "has_table_privilege(current_user, %s, 'DELETE')",
+                [table] * 4,
+            )
+            assert cur.fetchone() == (True, False, False, False), table
         # Deliberate exception (readiness/0005): authorizations are issued only through the SECURITY DEFINER
         # function readiness_issue_authorization; the runtime role keeps SELECT and UPDATE (row locks) only.
         cur.execute(
