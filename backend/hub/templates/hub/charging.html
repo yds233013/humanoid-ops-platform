@@ -41,16 +41,16 @@
 {% if can_record or can_reserve %}<section class="sec" data-section="forms"><h2>Record</h2><div class="chargeforms">
 {% if can_record %}<form method="post" action="/hub/charging/start/" class="card">{% csrf_token %}{% form_token %}<h3>Start charging</h3>
 <label>Charger <select name="charger" required>{% for c in in_service %}<option value="{{ c.code }}">{{ c.code }} {{ c.name }}</option>{% endfor %}</select></label>
-<label>Robot <input name="robot" required maxlength="12" placeholder="NB-011"></label>
+<label>Robot <select name="robot" required>{% for code, label in robot_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
 <label>Expected end ({% workspace_tz_label %}) <input type="datetime-local" name="until" required value="{{ default_until }}"></label>
 <label>Level now (%, optional) <input type="number" name="start_soc" min="0" max="100"></label><button class="primary">Start</button></form>
 <form method="post" action="/hub/charging/soc/" class="card">{% csrf_token %}{% form_token %}<h3>Record a battery level</h3>
-<label>Robot <input name="robot" required maxlength="12" placeholder="NB-011"></label>
+<label>Robot <select name="robot" required>{% for code, label in robot_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
 <label>Level (%) <input type="number" name="soc" min="0" max="100" required></label>
 <label>Seen at ({% workspace_tz_label %}, optional, last 24 hours) <input type="datetime-local" name="observed"></label><button class="primary">Record</button></form>{% endif %}
 {% if can_reserve %}<form method="post" action="/hub/charging/reserve/" class="card">{% csrf_token %}{% form_token %}<h3>Book a charger</h3>
 <label>Charger <select name="charger" required>{% for c in in_service %}<option value="{{ c.code }}">{{ c.code }} {{ c.name }}</option>{% endfor %}</select></label>
-<label>Robot <input name="robot" required maxlength="12" placeholder="NB-011"></label>
+<label>Robot <select name="robot" required>{% for code, label in robot_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
 <label>From ({% workspace_tz_label %}) <input type="datetime-local" name="starts" required></label>
 <label>To <input type="datetime-local" name="ends" required></label>
 <label>For visit (optional) <input name="visit" maxlength="12" placeholder="V-0012"></label><button class="primary">Book</button></form>{% endif %}

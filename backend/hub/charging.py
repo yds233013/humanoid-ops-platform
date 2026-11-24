@@ -49,10 +49,10 @@ RESERVE = "hub.reserve_charger"
 RECORD = "hub.record_charging"
 ENOUGH, NEEDS, UNKNOWN = "enough", "needs_charge", "unknown"
 LABELS = {ENOUGH: "Enough", NEEDS: "Needs charge", UNKNOWN: "Unknown"}
-SOURCE_WORDS = {
-    "battery_check": "battery check",
-    "charging_session_end": "end of a charging session",
-    "manual_reading": "reading entered by hand",
+SOURCE_PHRASES = {
+    "battery_check": "from a battery check",
+    "charging_session_end": "from the end of a charging session",
+    "manual_reading": "from a reading entered by hand",
 }
 
 
@@ -387,5 +387,5 @@ def robot_battery_panel(robot: Robot) -> dict[str, Any]:
     return {
         "forecast": f,
         "next_visit": nxt,
-        "source_words": SOURCE_WORDS.get(f.source or "", "") if f else "",
+        "source_words": SOURCE_PHRASES.get(f.source or "", "") if f else "",
     }

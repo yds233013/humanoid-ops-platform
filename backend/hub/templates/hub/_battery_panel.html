@@ -1,6 +1,6 @@
 {% load ui %}<div class="card" id="battery" data-battery="1"><h2>Battery</h2>
 {% with f=battery.forecast %}
-<p data-battery-last="1"><b>Last recorded:</b> {% if f and f.soc is not None %}{{ f.soc }}% · {{ f.observed_at|local_dt }} ({{ f.age_text }}) · from a {{ battery.source_words }}{% else %}nothing recorded yet{% endif %}</p>
+<p data-battery-last="1"><b>Last recorded:</b> {% if f and f.soc is not None %}{{ f.soc }}% · {{ f.observed_at|local_dt }} ({{ f.age_text }}) · {{ battery.source_words }}{% else %}nothing recorded yet{% endif %}</p>
 <p data-battery-estimate="1"><b>Estimated at departure:</b> {% if battery.next_visit %}{% if f.state == "enough" %}{% chip "neutral" "Enough" %}{% elif f.state == "needs_charge" %}{% chip "warn" "Needs charge" %}{% else %}{% chip "warn" "Unknown" %}{% endif %} for visit <a href="/planning/visits/{{ battery.next_visit.code }}/">{{ battery.next_visit.code }}</a> (leaves {{ f.departure_at|local_dt }}): {{ f.reason }}.{% if f.cannot_in_time %} It cannot be charged in time.{% endif %}{% else %}<span class="muted">no upcoming visit</span>{% endif %}</p>
 <p data-battery-evidence="1"><b>Departure evidence required:</b> a battery check recorded on the visit's readiness page, at or above the approved minimum{% if f.min_soc %} ({{ f.min_soc }}%){% endif %}. Readings and charging sessions here never count as that check.</p>
 {% endwith %}

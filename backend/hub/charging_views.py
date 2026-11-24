@@ -18,6 +18,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from accounts.permissions import active_roles
 from accounts.roles import PERMISSIONS
+from fleet.models import Robot
 from hub import charging as ch
 from hub.models import Charger, ChargerReservation, ChargingSession
 from planning.models import Visit
@@ -96,6 +97,8 @@ def charging_page(request: HttpRequest) -> HttpResponse:
     )
     forecasts = ch.visit_forecasts([v.pk for v in visits], now)
     rows: list[dict[str, Any]] = [{"visit": v, "f": forecasts.get(v.pk)} for v in visits]
+    far = timezone.now() + timedelta(days=365)
+    rows.sort(key=lambda r: (r["f"].departure_at if r["f"] else far, r["visit"].code))  # by departure time
     states = [r["f"].state for r in rows if r["f"] is not None]
     by_charger = {s.charger_id: s for s in sessions}
     next_res: dict[int, ChargerReservation] = {}
@@ -118,11 +121,24 @@ def charging_page(request: HttpRequest) -> HttpResponse:
             "can_reserve": _allowed(roles, ch.RESERVE),
             "can_manage": _allowed(roles, ch.MANAGE_CHARGERS),
             "in_service": [c for c in chargers if c.in_service],
+            "robot_options": _robot_options(),
             "default_until": (now + timedelta(hours=3))
             .astimezone(workspace_zone())
             .strftime("%Y-%m-%dT%H:%M"),
         },
     )
+
+
+def _robot_options() -> list[tuple[str, str]]:
+    """Named robots for the robot selects: in service first, then the others with their state (the commands
+    still validate the code)."""
+    robots = list(Robot.objects.exclude(lifecycle="retired").order_by("code"))
+    robots.sort(key=lambda r: (r.lifecycle != "in_service", r.code))
+    return [
+        (r.code, f"{r.code} · in service" if r.lifecycle == "in_service"
+         else f"{r.code} · not in service ({r.get_lifecycle_display()})")
+        for r in robots
+    ]  # fmt: skip
 
 
 def _do(request: HttpRequest, perm: str, fn: Any, ok: str, back: str = "/hub/charging/") -> HttpResponse:
