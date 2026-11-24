@@ -547,3 +547,118 @@ class EligibilityCheck(models.Model):
 
     def __str__(self) -> str:
         return f"{self.robot_id}@{self.robot_version_observed}"
+
+
+# ------------------------------------------------------------------ v2 02C maintenance (contract 11, 8.2)
+MAX_MAINTENANCE_DAYS = 3650
+MAX_MAINTENANCE_COUNT = 100_000
+
+
+class MaintenanceRule(models.Model):
+    """A maintenance requirement of one configuration, versioned per (pattern, requirement_code). Triggers:
+    calendar days, completed visits (closed runs) and active hours (session events), any combination, the
+    first one reached counts. A proposal until both approval slots are filled by distinct people (never its
+    author); the highest approved, effective version is active; if that version is withdrawn there is none.
+    Written ONLY by the SECURITY DEFINER functions of fleet/0009 (ops_app has SELECT only)."""
+
+    pattern = models.ForeignKey(ManifestPattern, on_delete=models.PROTECT, related_name="maintenance_rules")
+    requirement_code = models.CharField(max_length=40)
+    version_no = models.PositiveIntegerField()
+    calendar_days = models.PositiveIntegerField(null=True, blank=True)
+    visit_count = models.PositiveIntegerField(null=True, blank=True)
+    active_hours = models.PositiveIntegerField(null=True, blank=True)
+    warning_pct = models.PositiveSmallIntegerField(default=10)  # due soon once (100 - warning_pct)% is used
+    inspection_template = models.ForeignKey(
+        "InspectionTemplate", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )  # a passing post-maintenance inspection on this template is required (None: not required)
+    effective_from = models.DateTimeField()
+    source = models.CharField(max_length=30, choices=RULE_SOURCES)
+    procedure_ref = models.TextField(blank=True, default="", db_default="")
+    notes = models.TextField(blank=True, default="", db_default="")
+    created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["pattern", "requirement_code", "version_no"], name="uniq_maintenance_rule_version"
+            ),
+            models.CheckConstraint(
+                condition=Q(calendar_days__isnull=False)
+                | Q(visit_count__isnull=False)
+                | Q(active_hours__isnull=False),
+                name="maintenance_rule_has_trigger",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(calendar_days__isnull=True)
+                    | Q(calendar_days__gte=1, calendar_days__lte=MAX_MAINTENANCE_DAYS)
+                )
+                & (
+                    Q(visit_count__isnull=True)
+                    | Q(visit_count__gte=1, visit_count__lte=MAX_MAINTENANCE_COUNT)
+                )
+                & (
+                    Q(active_hours__isnull=True)
+                    | Q(active_hours__gte=1, active_hours__lte=MAX_MAINTENANCE_COUNT)
+                ),
+                name="maintenance_rule_trigger_range",
+            ),  # fmt: skip
+            models.CheckConstraint(condition=Q(warning_pct__lte=90), name="maintenance_rule_warning_range"),
+            models.CheckConstraint(
+                condition=_in("source", RULE_SOURCES), name="maintenance_rule_source_valid"
+            ),
+            models.CheckConstraint(
+                condition=Q(requirement_code__regex=r"^[A-Z0-9][A-Z0-9_-]{0,39}$"),
+                name="maintenance_rule_code_format",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.pattern_id} {self.requirement_code} v{self.version_no}"
+
+
+class MaintenanceRuleApproval(models.Model):
+    rule = models.ForeignKey(MaintenanceRule, on_delete=models.PROTECT, related_name="approvals")
+    slot = models.CharField(max_length=20, choices=APPROVAL_SLOTS)
+    approver = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    approved_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["rule", "slot"], name="uniq_maintenance_rule_slot"),
+            models.UniqueConstraint(fields=["rule", "approver"], name="uniq_maintenance_rule_approver"),
+            models.CheckConstraint(condition=_in("slot", APPROVAL_SLOTS), name="maintenance_rule_slot_valid"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.rule_id}:{self.slot}"
+
+
+class MaintenanceRuleWithdrawal(models.Model):
+    rule = models.OneToOneField(MaintenanceRule, on_delete=models.PROTECT, related_name="withdrawal")
+    withdrawn_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    reason = models.TextField()
+    withdrawn_at = models.DateTimeField(db_default=Now())
+
+    def __str__(self) -> str:
+        return f"{self.rule_id} withdrawn"
+
+
+class MaintenanceRecord(models.Model):
+    """Maintenance work done on one robot for one requirement, signed by a qualified maintenance technician.
+    Stores the rule version it satisfied. Append-only; written ONLY by fleet_record_maintenance()."""
+
+    robot = models.ForeignKey(Robot, on_delete=models.PROTECT, related_name="maintenance_records")
+    rule = models.ForeignKey(MaintenanceRule, on_delete=models.PROTECT, related_name="records")
+    requirement_code = models.CharField(max_length=40)
+    manifest = models.ForeignKey(ConfigurationManifest, on_delete=models.PROTECT, related_name="+")
+    performed_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    performed_at = models.DateTimeField(db_default=Now())  # database time of the record
+    notes = models.TextField(blank=True, default="", db_default="")
+
+    class Meta:
+        indexes = [models.Index(fields=["robot", "requirement_code", "performed_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.robot_id} {self.requirement_code} {self.performed_at}"

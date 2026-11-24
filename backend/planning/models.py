@@ -115,9 +115,12 @@ class Qualification(models.Model):
         # to
         # oneself, never backdated (planning/0006 trigger), with a training-record reference in basis_ref.
         ("readiness_inspector", "Readiness inspector"),
+        # v2 02C: signs maintenance records (fleet_record_maintenance). Granted like readiness_inspector: by a
+        # safety reviewer only, never to oneself, never backdated, with a training-record reference.
+        ("maintenance_technician", "Maintenance technician"),
     ]
     person = models.ForeignKey(Person, on_delete=models.PROTECT, related_name="qualifications")
-    kind = models.CharField(max_length=20, choices=KINDS)
+    kind = models.CharField(max_length=24, choices=KINDS)
     # NOT NULL after BEFORE triggers: an immediate readiness_inspector grant inserts NULL and the trigger sets
     # it
     # to the same clock_timestamp() as granted_at (contract 07a section 7.2, P1-6).
@@ -135,7 +138,13 @@ class Qualification(models.Model):
             ),
             models.CheckConstraint(
                 condition=Q(
-                    kind__in=["field_lead", "field_operator", "robot_handler", "readiness_inspector"]
+                    kind__in=[
+                        "field_lead",
+                        "field_operator",
+                        "robot_handler",
+                        "readiness_inspector",
+                        "maintenance_technician",
+                    ]
                 ),
                 name="qualification_kind_valid",
             ),
