@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}{{ robot.code }} maintenance{% endblock %}
 {% block content %}
-{% if fleet_access %}{% page_header title="Maintenance of "|add:robot.code back_url="/fleet/"|add:robot.code|add:"/" back_label=robot.code %}{{ robot.get_lifecycle_display }}{% endpage_header %}{% else %}{% page_header title="Maintenance of "|add:robot.code back_url="/hub/" back_label="Hub" %}{{ robot.get_lifecycle_display }}{% endpage_header %}{% endif %}
+{% page_header title=page_title back_url=back_url back_label=back_label %}{{ robot.get_lifecycle_display }}{% endpage_header %}
 
 {% if not status.gate_active %}<div class="card" data-maintenance-gate="inactive"><p>{% chip "warn" gate_inactive_label %} The status is computed and shown, but overdue or unknown maintenance does not block planning or departure until the deployment owner activates the gate.</p></div>{% endif %}
 

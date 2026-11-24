@@ -1002,6 +1002,8 @@ def robot_maintenance(request: HttpRequest, code: str) -> HttpResponse:
             "requirements": [q.requirement_code for q in status.rows if q.rule_id and q.state != "no_rule"],
             "demo_label": mnt.DEMO_LABEL,
             "gate_inactive_label": mnt.GATE_INACTIVE_LABEL,
-            "fleet_access": has_permission(request.user, "fleet.read"),
+            "page_title": f"Maintenance of {r.code}",
+            "back_url": f"/fleet/{r.code}/" if has_permission(request.user, "fleet.read") else "/hub/",
+            "back_label": r.code if has_permission(request.user, "fleet.read") else "Hub",
         },
     )
