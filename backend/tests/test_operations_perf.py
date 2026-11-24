@@ -487,6 +487,115 @@ def test_hub_page_p95_on_the_scale_fixture(request):
         assert out["p95_ms"] <= budget, (path, out)
 
 
+CHARGE_VISITS = 40  # confirmed visits in the next two days, one robot each (most scale robots are held)
+CHARGE_FEW = 3  # robots with a low reading in the "few tasks" comparison run
+
+
+def _hub_samples(c: Any, runs: int) -> tuple[list[float], set[int]]:
+    assert c.get("/hub/").status_code == 200  # warm-up; derives any new tasks once
+    samples, statements = [], set()
+    for _ in range(runs):
+        counter = Counter()
+        t0 = time.perf_counter()
+        with connection.execute_wrapper(counter):
+            resp = c.get("/hub/")
+        samples.append((time.perf_counter() - t0) * 1000)
+        statements.add(counter.n)
+        assert resp.status_code == 200
+    return samples, statements
+
+
+@pytest.mark.perf
+@pytest.mark.django_db(transaction=True)
+def test_hub_page_p95_with_charging_tasks_on_the_scale_fixture(request, monkeypatch):
+    """02B item C: charge_forecast derivation at the 200-robot scale. Everything charging-related goes through
+    the guarded paths (charger command, planning commands, hub_record_soc_reading via hub.charging), no raw
+    inserts. /hub/ p95 with the derived charging tasks stays within the Hub budget, and its statement count is
+    the same with a few charging tasks as with many (bounded, not per task)."""
+    if not _perf_selected(request.config):
+        pytest.skip("run with -m perf")
+    from django.db import transaction
+    from django.test import Client
+    from django.utils import timezone
+
+    import platform_core.interaction as ia
+    from hub import charging as hc
+    from hub.models import WorkOrder
+    from tests.conftest import make_user
+    from tests.readiness_world import MIN_DEPARTURE_SOC
+
+    monkeypatch.setattr(ia.secrets, "randbelow", lambda n: 1)  # no opportunistic token clean-up in the counts
+    with transaction.atomic():
+        w, _, _ = build()
+    set_setting("ops_soc_fresh_min", "240")
+    perf_user = make_user("perf_hub_charge_ops", "ops_lead")
+    for n in range(1, 5):
+        hc.create_charger(w.ops, code=f"C-{n}", name=f"Bay {n}")
+    # confirmed visits in the next two days on distinct scale robots (their fixture visits start on DAY + 1)
+    crews = ow.SCALE_CREWS
+    base = timezone.now().replace(minute=0, second=0, microsecond=0)
+    confirmed: list[str] = []
+    skipped: dict[str, str] = {}
+    slots = [0] * crews  # each crew takes visits 7 hours apart: 20, 27, 34, 41 hours from now
+    for n, robot in enumerate(w.robot_codes):
+        if len(confirmed) == CHARGE_VISITS:
+            break
+        crew = n % crews
+        if slots[crew] == 4:
+            continue
+        start = base + timedelta(hours=20 + 7 * slots[crew])
+        code = w.p.request_visit(
+            w.ops, site_code="S-1", on_site_start=start, on_site_end=start + timedelta(hours=1), travel_out_min=30,
+            travel_back_min=30, tasks=["T-04"], required_scopes=["presence"],
+        )["entity_id"]  # fmt: skip
+        out = w.p.plan_visit(w.ops, visit_code=code, robot_code=robot, lead_code=f"PC-{crew}L",
+                             second_code=f"PC-{crew}S", vehicle_code=f"VS-{crew}")  # fmt: skip
+        if out["feasibility"] != "feasible":  # e.g. a held robot: not part of this scenario
+            skipped[robot] = "; ".join(out["blockers"])[:100]
+            w.p.cancel_visit(w.ops, visit_code=code, reason="perf scenario: robot not available")
+            continue
+        w.p.confirm_visit(w.ops, visit_code=code)
+        slots[crew] += 1
+        confirmed.append(robot)
+    assert len(confirmed) == CHARGE_VISITS, (len(confirmed), skipped)
+    c = Client()
+    c.force_login(perf_user)
+
+    def low(robots: list[str]) -> None:
+        for k, robot in enumerate(robots):
+            hc.record_soc(perf_user, robot_code=robot, soc_pct=(MIN_DEPARTURE_SOC - 40) + k % 30)
+
+    def charging_tasks() -> int:
+        return WorkOrder.objects.filter(source_kind="charge_forecast").count()
+
+    low(confirmed[:CHARGE_FEW])
+    few_samples, few_statements = _hub_samples(c, RUNS)
+    few_tasks = charging_tasks()
+    low(confirmed[CHARGE_FEW:])
+    samples, statements = _hub_samples(c, RUNS)
+    res = {
+        "p95_ms": round(p95(samples), 1),
+        "median_ms": round(sorted(samples)[RUNS // 2], 1),
+        "budget_ms": HUB_MS,
+        "statements": sorted(statements),
+        "tasks": WorkOrder.objects.count(),
+        "charging_tasks": charging_tasks(),
+        "confirmed_visits": len(confirmed),
+        "robots_skipped": len(skipped),
+        "few": {
+            "charging_tasks": few_tasks,
+            "statements": sorted(few_statements),
+            "p95_ms": round(p95(few_samples), 1),
+        },  # fmt: skip
+        "samples_ms": [round(x, 1) for x in samples],
+    }
+    print("\n/hub/ with charging tasks on the scale fixture:", json.dumps(res, indent=1))
+    assert 0 < few_tasks < res["charging_tasks"], res
+    assert res["charging_tasks"] >= CHARGE_VISITS, res  # every confirmed visit's robot needs charge
+    assert res["p95_ms"] <= HUB_MS, res
+    assert statements == few_statements, res  # bounded: the same statements whatever the task count
+
+
 # ------------------------------------------------------------------ 01D release fix: /readiness/
 def _readiness_samples(monkeypatch: Any, user: Any) -> dict[str, Any]:
     from django.test import Client

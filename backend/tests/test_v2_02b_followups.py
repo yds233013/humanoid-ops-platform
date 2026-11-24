@@ -18,7 +18,6 @@ from tests.test_v2_02b_charging import (
     _app_conn,
     _ids,
     _world,
-    w,  # noqa: F401 - the shared fixture
 )
 
 pytestmark = pytest.mark.django_db
@@ -39,6 +38,11 @@ HELPERS = {
     "hub_lock_robot_charger",
 }
 ROLES = ("public", "ops_app", "ops_owner")
+
+
+@pytest.fixture(name="w")
+def _w() -> Any:
+    return _world()
 
 
 # ------------------------------------------------------------------ A. function privileges
@@ -246,3 +250,47 @@ def test_source_words_read_naturally(w):
         "manual_reading": "from a reading entered by hand",
     }
     assert "from a end" not in html
+
+
+# ------------------------------------------------------------------ C. Hub statement count with charging tasks
+def _hub_count(c: Client) -> int:
+    assert c.get("/hub/").status_code == 200  # warm-up: derives any new task once
+    with CaptureQueriesContext(connection) as q:
+        assert c.get("/hub/").status_code == 200
+    return len(q)
+
+
+def test_hub_statement_count_is_identical_with_2_and_20_derived_charging_tasks(monkeypatch):
+    import platform_core.interaction as ia
+    from hub.models import WorkOrder
+    from tests.fleet_world import set_setting
+
+    monkeypatch.setattr(ia.secrets, "randbelow", lambda n: 1)  # no opportunistic token clean-up in the count
+    w = _world("ct_")
+    set_setting("ops_soc_fresh_min", "240")
+    hc.record_soc(w.tech, robot_code="R-02", soc_pct=20)  # fresh, below the departure minimum
+    base = timezone.now().replace(minute=0, second=0, microsecond=0) + timedelta(hours=2)
+
+    def visits(ks: range) -> None:
+        for k in ks:  # one visit every 2 hours, all inside the two-day charge horizon
+            start = base + timedelta(hours=2 * k)
+            code = w.p.request_visit(
+                w.ops, site_code="S-1", on_site_start=start, on_site_end=start + timedelta(hours=1),
+                travel_out_min=30, travel_back_min=30, tasks=["T-04"],
+            )["entity_id"]  # fmt: skip
+            w.p.plan_visit(w.ops, visit_code=code, robot_code="R-02", lead_code="P-1", second_code="P-2",
+                           vehicle_code="VAN-1")  # fmt: skip
+
+    def charging() -> int:
+        return WorkOrder.objects.filter(source_kind="charge_forecast").count()
+
+    c = Client()
+    c.force_login(w.ops)
+    visits(range(2))
+    two = _hub_count(c)
+    assert charging() == 2
+    visits(range(2, 20))
+    twenty = _hub_count(c)
+    assert charging() == 20
+    assert two == twenty, (two, twenty)
+    print(f"/hub/ statements: {two} with 2 and with 20 derived charging tasks")
