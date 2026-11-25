@@ -359,7 +359,8 @@ of work. Sections 3 to 6 and 8a-1 still apply; nothing here replaces them.
    section 9.
 
 **Migrate.** Deploy the approved Phase 02 commit. `start.sh` runs `migrate` (accounts 0004, hub 0001-0004 and
-0006-0009, fleet 0009-0010, planning 0007-0008, operations 0007-0008, readiness 0009; all additive). Check
+0006-0009, fleet 0009-0011, planning 0007-0009, operations 0007-0008, readiness 0009; all additive; 02E added
+`planning/0009_maintenance_gate_settings_lock` and `fleet/0011_maintenance_open_sessions`). Check
 `/healthz` = 200 and sign in. Nothing is blocked yet: the maintenance gate is off, and stock settings are absent
 ("No minimum set", "not checked per visit").
 
