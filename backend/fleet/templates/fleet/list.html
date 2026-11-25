@@ -5,20 +5,21 @@
 {% include "ui/hub_filter.html" %}
 {% can "fleet.register_robot" as may_add %}<p class="row">{% if may_add %}<a class="btn primary" href="/fleet/new/">Add a robot</a>{% endif %}<a class="btn" href="/fleet/patterns/">Configurations</a></p>
 <div class="tablewrap"><table>
-<thead><tr><th>Robot</th><th>Lifecycle</th><th>Configuration</th><th>Planning eligibility</th><th>Periodic inspection</th><th>Open holds</th></tr></thead>
+<thead><tr><th>Robot</th><th>Lifecycle</th><th>Configuration</th><th>Location</th><th>Planning eligibility</th><th>Periodic inspection</th><th>Open holds</th></tr></thead>
 <tbody>
 {% for row in rows %}
 <tr>
   <td><a href="/fleet/{{ row.robot.code }}/"><b>{{ row.robot.code }}</b></a></td>
   <td>{{ row.robot.get_lifecycle_display }}</td>
   <td>{{ row.e.pattern_code|default:"-" }}</td>
+  <td data-location="{{ row.e.location.kind }}">{{ row.e.location.label }}</td>
   <td>{% if row.e.eligible_for_planning %}<span class="badge elig">{{ row.e.label }}</span>
       {% else %}<span class="badge no">{{ row.e.label }}</span>
       <ul class="reasons">{% for r in row.e.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}</td>
   <td>{% include "fleet/_periodic.html" with p=row.periodic %}</td>
   <td>{% for h in row.open_holds %}{{ h.code }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="muted">none</span>{% endfor %}</td>
 </tr>
-{% empty %}<tr><td colspan="6"><div class="empty"><b>No robots yet</b>Next step: {% if may_add %}<a href="/fleet/new/">add your first robot</a>. Then record its configuration.{% else %}ask {% who_can "fleet.register_robot" %} to add the first robot.{% endif %}</div></td></tr>
+{% empty %}<tr><td colspan="7"><div class="empty"><b>No robots yet</b>Next step: {% if may_add %}<a href="/fleet/new/">add your first robot</a>. Then record its configuration.{% else %}ask {% who_can "fleet.register_robot" %} to add the first robot.{% endif %}</div></td></tr>
 {% endfor %}
 </tbody></table></div>
 {% endblock %}

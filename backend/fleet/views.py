@@ -44,6 +44,7 @@ from fleet.models import (
     Robot,
 )
 from hub.charging import robot_battery_panel
+from hub.transfer_views import robot_panel
 from platform_core.commands import CommandError
 from platform_core.hubscope import hub_scope
 from platform_core.interaction import spend_form_token
@@ -418,6 +419,7 @@ def robot_detail(request: HttpRequest, code: str) -> HttpResponse:
             "periodic": periodic_status([r.pk]).get(r.pk),
             "battery": robot_battery_panel(r),  # v2 02B: last recorded / estimated at departure / evidence
             "maintenance": mnt.robot_status(r),  # v2 02C: one statement (fleet_maintenance_status)
+            "tp": robot_panel(request.user, r),  # v2 03A-2: location and moving it to another hub
             "templates": templates,
             "recent_inspections": signer_rows(recent),
             "synthetic_interval": SYNTHETIC_INTERVAL,

@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from accounts.permissions import active_roles
 from accounts.roles import INSPECTION_SIGNER_ROLES
-from fleet.location import robot_location
+from fleet.location import Location, robot_location
 from fleet.models import (
     HOLD_POLICY_SOURCES,
     MAX_INTERVAL_MIN,
@@ -470,6 +470,7 @@ class Eligibility:
     manifest_id: int | None
     pattern_code: str | None
     periodic: PeriodicStatus | None = field(default=None)
+    location: Location | None = field(default=None)  # v2 03A-2: where the robot is (fleet.location)
 
 
 def maintenance_block_reasons(robot: Robot, at: datetime | None = None) -> list[str]:
@@ -560,6 +561,7 @@ def evaluate_eligibility(
         robot.current_manifest_id,
         pattern.code if pattern else None,
         periodic,
+        where,
     )
 
 

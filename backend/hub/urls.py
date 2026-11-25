@@ -1,6 +1,6 @@
 from django.urls import path
 
-from hub import api, charging_views, stock_views, views
+from hub import api, charging_views, stock_views, transfer_views, views
 
 urlpatterns = [
     path("hub/", views.hub_page, name="hub"),
@@ -34,6 +34,20 @@ urlpatterns = [
         "hub/stock/reservations/<int:reservation_id>/release/",
         stock_views.release_view,
         name="hub-stock-release",
+    ),
+    # v2 03A-2: robots, vehicles and stock moving between hubs
+    path("hub/transfers/", transfer_views.transfers_page, name="hub-transfers"),
+    path("hub/transfers/start/", transfer_views.start_view, name="hub-transfer-start"),
+    path(
+        "hub/transfers/<int:transfer_id>/<str:action>/",
+        transfer_views.action_view,
+        name="hub-transfer-action",
+    ),
+    path("hub/stock/transfer/", transfer_views.stock_transfer_view, name="hub-stock-transfer"),
+    path(
+        "hub/stock/transfers/<int:transfer_id>/receive/",
+        transfer_views.stock_receive_view,
+        name="hub-stock-transfer-receive",
     ),
     path("api/hub/tasks", api.tasks, name="api-hub-tasks"),
     path("api/hub/tasks/<int:task_id>/<str:action>", api.task_action, name="api-hub-task-action"),

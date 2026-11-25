@@ -1,10 +1,11 @@
 """v2 03A-2: where a robot is (docs/13_v2_phase03_contract.md 11.4, correction 10.A).
 
-The single definition lives in SQL (fleet migration 0015: ``fleet_robot_location`` and ``fleet_location_problem``);
-Python only calls it, so pages, the planner and the database gates can never disagree.
+The single definition lives in SQL (fleet migration 0015: ``fleet_robot_location`` and
+``fleet_location_problem``); Python only calls it, so pages, the planner and the database gates can never
+disagree.
 
-Kinds: hub (with its hub), vehicle, site, transfer_in_transit, unaccounted, unknown. Only a verified hub location
-makes a robot available, and only at that hub. The HOME hub is ownership, not location.
+Kinds: hub (with its hub), vehicle, site, transfer_in_transit, unaccounted, unknown. Only a verified hub
+location makes a robot available, and only at that hub. The HOME hub is ownership, not location.
 """
 
 from __future__ import annotations
@@ -70,4 +71,6 @@ def robot_locations(robot_ids: Iterable[int]) -> dict[int, Location]:
 
 
 def robot_location(robot_id: int) -> Location:
-    return robot_locations([robot_id]).get(robot_id) or Location("unknown", None, "", False, "Location unknown")
+    return robot_locations([robot_id]).get(robot_id) or Location(
+        "unknown", None, "", False, "Location unknown"
+    )

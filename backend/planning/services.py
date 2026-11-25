@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from fleet import services as fleet_services
 from fleet.models import CapabilityProfile, ManifestPattern, Robot
+from fleet.transfers import open_transfer_text
 from planning.models import (
     AssessmentApproval,
     ConsentRecord,
@@ -279,6 +280,16 @@ def evaluate(
                 f"{robot.code}: " + "; ".join(e.reasons),
                 "Choose another robot or resolve its holds",
             )
+        # v2 03A-2 (10.A): a verified hub location makes the robot available only at THAT hub (planning/0011)
+        if visit is not None and e.location is not None and e.location.at_verified_hub:
+            if not e.location.dispatchable_at(visit.hub_id):
+                _add(
+                    b,
+                    "blocked",
+                    "ROBOT_AT_ANOTHER_HUB",
+                    f"{robot.code} is at hub {e.location.ref}, not at this visit's hub",
+                    "Choose a robot at this hub, or move this one here first",
+                )
         if e.pattern_code:
             pattern = ManifestPattern.objects.get(code=e.pattern_code)
             snap["pattern_version"] = pattern.version
@@ -318,6 +329,15 @@ def evaluate(
     if vehicle is None:
         _add(b, "blocked", "VEHICLE_MISSING", "No vehicle assigned", "Assign a vehicle")
     else:
+        moving = open_transfer_text("vehicle", vehicle.pk)
+        if moving:
+            _add(
+                b,
+                "blocked",
+                "VEHICLE_IN_TRANSFER",
+                f"{vehicle.code} is in transfer {moving}",
+                "Choose another vehicle, or receive this one first",
+            )
         if vehicle.robot_capacity is None:
             _add(
                 b,

@@ -183,9 +183,13 @@ def plan_options(visit: Visit) -> PlanOptions:
     )
     for robot_id, code, pattern, eligible, reasons in robot_rows:
         f = forecasts.get(robot_id)
+        home = robots.get(robot_id)
         if not eligible:
             shorts = list(dict.fromkeys(robot_reason(x).short for x in reasons))
             status, note = UNUSABLE, "not ready: " + ", ".join(shorts)
+        elif home is not None and home.hub_id != visit.hub_id:
+            # v2 03A-2 (10.A): eligible = verified at its hub, which is its home hub; only that hub may use it
+            status, note = UNUSABLE, "at another hub"
         elif f is not None and f.cannot_in_time:
             status, note = UNUSABLE, "cannot charge in time"
         elif c := busy.clash("robot", robot_id, *robot_window(pattern)):

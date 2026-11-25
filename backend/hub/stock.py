@@ -215,6 +215,73 @@ def release_for_cancelled_visit(actor: Any, *, reservation_id: int) -> str:
     return str(r.visit.code)
 
 
+# ------------------------------------------------------------------ v2 03A-2: stock transfers between hubs
+TRANSFER = "hub.transfer_stock"
+
+
+def transfer(
+    actor: Any, *, item_code: str, quantity: int, to_hub_code: str, hub_code: str | None = None
+) -> int:
+    """Send ``quantity`` of an item to another hub (a transfer_out movement at the source). Until it is
+    received there it counts at neither hub. The destination must keep an item with the same code."""
+    it = _item(item_code, hub_code)
+    dest = owner_hub(to_hub_code)
+    if dest is None:
+        raise Invalid("Choose the hub to send the stock to")
+    payload = {"item": it.code, "from": it.hub.code, "to": dest.code, "quantity": quantity}
+    return int(
+        _guarded(actor, TRANSFER, "SELECT hub_transfer_stock(%s, %s, %s, %s, %s)", [it.pk, quantity, dest.pk],
+                 payload)
+    )  # fmt: skip
+
+
+def receive_transfer(actor: Any, *, transfer_id: int) -> int:
+    """Receive a stock transfer at its destination hub (a transfer_in movement, once)."""
+    return int(
+        _guarded(actor, "hub.receive_transfer", "SELECT hub_receive_transfer(%s, %s, %s)", [transfer_id],
+                 {"transfer": transfer_id})
+    )  # fmt: skip
+
+
+@dataclass
+class InTransit:
+    id: int
+    item_code: str
+    item_name: str
+    unit: str
+    quantity: int
+    from_hub_id: int
+    from_hub: str
+    to_hub_id: int
+    to_hub: str
+    sent_at: datetime
+
+    @property
+    def quantity_text(self) -> str:
+        return count_text(self.quantity, self.unit)
+
+
+IN_TRANSIT_SQL = """
+SELECT m.id, i.code, i.name, i.unit, m.quantity, i.hub_id, hf.code, m.to_hub_id, ht.code, m.occurred_at
+FROM hub_stock_movement m
+JOIN hub_stock_item i ON i.id = m.item_id
+JOIN platform_core_hub hf ON hf.id = i.hub_id
+JOIN platform_core_hub ht ON ht.id = m.to_hub_id
+WHERE m.kind = 'transfer_out' AND NOT EXISTS (SELECT 1 FROM hub_stock_movement r WHERE r.transfer_of_id =
+m.id)
+  AND (%(hubs)s::bigint[] IS NULL OR i.hub_id = ANY(%(hubs)s::bigint[])
+       OR m.to_hub_id = ANY(%(hubs)s::bigint[]))
+ORDER BY m.id
+"""
+
+
+def in_transit(hub_ids: Any = None) -> list[InTransit]:
+    """Stock sent from or to ``hub_ids`` and not received yet (on hand at neither hub). One statement."""
+    with connection.cursor() as cur:
+        cur.execute(IN_TRANSIT_SQL, {"hubs": _hubs_param(hub_ids)})
+        return [InTransit(*r) for r in cur.fetchall()]
+
+
 # ------------------------------------------------------------------ wording
 def singular(unit: str) -> str:
     """The unit for a count of 1 (``boxes`` -> ``box``, ``kits`` -> ``kit``). Same rule as hub_stock_qty() in
