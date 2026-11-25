@@ -19,6 +19,7 @@ READ MODELS (one statement each, whatever the number of items, movements or visi
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -32,7 +33,7 @@ from planning.models import Visit
 from platform_core.commands import CommandError, Conflict, Invalid, NotAuthenticated, PermissionDenied
 from platform_core.hubscope import owner_hub
 from platform_core.middleware import current_request_id
-from platform_core.models import AuditEvent
+from platform_core.models import AuditEvent, Hub
 
 MOVE = "hub.stock_move"  # receive, issue, return, consume
 ADJUST = "hub.stock_adjust"
@@ -213,6 +214,97 @@ def release_for_cancelled_visit(actor: Any, *, reservation_id: int) -> str:
         raise Conflict(f"Visit {r.visit.code} is not cancelled; release it with a reason on its release page")
     release(actor, reservation_id=r.pk, reason=f"Visit {r.visit.code} was cancelled")
     return str(r.visit.code)
+
+
+# ------------------------------------------------------------------ v2 03A-2: stock transfers between hubs
+TRANSFER = "hub.transfer_stock"
+
+
+def transfer(
+    actor: Any, *, item_code: str, quantity: int, to_hub_code: str, hub_code: str | None = None
+) -> int:
+    """Send ``quantity`` of an item to another hub (a transfer_out movement at the source). Until it is
+    received there it counts at neither hub. The destination must keep an item with the same code."""
+    it = _item(item_code, hub_code)
+    dest = owner_hub(to_hub_code)
+    if dest is None:
+        raise Invalid("Choose the hub to send the stock to")
+    payload = {"item": it.code, "from": it.hub.code, "to": dest.code, "quantity": quantity}
+    return int(
+        _guarded(actor, TRANSFER, "SELECT hub_transfer_stock(%s, %s, %s, %s, %s)", [it.pk, quantity, dest.pk],
+                 payload)
+    )  # fmt: skip
+
+
+def receive_transfer(actor: Any, *, transfer_id: int) -> int:
+    """Receive a stock transfer at its destination hub (a transfer_in movement, once)."""
+    return int(
+        _guarded(actor, "hub.receive_transfer", "SELECT hub_receive_transfer(%s, %s, %s)", [transfer_id],
+                 {"transfer": transfer_id})
+    )  # fmt: skip
+
+
+@dataclass
+class InTransit:
+    id: int
+    item_code: str
+    item_name: str
+    unit: str
+    quantity: int
+    from_hub_id: int
+    from_hub: str
+    to_hub_id: int
+    to_hub: str
+    sent_at: datetime
+
+    @property
+    def quantity_text(self) -> str:
+        return count_text(self.quantity, self.unit)
+
+
+IN_TRANSIT_SQL = """
+SELECT m.id, i.code, i.name, i.unit, m.quantity, i.hub_id, hf.code, m.to_hub_id, ht.code, m.occurred_at
+FROM hub_stock_movement m
+JOIN hub_stock_item i ON i.id = m.item_id
+JOIN platform_core_hub hf ON hf.id = i.hub_id
+JOIN platform_core_hub ht ON ht.id = m.to_hub_id
+WHERE m.kind = 'transfer_out' AND NOT EXISTS (SELECT 1 FROM hub_stock_movement r WHERE r.transfer_of_id =
+m.id)
+  AND (%(hubs)s::bigint[] IS NULL OR i.hub_id = ANY(%(hubs)s::bigint[])
+       OR m.to_hub_id = ANY(%(hubs)s::bigint[]))
+ORDER BY m.id
+"""
+
+
+def transfer_board(hub_ids: Any = None) -> tuple[list[Hub], list[InTransit]]:
+    """Every hub (the destinations a page offers) and the stock on its way from or to ``hub_ids``, in ONE
+    statement (the Stock page's statement count stays pinned)."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT (SELECT coalesce(json_agg(json_build_array(h.id, h.code, h.name) ORDER BY h.code), '[]')"
+            " FROM platform_core_hub h), (SELECT coalesce(json_agg(json_build_array("
+            "t.id, t.c, t.n, t.u, t.q, t.fh, t.fhc, t.th, t.thc, t.at) ORDER BY t.id), '[]')"
+            f" FROM ({IN_TRANSIT_SQL}) t(id, c, n, u, q, fh, fhc, th, thc, at))",
+            {"hubs": _hubs_param(hub_ids)},
+        )
+        hubs_json, rows_json = cur.fetchone()
+    hubs = [Hub(id=h[0], code=h[1], name=h[2]) for h in _json(hubs_json)]
+    rows = [
+        InTransit(r[0], r[1], r[2], r[3], int(r[4]), r[5], r[6], r[7], r[8], datetime.fromisoformat(r[9]))
+        for r in _json(rows_json)
+    ]  # fmt: skip
+    return hubs, rows
+
+
+def _json(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def in_transit(hub_ids: Any = None) -> list[InTransit]:
+    """Stock sent from or to ``hub_ids`` and not received yet (on hand at neither hub). One statement."""
+    with connection.cursor() as cur:
+        cur.execute(IN_TRANSIT_SQL, {"hubs": _hubs_param(hub_ids)})
+        return [InTransit(*r) for r in cur.fetchall()]
 
 
 # ------------------------------------------------------------------ wording

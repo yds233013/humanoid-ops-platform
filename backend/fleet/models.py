@@ -694,3 +694,83 @@ class MaintenanceRecord(models.Model):
 
     def __str__(self) -> str:
         return f"{self.robot_id} {self.requirement_code} {self.performed_at}"
+
+
+TRANSFER_ASSET_KINDS = [("robot", "Robot"), ("vehicle", "Vehicle")]
+TRANSFER_STATES = [
+    ("in_transit", "On its way"),
+    ("receipt_refused", "Receipt refused"),
+    ("abandoned", "Abandoned"),
+    ("received", "Received"),
+]
+
+
+class HubTransfer(models.Model):
+    """v2 03A-2 (contract 11.5, correction 10.C): the APPEND-ONLY record of moving a robot or a vehicle
+    to another hub. One row per step; a transfer is its first row (``seq`` 1, ``transfer`` = itself,
+    state in_transit) and the rows that point to it. Its current state is its latest row:
+
+        in_transit -> receipt_refused (still on its way, with a reason) -> abandoned (ops lead) -> received
+        in_transit / receipt_refused -> received (at the destination hub)
+        abandoned -> received (back at the source hub, an explicit receipt there)
+
+    Written ONLY by the SECURITY DEFINER functions fleet_transfer_start / _receive / _refuse / _abandon (fleet
+    migration 0014); the runtime role has SELECT only, and a trigger refuses UPDATE, DELETE and TRUNCATE."""
+
+    transfer = models.ForeignKey("self", on_delete=models.PROTECT, related_name="+")
+    seq = models.PositiveIntegerField()
+    asset_kind = models.CharField(max_length=8, choices=TRANSFER_ASSET_KINDS)
+    robot = models.ForeignKey(Robot, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    vehicle = models.ForeignKey(
+        "planning.Vehicle", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    from_hub = models.ForeignKey("platform_core.Hub", on_delete=models.PROTECT, related_name="+")
+    to_hub = models.ForeignKey("platform_core.Hub", on_delete=models.PROTECT, related_name="+")
+    state = models.CharField(max_length=16, choices=TRANSFER_STATES)
+    at_hub = models.ForeignKey(
+        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )  # where it was received (state received only)
+    actor = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    reason = models.CharField(max_length=200, blank=True, default="")
+    request_id = models.CharField(max_length=64, blank=True, default="")
+    recorded_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        db_table = "fleet_hub_transfer"
+        constraints = [
+            models.UniqueConstraint(fields=["transfer", "seq"], name="fleet_transfer_one_step_per_seq"),
+            models.UniqueConstraint(
+                fields=["transfer"], condition=Q(state="received"), name="fleet_transfer_received_once"
+            ),
+            models.CheckConstraint(
+                condition=_in("asset_kind", TRANSFER_ASSET_KINDS), name="fleet_transfer_kind"
+            ),
+            models.CheckConstraint(condition=_in("state", TRANSFER_STATES), name="fleet_transfer_state"),
+            models.CheckConstraint(
+                condition=Q(asset_kind="robot", robot__isnull=False, vehicle__isnull=True)
+                | Q(asset_kind="vehicle", vehicle__isnull=False, robot__isnull=True),
+                name="fleet_transfer_one_asset",
+            ),
+            models.CheckConstraint(condition=~Q(from_hub=models.F("to_hub")), name="fleet_transfer_two_hubs"),
+            models.CheckConstraint(
+                condition=(Q(state="received") & Q(at_hub__isnull=False))
+                | (~Q(state="received") & Q(at_hub__isnull=True)),
+                name="fleet_transfer_received_at_hub",
+            ),
+            models.CheckConstraint(
+                condition=(Q(seq=1) & Q(transfer=models.F("id")) & Q(state="in_transit"))
+                | (Q(seq__gt=1) & ~Q(transfer=models.F("id")) & ~Q(state="in_transit")),
+                name="fleet_transfer_starts_in_transit",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["robot", "id"], name="fleet_transfer_robot_idx"),
+            models.Index(fields=["vehicle", "id"], name="fleet_transfer_vehicle_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.code} #{self.seq} {self.state}"
+
+    @property
+    def code(self) -> str:
+        return f"TR-{self.transfer_id:04d}"

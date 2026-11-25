@@ -59,6 +59,19 @@
 <label>Reason (required, kept in the audit log) <input name="reason" maxlength="200" required></label><button class="primary">Record adjustment</button></form>{% endif %}
 </div></section>{% endif %}
 
+{% if stock_hubs %}<section class="sec" data-section="transfers"><h2>Between hubs</h2>
+{% if in_transit %}<div class="tablewrap"><table><thead><tr><th>Item</th><th>Quantity</th><th>From</th><th>To</th><th>Sent</th><th></th></tr></thead><tbody>
+{% for x in in_transit %}<tr data-stock-transfer="{{ x.id }}"><td>{{ x.item_code }} {{ x.item_name }}</td><td>{{ x.quantity_text }}</td><td>{{ x.from_hub }}</td><td>{{ x.to_hub }}</td><td>{{ x.sent_at|local_dt }}</td>
+<td>{% if can_move %}<form method="post" action="/hub/stock/transfers/{{ x.id }}/receive/">{% csrf_token %}{% form_token %}<button class="primary small">Receive at {{ x.to_hub }}</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+<p class="muted">Stock on its way counts at neither hub until it is received.</p>
+{% else %}<p class="muted">No stock is on its way between hubs.</p>{% endif %}
+{% if can_move and transfer_items %}<form method="post" action="/hub/stock/transfer/" class="card">{% csrf_token %}{% form_token %}<h3>Send to another hub</h3>
+<label>Item <select name="item" required>{% for value, label in transfer_items %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+<label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
+<label>To hub <select name="to_hub" required>{% for h in stock_hubs %}<option value="{{ h.code }}">{{ h.code }} {{ h.name }}</option>{% endfor %}</select></label>
+<button class="primary">Send</button><p class="muted">The other hub must keep an item with the same code. Reserved stock cannot be sent.</p></form>{% endif %}
+</section>{% endif %}
+
 <section class="sec" data-section="movements"><h2>Recent movements</h2>
 {% if movements %}<div class="tablewrap"><table><thead><tr><th>When</th><th>Item</th><th>What</th><th>Quantity</th><th>Visit</th><th>By</th><th>Reason</th></tr></thead><tbody>
 {% for m in movements %}<tr data-movement="{{ m.pk }}"><td>{{ m.occurred_at|local_dt }}</td><td>{{ m.item.code }}</td><td>{{ m.get_kind_display }}</td><td>{% if m.kind == "adjust" and m.on_hand_delta < 0 %}-{% endif %}{{ m.quantity }}</td><td>{{ m.visit.code|default:"-" }}</td><td>{{ m.actor.username }}</td><td>{{ m.reason|default:"-" }}</td></tr>{% endfor %}</tbody></table></div>

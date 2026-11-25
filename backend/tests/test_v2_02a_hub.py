@@ -162,6 +162,7 @@ def test_the_02a_role_matrix():
         "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav", "hub.record_charging", "hub.reserve_charger",
         "fleet.record_maintenance",
         "hub.stock_move", "hub.stock_adjust", "hub.stock_reserve",  # v2 02D (8.6 stock rows)
+        "fleet.transfer",  # v2 03A-2: move a robot or vehicle between hubs (checked at the record's hub)
     }  # fmt: skip
     assert "hub_technician" in ALL_ROLES
 

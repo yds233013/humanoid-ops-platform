@@ -235,7 +235,21 @@ def qualification_revoke(request: HttpRequest, code: str, qid: int) -> HttpRespo
 def vehicle_list(request: HttpRequest) -> HttpResponse:
     if not has_permission(request.user, READ):
         return denied(request, READ)
-    return render(request, "resources/vehicles.html", {"vehicles": Vehicle.objects.order_by("code")})
+    from fleet.transfers import open_transfer_text
+    from platform_core.models import Hub
+
+    vehicles = list(Vehicle.objects.select_related("hub").order_by("code"))
+    for v in vehicles:  # v2 03A-2: its hub and whether it is on its way to another one
+        v.moving = open_transfer_text("vehicle", v.pk)  # type: ignore[attr-defined]
+    return render(
+        request,
+        "resources/vehicles.html",
+        {
+            "vehicles": vehicles,
+            "hubs": list(Hub.objects.order_by("code")),
+            "may_transfer": has_permission(request.user, "fleet.transfer"),
+        },
+    )
 
 
 @login_required

@@ -279,6 +279,35 @@ _ROBOT_REASONS: list[tuple[str, str, str, str, str]] = [
         "fleet.record_maintenance",
         "record the maintenance (with a maintenance technician qualification)",
     ),
+    # v2 03A-2: the location reasons of fleet_location_problem (operations/0009)
+    (
+        "In transfer ",
+        "on its way to another hub",
+        "it is on its way to another hub and is available at neither hub until it is received",
+        "fleet.transfer",
+        "receive it at the hub (Hub, Transfers)",
+    ),
+    (
+        "Not at a hub",
+        "not at a hub",
+        "it is not back at a hub (verified)",
+        "execution.record_field_event",
+        "record its return to the hub",
+    ),
+    (
+        "At hub ",
+        "not verified at the hub",
+        "its arrival at the hub is not verified",
+        "execution.record_field_event",
+        "record its return to the hub",
+    ),
+    (
+        "Location unknown",
+        "location unknown",
+        "its custody history is broken or missing",
+        "fleet.release_hold",
+        "resolve its custody",
+    ),
 ]
 
 

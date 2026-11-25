@@ -72,6 +72,10 @@ PERMISSIONS: dict[str, set[str]] = {
     "fleet.release_hold": {OPS_LEAD, ENGINEERING_LEAD},
     "fleet.submit_inspection": {OPS_LEAD, FIELD_OPERATOR},
     "fleet.check_eligibility": {OPS_LEAD, FIELD_OPERATOR, ENGINEERING_LEAD},
+    # v2 03A-2: move a robot or a vehicle to another hub (checked at the record's hub, and again in the
+    # database)
+    "fleet.transfer": {HUB_TECHNICIAN, OPS_LEAD},
+    "fleet.abandon_transfer": {OPS_LEAD},
     # Slice 2: planning
     "planning.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "planning.manage_sites": {OPS_LEAD},

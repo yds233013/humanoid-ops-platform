@@ -1,0 +1,12 @@
+{% load ui %}{# v2 03A-2: where the robot is and moving it to another hub (hub.transfer_views.robot_panel) #}
+<div class="card" id="location" data-location="{{ tp.location.kind }}">
+  <h2>Location and hub</h2>
+  <p>{{ tp.location.label }} · home hub {{ robot.hub.code }}</p>
+  {% if tp.location.problem %}<p class="muted">It can be planned only once it is verified at a hub, and only at that hub.</p>{% endif %}
+  {% if tp.open %}<p>Transfer {{ tp.open.code }}: {{ tp.open.from_hub }} to {{ tp.open.to_hub }}, {{ tp.open.state_label|lower }}. <a href="/hub/transfers/">Receive or resolve it</a>.</p>
+  {% elif tp.may_start and tp.hubs %}<form method="post" action="/hub/transfers/start/" class="row">{% csrf_token %}{% form_token %}
+    <input type="hidden" name="kind" value="robot"><input type="hidden" name="code" value="{{ robot.code }}"><input type="hidden" name="back" value="/fleet/{{ robot.code }}/">
+    <label>Move to another hub <select name="to_hub" required>{% for h in tp.hubs %}<option value="{{ h.code }}">{{ h.code }} {{ h.name }}</option>{% endfor %}</select></label>
+    <label>Reason <input name="reason" maxlength="200" required></label><button>Send</button></form>{% endif %}
+  {% if tp.transfers %}<p class="muted">{% for t in tp.transfers %}{{ t.code }} {{ t.from_hub }} to {{ t.to_hub }}: {{ t.state_label|lower }}{% if not forloop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+</div>

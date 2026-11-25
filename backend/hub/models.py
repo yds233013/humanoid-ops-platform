@@ -262,6 +262,8 @@ MOVEMENT_KINDS = [
     ("issue", "Issued"),
     ("return", "Returned"),
     ("consume", "Consumed"),
+    ("transfer_out", "Sent to another hub"),  # v2 03A-2: counts at neither hub until received
+    ("transfer_in", "Received from another hub"),
 ]
 
 
@@ -334,7 +336,7 @@ class StockMovement(models.Model):
     """
 
     item = models.ForeignKey(StockItem, on_delete=models.PROTECT, related_name="movements")
-    kind = models.CharField(max_length=10, choices=MOVEMENT_KINDS)
+    kind = models.CharField(max_length=12, choices=MOVEMENT_KINDS)
     quantity = models.PositiveIntegerField()
     on_hand_delta = models.IntegerField()
     reserved_delta = models.IntegerField()
@@ -348,6 +350,15 @@ class StockMovement(models.Model):
     actor = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     occurred_at = models.DateTimeField()
     request_id = models.CharField(max_length=64, blank=True, default="")
+    # v2 03A-2 (contract 11.5, 10.C): a transfer_out names the hub it is sent to; the transfer_in at that
+    # hub names the transfer_out it receives (one receipt per transfer: unique). In between the quantity
+    # is on hand nowhere.
+    to_hub = models.ForeignKey(
+        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    transfer_of = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="receipt"
+    )
 
     class Meta:
         db_table = "hub_stock_movement"

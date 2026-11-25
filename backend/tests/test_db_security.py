@@ -67,7 +67,9 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             # Phase 02D: the predictor log is written only by the owner-only operations_log_predictor_signals()
             # (operations/0008); stock items, stock reservations and the stock ledger only through SECURITY
             # DEFINER functions (hub/0008, contract 8.8). The runtime role has SELECT only. Asserted below.
-            "'operations_predictor_observation', 'hub_stock_item', 'hub_stock_reservation', 'hub_stock_movement') "
+            "'operations_predictor_observation', 'hub_stock_item', 'hub_stock_reservation', 'hub_stock_movement', "
+            # v2 03A-2: the transfer record is written only by the fleet_transfer_* functions (fleet/0015).
+            "'fleet_hub_transfer') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
@@ -83,6 +85,7 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "hub_stock_item",
             "hub_stock_reservation",
             "hub_stock_movement",
+            "fleet_hub_transfer",
         ):
             cur.execute(
                 "SELECT has_table_privilege(current_user, %s, 'SELECT'), "

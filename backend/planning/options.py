@@ -34,6 +34,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from django.db import connection
+from django.db.models.expressions import RawSQL
 
 from fleet import services as fleet_services
 from fleet.models import ManifestPattern, Robot
@@ -183,9 +184,13 @@ def plan_options(visit: Visit) -> PlanOptions:
     )
     for robot_id, code, pattern, eligible, reasons in robot_rows:
         f = forecasts.get(robot_id)
+        home = robots.get(robot_id)
         if not eligible:
             shorts = list(dict.fromkeys(robot_reason(x).short for x in reasons))
             status, note = UNUSABLE, "not ready: " + ", ".join(shorts)
+        elif home is not None and home.hub_id != visit.hub_id:
+            # v2 03A-2 (10.A): eligible = verified at its hub, which is its home hub; only that hub may use it
+            status, note = UNUSABLE, "at another hub"
         elif f is not None and f.cannot_in_time:
             status, note = UNUSABLE, "cannot charge in time"
         elif c := busy.clash("robot", robot_id, *robot_window(pattern)):
@@ -240,8 +245,18 @@ def plan_options(visit: Visit) -> PlanOptions:
         bucket[:] = _sort(bucket)
 
     # vehicles: capacity and restraint kit recorded (as evaluate requires), then conflicts
-    for v in Vehicle.objects.order_by("code"):
-        if v.robot_capacity is None:
+    # v2 03A-2: whether it is on its way to another hub (its latest transfer step not received), same read
+    moving = RawSQL(
+        "(SELECT t.state <> 'received' FROM fleet_hub_transfer t WHERE t.vehicle_id = planning_vehicle.id"
+        " ORDER BY t.id DESC LIMIT 1)",
+        [],
+    )
+    for v in Vehicle.objects.annotate(moving=moving).order_by("code"):
+        if v.moving:
+            status, note = UNUSABLE, "on its way to another hub"
+        elif v.hub_id != visit.hub_id:
+            status, note = UNUSABLE, "at another hub"
+        elif v.robot_capacity is None:
             status, note = UNUSABLE, "capacity not recorded"
         elif not v.restraint_kit:
             status, note = UNUSABLE, "no restraint kit recorded"

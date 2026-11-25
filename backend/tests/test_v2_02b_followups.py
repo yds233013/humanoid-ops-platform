@@ -28,6 +28,7 @@ ENTRY = {
     "hub_start_charging",
     "hub_end_charging",
     "hub_record_soc_reading",
+    "hub_receive_transfer",  # v2 03A-2 (hub/0013): receiving a stock transfer, same write boundary
 }
 HELPERS = {
     "hub_deny",

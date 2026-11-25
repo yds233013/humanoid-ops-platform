@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from accounts.permissions import active_roles
 from accounts.roles import INSPECTION_SIGNER_ROLES
+from fleet.location import Location, robot_location
 from fleet.models import (
     HOLD_POLICY_SOURCES,
     MAX_INTERVAL_MIN,
@@ -381,6 +382,8 @@ class PeriodicStatus:
     # v2 02C: read in the same statement by the readiness evaluator (None = not read with this status)
     maintenance_reasons: list[str] | None = None
     maintenance_due: datetime | None = None
+    # v2 03A-2: the robot's location, read in the same statement by the readiness evaluator (None = not read)
+    location: Location | None = None
 
 
 def qualifying_periodic_inspection(robot: Robot, *, production: bool) -> Inspection | None:
@@ -469,6 +472,7 @@ class Eligibility:
     manifest_id: int | None
     pattern_code: str | None
     periodic: PeriodicStatus | None = field(default=None)
+    location: Location | None = field(default=None)  # v2 03A-2: where the robot is (fleet.location)
 
 
 def maintenance_block_reasons(robot: Robot, at: datetime | None = None) -> list[str]:
@@ -546,6 +550,13 @@ def evaluate_eligibility(
         scope="robot", robot=robot, released_at__isnull=True, blocking=True
     ).order_by("id"):
         reasons.append(f"Robot hold {h.code} ({h.get_source_type_display()}): {h.reason}")
+    # v2 03A-2 (10.A): only a verified hub location makes a robot available (same position and wording as the
+    # SQL view, operations/0009). Which hub (= the visit's) is checked by the planner, not here.
+    where = (
+        shared.location if shared is not None and shared.location is not None else robot_location(robot.pk)
+    )
+    if where.problem:
+        reasons.append(where.problem)
     ok = not reasons
     return Eligibility(
         ok,
@@ -554,6 +565,7 @@ def evaluate_eligibility(
         robot.current_manifest_id,
         pattern.code if pattern else None,
         periodic,
+        where,
     )
 
 

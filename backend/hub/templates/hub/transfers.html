@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Transfers{% endblock %}
+{% block content %}
+{% page_header title="Transfers" back_url="/hub/" back_label="Hub" %}Robots and vehicles moving between hubs. On its way, it can be planned at neither hub. Holds always stay with the robot.{% endpage_header %}
+{% include "ui/hub_filter.html" %}
+<section class="sec" data-section="open"><h2>On their way</h2>
+{% if open_rows %}<div class="tablewrap"><table><thead><tr><th>Transfer</th><th>What</th><th>Route</th><th>State</th><th>Last change</th><th></th></tr></thead><tbody>
+{% for t in open_rows %}{% include "hub/_transfer_row.html" with back="/hub/transfers/" %}{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">Nothing is on its way between hubs.</p>{% endif %}</section>
+{% if can_transfer %}<section class="sec" data-section="start"><h2>Move to another hub</h2>
+<form method="post" action="/hub/transfers/start/" class="card">{% csrf_token %}{% form_token %}
+<label>What <select name="kind"><option value="robot"{% if prefill.kind == "robot" %} selected{% endif %}>Robot</option><option value="vehicle"{% if prefill.kind == "vehicle" %} selected{% endif %}>Vehicle</option></select></label>
+<label>Code <input name="code" maxlength="12" required value="{{ prefill.code }}"></label>
+<label>To hub <select name="to_hub" required>{% for h in hubs %}<option value="{{ h.code }}">{{ h.code }} {{ h.name }}</option>{% endfor %}</select></label>
+<label>Reason (kept in the audit log) <input name="reason" maxlength="200" required></label>
+<button class="primary">Send</button>
+<p class="muted">Refused while it is out, booked, has an unused departure authorization, or is not verified at its hub.</p></form></section>{% endif %}
+<section class="sec" data-section="done"><h2>Received</h2>
+{% if done_rows %}<div class="tablewrap"><table><thead><tr><th>Transfer</th><th>What</th><th>Route</th><th>State</th><th>Last change</th><th></th></tr></thead><tbody>
+{% for t in done_rows %}{% include "hub/_transfer_row.html" with back="/hub/transfers/" %}{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">No transfer received yet.</p>{% endif %}</section>
+{% endblock %}

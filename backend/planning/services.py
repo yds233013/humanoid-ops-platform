@@ -279,6 +279,16 @@ def evaluate(
                 f"{robot.code}: " + "; ".join(e.reasons),
                 "Choose another robot or resolve its holds",
             )
+        # v2 03A-2 (10.A): a verified hub location makes the robot available only at THAT hub (planning/0011)
+        if visit is not None and e.location is not None and e.location.at_verified_hub:
+            if not e.location.dispatchable_at(visit.hub_id):
+                _add(
+                    b,
+                    "blocked",
+                    "ROBOT_AT_ANOTHER_HUB",
+                    f"{robot.code} is at hub {e.location.ref}, not at this visit's hub",
+                    "Choose a robot at this hub, or move this one here first",
+                )
         if e.pattern_code:
             pattern = ManifestPattern.objects.get(code=e.pattern_code)
             snap["pattern_version"] = pattern.version
@@ -1008,6 +1018,9 @@ def plan_visit(
         v.refresh_from_db()
         if v.status == "cancelled":
             raise Conflict("Visit is cancelled")
+        if robot is not None and v.status in ("planned", "confirmed") and _departed(v):
+            # v2 03A-2: the robot is out on this visit, so the location check would otherwise answer first
+            raise Conflict(f"Visit {v.code} has departed; it can never be re-planned")
         prev = v.current_revision
         assert prev is not None
         if robot:

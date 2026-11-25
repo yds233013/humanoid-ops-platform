@@ -58,6 +58,7 @@ ENTRY = {
     "hub_return_stock",
     "hub_reserve_stock",
     "hub_release_stock",
+    "hub_transfer_stock",  # v2 03A-2 (hub/0013): sending stock to another hub
 }
 HELPERS = {
     "hub_stock_lock",

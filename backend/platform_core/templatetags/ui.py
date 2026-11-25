@@ -344,6 +344,7 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("Work queue", "/hub/", "hub.view"),
         ("Charging", "/hub/charging/", "hub.view"),
         ("Stock", "/hub/stock/", "hub.view"),
+        ("Transfers", "/hub/transfers/", "hub.view"),  # v2 03A-2
         ("Daily close-out", "/ops/closeout/", "operations.read"),
         ("Field runs", "/execution/", "execution.read"),
     ],
