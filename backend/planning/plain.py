@@ -87,6 +87,10 @@ BLOCKERS: dict[str, tuple[str, str]] = {
         "The chosen robot is not ready for planning.",
         "Pick another robot, or clear its holds first.",
     ),
+    "ROBOT_AT_ANOTHER_HUB": (
+        "The chosen robot is at another hub.",
+        "Pick a robot at this visit's hub, or move this one here first.",
+    ),
     "UNKNOWN_LOAD_TIME": (
         "How long this robot takes to load and unload is not known.",
         "Ask engineering to publish the loading time for this robot.",
