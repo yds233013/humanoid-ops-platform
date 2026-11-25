@@ -184,8 +184,8 @@ def parse_stock_levels(raw: str | None) -> dict[str, int]:
 
 
 def current_values(hub: Any = None) -> dict[str, str]:
-    """The GLOBAL values (hub rows never mix in); with ``hub``, that hub's own override rows only (v2
-    03A-1)."""
+    """The GLOBAL values (hub rows never mix in); with ``hub``, that hub's own override rows only
+    (v2 03A-1)."""
     qs = DeploymentSetting.objects.filter(key__in=ALLOWED_KEYS)
     qs = qs.filter(hub__isnull=True) if hub is None else qs.filter(hub=hub)
     return dict(qs.values_list("key", "value"))

@@ -15,12 +15,11 @@ lock; then the handler checks THIS task (its owner, its creator, its status) for
 ``hub.manage_all``. A field operator cannot start, complete or cancel someone else's task.
 
 v2 03A-1 (docs/13_v2_phase03_contract.md 11.2): every command passes the TASK's hub to run_command (read from
-the
-task record, or for a new task from its robot, never from client input), so ``hub.work`` and the handler's
-``hub.manage_all`` / ``hub.claim`` checks count only grants that apply at that hub. A hub technician of hub A
-cannot create, take, start, complete or cancel a task of hub B. (Work orders are written by the runtime role
-through this command layer (8.8), so this Python check is their boundary; the trigger hub_workorder_same_hub
-keeps the task's robot and visit at the task's hub.)
+the task record, or for a new task from its robot, never from client input), so ``hub.work`` and the
+handler's ``hub.manage_all`` / ``hub.claim`` checks count only grants that apply at that hub. A hub
+technician of hub A cannot create, take, start, complete or cancel a task of hub B. (Work orders are written
+by the runtime role through this command layer (8.8), so this Python check is their boundary; the trigger
+hub_workorder_same_hub keeps the task's robot and visit at the task's hub.)
 
 Work orders are not safety evidence (contract 8.1): nothing here touches holds, inspections, custody,
 readiness evidence, eligibility or maintenance. The only table written is hub_workorder (plus the audit row).

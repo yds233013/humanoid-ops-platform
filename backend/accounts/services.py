@@ -19,9 +19,9 @@ User = get_user_model()
 
 
 def _grant_hub(role: str, hub_code: str | None) -> Hub | None:
-    """v2 03A-1 (contract 11.2): the hub of a new grant. A hub-scoped role names its hub (the only hub when
-    the
-    workspace has one and none is given); a regional role never has one. Never the person's home hub."""
+    """v2 03A-1 (contract 11.2): the hub of a new grant. A hub-scoped role names its hub (the only hub
+    when the workspace has one and none is given); a regional role never has one. Never the person's home
+    hub."""
     code = (hub_code or "").strip().upper()
     if role not in HUB_SCOPED_ROLES:
         if code:

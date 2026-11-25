@@ -203,8 +203,7 @@ class Today:
     unconfigured: list[str] = field(default_factory=list)
     charge_off: bool = False  # v2 02B: ops_soc_fresh_min missing, so no charge forecast is applied
     # v2 03A-1 (contract 11.2 "Reads"): the hubs shown; None = every hub (a regional viewer, no filter). When
-    # set, each section keeps only its rows of those hubs (one extra statement per section, whatever the
-    # size).
+    # set, each section keeps only its rows of those hubs (one extra statement per section, any size).
     hub_ids: set[int] | None = None
 
 

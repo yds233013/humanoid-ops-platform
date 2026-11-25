@@ -13,10 +13,9 @@ class RoleGrant(models.Model):
     v2 03A-1 (contract 11.2, correction B): ``hub`` is NULL for a regional grant and names the hub for a
     hub-qualified one. Hub-scoped roles (HUB_SCOPED_ROLES) must name a hub, every other role must not (check
     constraint). When a hub-scoped grant is inserted without a hub, the database fills in the only hub
-    (trigger
-    accounts_rolegrant_default_hub, platform_core_default_hub(): refused as "hub required" when there are
-    several), so a single-hub workspace keeps working unchanged. At most one ACTIVE grant per (user, role,
-    hub).
+    (trigger accounts_rolegrant_default_hub, platform_core_default_hub(): refused as "hub required" when
+    there are several), so a single-hub workspace keeps working unchanged. At most one ACTIVE grant per
+    (user, role, hub).
     """
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="role_grants")
@@ -40,9 +39,9 @@ class RoleGrant(models.Model):
     class Meta:
         constraints = [
             # v2 03A-1: at most one ACTIVE grant per (user, role, coalesce(hub, 0)). An expression index
-            # created
-            # in SQL by accounts/0005 (uniq_active_role_grant), not declared here: Django cannot compare an
-            # expression constraint over a ForeignKey without re-detecting it on every makemigrations.
+            # created in SQL by accounts/0005 (uniq_active_role_grant), not declared here: Django cannot
+            # compare an expression constraint over a ForeignKey without re-detecting it on every
+            # makemigrations.
             models.CheckConstraint(
                 condition=(Q(role__in=list(HUB_SCOPED_ROLES)) & Q(hub__isnull=False))
                 | (~Q(role__in=list(HUB_SCOPED_ROLES)) & Q(hub__isnull=True)),

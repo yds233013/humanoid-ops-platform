@@ -13,8 +13,9 @@ accounts_rolegrant.hub_id: NULL for a regional grant, set for a hub grant.
 
 SQL: has_active_role_at(uid, role, hub) is true for an active grant of that role whose hub is ``hub`` or NULL
 (regional). has_active_role(uid, role) keeps its meaning: any hub. STABLE, fixed search_path, EXECUTE revoked
-from PUBLIC and granted to ops_app only. The guarded write functions use the locking variant hub_actor_has_at
-(hub migration 0011), which takes the grants FOR SHARE so a concurrent revocation and the write are ordered.
+from PUBLIC and granted to ops_app only. The guarded write functions (hub/0011, fleet/0013) use the locking
+variant hub_actor_has_at defined here, which takes the grants FOR SHARE so a concurrent revocation and the
+write are ordered.
 
 Reverse: drops the function and trigger, restores the (user, role) uniqueness and drops the column (a database
 holding two active grants of one role at two hubs cannot be reversed; it says so).

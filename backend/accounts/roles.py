@@ -21,9 +21,8 @@ ALL_ROLES = [
 ]
 
 # v2 03A-1 (docs/13_v2_phase03_contract.md 11.2): roles held AT ONE HUB. A grant of one of these roles must
-# name its hub (check constraint role_grant_hub_scope); every other role is regional (hub NULL). A person's
-# home
-# hub never confers a grant.
+# name its hub (check constraint role_grant_hub_scope); every other role is regional (hub NULL). A
+# person's home hub never confers a grant.
 HUB_SCOPED_ROLES = (HUB_TECHNICIAN, FIELD_OPERATOR)
 
 # permission -> roles allowed. Slice 1+ add domain permissions here.

@@ -36,9 +36,8 @@ PER_HUB_SETTING_KEYS = ("stock_minimums", "stock_per_visit")
 class DeploymentSetting(models.Model):
     """Environment switches readable by the runtime role, writable only by the schema owner.
 
-    v2 03A-1: a row with ``hub`` NULL is the global value; a row with a hub overrides it for that hub (only
-    the
-    PER_HUB_SETTING_KEYS; check constraint). One global row per key and one row per (key, hub)."""
+    v2 03A-1: a row with ``hub`` NULL is the global value; a row with a hub overrides it for that hub
+    (only the PER_HUB_SETTING_KEYS; check constraint). One global row per key and one row per (key, hub)."""
 
     key = models.CharField(max_length=60)
     value = models.CharField(max_length=200)

@@ -1,10 +1,8 @@
 """Which hubs a page shows (v2 03A-1, docs/13_v2_phase03_contract.md 11.2 "Reads", invariant I-8).
 
-A viewer with any active REGIONAL grant (hub NULL) sees every hub; a viewer with only hub grants sees those
-hubs.
-A person's home hub plays no part. ``?hub=CODE`` narrows the page to one of the visible hubs; it can never
-widen
-it: a hub the viewer holds no grant for shows nothing (and says so).
+A viewer with any active REGIONAL grant (hub NULL) sees every hub; a viewer with only hub grants sees
+those hubs. A person's home hub plays no part. ``?hub=CODE`` narrows the page to one of the visible hubs; it
+can never widen it: a hub the viewer holds no grant for shows nothing (and says so).
 
 ONE statement per page, whatever the number of hubs, grants or records.
 """

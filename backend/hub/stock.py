@@ -41,9 +41,8 @@ MANAGE_ITEMS = "hub.manage_stock_items"
 HORIZON = timedelta(days=2)
 
 # The owner-provisioned per-item settings, parsed in SQL (same format fleet.provisioning validates), PER HUB
-# (v2 03A-1, contract 11.3): a hub's own row of the setting replaces the global row for that hub (the whole
-# value,
-# not item by item); a hub without its own row uses the global row. Rows: (hub_id, code, n).
+# (v2 03A-1, contract 11.3): a hub's own row of the setting replaces the global row for that hub (the
+# whole value, not item by item); a hub without its own row uses the global row. Rows: (hub_id, code, n).
 SETTING_CTE = r"""
   SELECT DISTINCT ON (h.id, split_part(p, '=', 1)) h.id AS hub_id, split_part(p, '=', 1) AS code,
          split_part(p, '=', 2)::int AS n
@@ -90,9 +89,8 @@ def _guarded(actor: Any, command: str, sql: str, params: list[Any], payload: dic
 
 
 def _item(code: str, hub_code: str | None = None) -> StockItem:
-    """An item by its code, which is unique per hub (v2 03A-1). With several hubs keeping the same code, the
-    hub
-    must be named. The hub authority itself is checked by the database function on the locked item."""
+    """An item by its code, which is unique per hub (v2 03A-1). With several hubs keeping the same code,
+    the hub must be named. The hub authority itself is checked by the database function on the locked item."""
     qs = StockItem.objects.filter(code=(code or "").strip().upper()).select_related("hub")
     if hub_code:
         qs = qs.filter(hub__code=hub_code.strip().upper())

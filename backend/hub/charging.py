@@ -62,8 +62,7 @@ def create_charger(
     actor: Any, *, code: str, name: str, note: str = "", hub_code: str | None = None
 ) -> dict[str, Any]:
     """A charger belongs to ``hub_code`` (v2 03A-1), or to the only hub when there is one: the database
-    default
-    refuses to guess when there are several. The Phase 02 "first hub" lookup is gone."""
+    default refuses to guess when there are several. The Phase 02 "first hub" lookup is gone."""
     code, name, note = code.strip().upper(), name.strip(), note.strip()
     hub = owner_hub(hub_code)
     payload = {"code": code, "name": name, "note": note}

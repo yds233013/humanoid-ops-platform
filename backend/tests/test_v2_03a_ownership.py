@@ -406,7 +406,9 @@ def test_cross_hub_writes_by_direct_sql_as_ops_app_are_refused(actor):
     vb = Visit.objects.get(code=w.vb).pk
     a = {
         "forged_wrong_hub": str(w.tech.pk),  # a real hub technician, of HUB-1
-        "forged_wrong_role": str(w.safety.pk),  # a real user whose (regional) role allows none of these writes
+        "forged_wrong_role": str(
+            w.safety.pk
+        ),  # a real user whose (regional) role allows none of these writes
         "NULL": "NULL::bigint",
         "0": "0::bigint",
         "''": "''",

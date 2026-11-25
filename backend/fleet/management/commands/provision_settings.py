@@ -12,9 +12,9 @@ audited and run under the settings lock, so no plan, authorization or departure 
 
 v2 03A-1 (docs/13_v2_phase03_contract.md 11.3): ``--hub CODE`` writes that hub's OWN row of a per-hub setting,
 which overrides the global row for that hub. Only ``stock_minimums`` and ``stock_per_visit`` can be set per
-hub;
-every other key (the maintenance gate and every safety setting) stays global and is refused with ``--hub``.
-The same lock, validation, idempotency, ``--allow-change`` rule and audit apply; the audit names the hub.
+hub; every other key (the maintenance gate and every safety setting) stays global and is refused with
+``--hub``. The same lock, validation, idempotency, ``--allow-change`` rule and audit apply; the audit names
+the hub.
 """
 
 import os
