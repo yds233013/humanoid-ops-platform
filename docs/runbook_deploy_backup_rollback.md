@@ -173,7 +173,8 @@ DJANGO_DB_IDENTITY=owner python manage.py provision_settings \
 - Allowlist: `consent_form_version`, `pre_visit_inspection_min`, `ops_readiness_lookahead_min` (these three are
   required), `ops_closeout_timezone`, `ops_custody_verify_grace_min`, `ops_return_grace_min`,
   `ops_inspection_grace_min`, `ops_periodic_due_lookahead_min`, `ops_soc_fresh_min`, `maintenance_gate_active`
-  (true or false; see 8a-1). Anything else is refused; `demo_mode` and
+  (true or false; see 8a-1), `stock_minimums` and `stock_per_visit` (`CODE=N,CODE=N`; see 8d). Anything else is
+  refused; `demo_mode` and
   `allow_draft_policies` can never be set this way.
 - Values come from options or `PROVISION_<KEY>` environment variables (`PROVISION_CONSENT_FORM_VERSION=CF-v1`).
   `deploy/start.sh` runs the command after migrations when any `PROVISION_*` variable is present.
@@ -270,7 +271,8 @@ DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace --reset   # destr
   the seed commands; as the owner only for what has no command (users and role grants, deployment settings, the
   workspace demo flag, the site-check template). No trigger is disabled while data is written. Every approval in it
   is one the demo seeds also create, on `synthetic_demo` records that production refuses (Settings > Production
-  readiness still lists every blocker). No visit of today or later is authorized: the visit named in the output
+  readiness still lists every blocker). Apart from the two practice runs (below), no visit of today or later is
+  authorized: the visit named in the output
   ("Journey J4: visit V-....") has its plan, crew qualifications, periodic inspection and recovery plan; the crew
   records the day's checks and the ops lead approves in the app.
 - **No fabricated history**: past visits (the last 7 days) are booked and confirmed for their planned days and
@@ -281,6 +283,13 @@ DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace --reset   # destr
   them), one failed inspection that holds a robot, one maintenance hold, an incident reported this morning, and
   the recovery plan of the J4 visit. The attention item is a beta robot (NB-048) with no periodic inspection on
   its configuration yet, which is true at any time; there is no "overdue return" (it needed a fabricated run).
+- **Practice runs (v2 02E, EM ruling in contract 11 section 8.9)**: the one exception to the rule above. Two short
+  practice visits at 00:30 local today (crews B and C, home `PRACTICE`, labelled "Fictional practice visit" on the
+  visit, readiness and run pages) are run end to end through the real readiness and execution commands and closed
+  during the build. Their records are stamped at the build time, never back-dated, so a run reads "departed at
+  <build time>" for a visit planned at 00:30. They give the predictor log its departures (the build runs the
+  owner-only predictor log once) and the visit-count demo maintenance rules their closed runs: one robot is then
+  "Due soon" and one "Overdue" (blocked; its visit tomorrow shows the block). The build output names them.
 - **Deterministic** for a date (seeded by the workspace's local date); about 25 s on a laptop.
 - **First start**: set `DEMO_WORKSPACE=1` and `DEV_SEED_PASSWORD` on the demo `web` service. `start.sh` runs
   `build_demo_workspace` once when the database has no robots. If that build is refused or fails, `start.sh`
@@ -336,6 +345,50 @@ minute."; `/api/` answers `{"error": "demo_refreshing"}`) whenever the build's c
 - **Rollback of the cutover:** point the published demo link back at the legacy URL. Nothing in Railway needs to be
   switched; both deployments keep running. A code rollback of the Northbay service uses section 6.
 - Logins: owner-held file, never in git. A refresh recreates the same usernames with the `DEV_SEED_PASSWORD` value.
+
+## 8d. Phase 02 release (v2 02E): migrate, activate, roll back
+
+What Phase 02 adds, its limits and its migration list: `docs/12_v2_phase02_release.md`. This section is the order
+of work. Sections 3 to 6 and 8a-1 still apply; nothing here replaces them.
+
+**Before migrating (every database: production, staging, each customer workspace):**
+
+1. Manual Railway backup (Postgres > Backups > New backup); write down its time.
+2. Logical dump (section 3, item 2).
+3. Restore rehearsal of that dump with `deploy/backup_restore_check.sh` (section 4); record the RESULT line in
+   section 9.
+
+**Migrate.** Deploy the approved Phase 02 commit. `start.sh` runs `migrate` (accounts 0004, hub 0001-0004 and
+0006-0009, fleet 0009-0010, planning 0007-0008, operations 0007-0008, readiness 0009; all additive). Check
+`/healthz` = 200 and sign in. Nothing is blocked yet: the maintenance gate is off, and stock settings are absent
+("No minimum set", "not checked per visit").
+
+**Activate maintenance:** section 8a-1, steps 2 to 6 (propose rules -> approve -> grant `maintenance_technician` ->
+baseline records -> `provision_settings --maintenance-gate-active true`).
+
+**Activate stock (owner, then the hub):**
+
+1. `DJANGO_DB_IDENTITY=owner python manage.py provision_settings --stock-minimums "RK=3,RC=2" --stock-per-visit "RK=1"`
+   (example values; use the company's). Upcoming visits show "Kit short" until stock is received. That is a
+   warning only.
+2. An ops lead or admin creates the items on Hub > Stock > Items, with the same codes.
+3. A hub technician or ops lead receives the counted initial stock on Hub > Stock.
+4. Check Hub > Stock, the Hub queue and Today.
+
+**Charging:** provision `ops_soc_fresh_min` (8a) and record the chargers (Hub > Charging > Chargers).
+
+**Predictor log (optional):** a daily owner job `DJANGO_DB_IDENTITY=owner python manage.py log_predictor_signals`.
+
+**Roll back to Phase 01 (not rehearsed yet; rehearse on staging first and record it in section 9):**
+
+1. While Phase 02 still runs: `provision_settings --maintenance-gate-active false --allow-change`. The gate is in
+   the database; Phase 01 code has no maintenance screens and its `provision_settings` does not know the setting.
+2. Note kits reserved or issued for visits (Phase 01 has no stock screens; the ledger stays in the database).
+3. Redeploy the previous image (section 6). Check `/healthz`, sign in, open Today, the planner and readiness.
+4. Restore the backup only if data is damaged (section 4). Never run `migrate <app> <older>` on a live database.
+
+**Demo:** the Northbay demo takes the Phase 02 code only after the Phase 02 release approval. Deploy it like any
+release, then run the demo cron once ("Run now") so the rebuild includes the Phase 02 facts (8b).
 
 ## 9. Rehearsal log
 

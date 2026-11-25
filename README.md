@@ -11,6 +11,12 @@ operations; the five-person usability study is unverified.
 **Demo:** https://web-northbay.up.railway.app — "Northbay Home Robotics", a fictional 50-robot company with one hub and
 three crews, rebuilt every day at 12:00 UTC (the site shows a short "demo is being refreshed" page and signs everyone
 out while it rebuilds; visitor changes are not kept). Ask the owner for the demo logins.
+With Phase 02 (once released to the demo) it also shows a hub day (journey J8): charging needs, maintenance due soon,
+overdue and unknown with the maintenance gate on, inspections due, one "Kit short" visit and restock tasks, work
+orders, held robots, and fleet health with a predictor log. All rules and thresholds there are labelled demo values.
+Two **fictional practice visits** (home `PRACTICE`, 00:30 today) are run and closed at build time, with their real
+timestamps, so the logs have departures; they show the pipeline works and prove nothing about prediction or
+reliability (`docs/12_v2_phase02_release.md`, section 7).
 Legacy demo (v1 screens, unchanged): https://web-production-3a92454a.up.railway.app
 
 ## Quick start

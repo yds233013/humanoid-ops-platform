@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -46,6 +46,7 @@ from fleet.models import (
 from operations import demo_workspace as demo
 from operations.exceptions import open_exceptions
 from operations.readmodels import production_blockers
+from planning import services as ps
 from planning.models import Qualification, Site, Visit
 from platform_core.models import Hub, Workspace
 from readiness import commands as rc
@@ -168,18 +169,36 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     past = [v for v in Visit.objects.all() if _local_day(v.current_revision.on_site_start) < frozen_today]
     assert len(past) >= 15 and {v.status for v in past} == {"confirmed"}
 
-    # ---- ruling B: no fabricated execution history. The build creates no execution record at all ...
-    assert ExecutionRun.objects.count() == 0 and TripClosure.objects.count() == 0
-    assert DepartureAuthorization.objects.count() == 0 and DepartureEvent.objects.count() == 0
-    assert CustodyEvent.objects.count() == 0 and ReadinessEvidence.objects.count() == 0
-    # ... and no inspection tied to a visit; the only inspections are today's robot inspections (periodic
-    # eligibility needs them) and the one failed inspection that holds a robot, all stamped now.
-    assert not Inspection.objects.exclude(visit_ref="").exists()
+    # ---- ruling B: no fabricated execution history. The only execution records are the two 02E practice runs
+    # of TODAY (00:30 local), run through the real commands and closed at build time; nothing for any other
+    # visit, and every record stamped now (database time).
+    start = ps.local_to_utc(datetime.combine(frozen_today, demo.PRACTICE_START), demo.TZ)
+    practice = set(
+        Visit.objects.filter(
+            site__code=demo.PRACTICE_HOME, current_revision__on_site_start=start
+        ).values_list("code", flat=True)
+    )
+    assert len(practice) == 2
+    runs = ExecutionRun.objects.select_related("visit")
+    assert {r.visit.code for r in runs} == practice and TripClosure.objects.count() == 2
+    assert set(DepartureAuthorization.objects.values_list("visit__code", flat=True)) == practice
+    assert set(DepartureEvent.objects.values_list("visit__code", flat=True)) == practice
+    assert set(ReadinessEvidence.objects.values_list("visit__code", flat=True)) == practice
+    assert set(CustodyEvent.objects.values_list("run__visit__code", flat=True)) == practice
+    stamped = [
+        *DepartureEvent.objects.values_list("departed_at", flat=True),
+        *TripClosure.objects.values_list("recorded_at", flat=True),
+    ]
+    assert all(timezone.now() - t < timedelta(hours=1) for t in stamped)  # recorded now, not back-dated
+    # inspections tied to a visit: only the practice runs' (pre-departure and post-visit); the others are
+    # today's robot inspections (periodic eligibility needs them) and the one failed inspection, all now.
+    assert set(Inspection.objects.exclude(visit_ref="").values_list("visit_ref", flat=True)) == practice
     assert {_local_day(i.submitted_at) for i in Inspection.objects.all()} <= {
         frozen_today,
         demo.workspace_today(),
     }
-    assert Inspection.objects.count() == 49 + 1  # 50 robots minus the never-inspected one, plus the failure
+    # 50 robots minus the never-inspected one, plus the failure, plus 2 per practice run
+    assert Inspection.objects.count() == 49 + 1 + 2 * 2
     # past visits are shown as historical scheduled visits, never as completed or back
     ops = User.objects.get(username="dana.ortiz")
     c = Client()
@@ -280,8 +299,9 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     assert list(Charger.objects.values_list("code", "in_service")) == [
         ("C-1", True), ("C-2", True), ("C-3", True), ("C-4", False)
     ]  # fmt: skip
+    # 2 for the forecast + 1 per practice run + 1 for the kit-short visit (02E)
     readings = list(RobotSocReading.objects.all())
-    assert len(readings) == 2 and {r.source for r in readings} == {"manual_reading"}
+    assert len(readings) == 5 and {r.source for r in readings} == {"manual_reading"}
     assert all(
         timezone.now() - r.observed_at < timedelta(hours=1) for r in readings
     )  # stamped now, no history
@@ -296,7 +316,8 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     ops_c.force_login(User.objects.get(username="dana.ortiz"))
     operating = ops_c.get("/settings/operating/").content.decode()
     soc_row = operating.split('data-key="ops_soc_fresh_min"', 1)[1].split("</tr>", 1)[0]
-    assert "240" in soc_row and "Demo value" in soc_row
+    # 02E: a day (the demo is walked after a 04:00 build)
+    assert "1440" in soc_row and "Demo value" in soc_row
     charging_page = lily_c.get("/hub/charging/").content.decode()
     assert "Needs charge" in charging_page and "Out of service" in charging_page
     html = c.get("/ops/").content.decode()
@@ -354,7 +375,7 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         Site.objects.count(),
         Visit.objects.count(),
     ) == counts
-    assert DepartureAuthorization.objects.count() == 0 and ExecutionRun.objects.count() == 0
+    assert DepartureAuthorization.objects.count() == 2 and ExecutionRun.objects.count() == 2  # practice runs
     del os.environ[demo.FINGERPRINT_ENV]
     # the wipe never restarts the sequences of the tables it keeps (a later migrate must not collide)
     with connection.cursor() as cur:
