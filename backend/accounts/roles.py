@@ -131,6 +131,13 @@ PERMISSIONS: dict[str, set[str]] = {
     "hub.record_charging": {HUB_TECHNICIAN, FIELD_OPERATOR, OPS_LEAD, ENGINEER},
     "hub.reserve_charger": {HUB_TECHNICIAN, OPS_LEAD},
     "hub.manage_chargers": {ADMIN, OPS_LEAD},  # configuration (hub setup records chargers), not evidence
+    # v2 02D kit inventory (8.6): stock receive, issue, return and consume; adjustment with a reason (audited);
+    # reserving stock for a visit. The SECURITY DEFINER functions of hub/0008 re-check the same roles. Items are
+    # hub configuration (like chargers): setting one up records a fact, never stock.
+    "hub.stock_move": {HUB_TECHNICIAN, OPS_LEAD},
+    "hub.stock_adjust": {HUB_TECHNICIAN, OPS_LEAD},
+    "hub.stock_reserve": {HUB_TECHNICIAN, OPS_LEAD},
+    "hub.manage_stock_items": {ADMIN, OPS_LEAD},
     # The Hub navigation tab: the queue roles plus everyone who reads the daily close-out.
     "hub.nav": {
         HUB_TECHNICIAN,

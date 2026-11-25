@@ -8,6 +8,7 @@ The read-only Settings page and the first-run checklist read the same table.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from django.db import connection
@@ -96,6 +97,22 @@ SPECS: tuple[Spec, ...] = (
         "maintenance rules are approved, technicians are qualified and every robot has a baseline record.",
         "boolean",
     ),
+    # v2 02D kit inventory (contract 11, 8.5): per-item operating thresholds, owner-provisioned. Absent (or an
+    # item not listed) = no minimum / not counted per visit, and the screens say so.
+    Spec(
+        "stock_minimums",
+        "Stock minimum levels",
+        "Per stock item, the level below which the hub restocks (CODE=N, comma separated, for example "
+        "RK=3,WIPES=20). An item not listed has no minimum.",
+        "stock_levels",
+    ),
+    Spec(
+        "stock_per_visit",
+        "Stock each visit takes",
+        "Per stock item, how many each visit takes (CODE=N, comma separated). A visit that cannot get them "
+        "is At risk. An item not listed is not counted per visit.",
+        "stock_levels",
+    ),
 )
 BY_KEY = {s.key: s for s in SPECS}
 ALLOWED_KEYS = tuple(BY_KEY)
@@ -115,6 +132,8 @@ def validate(key: str, raw: str) -> str:
         if value not in ("true", "false"):
             raise ValueError(f"{key} must be true or false")
         return value
+    if spec.kind == "stock_levels":
+        return normalize_stock_levels(key, value)
     if spec.kind == "timezone":
         if len(value) > TIMEZONE_MAX_LEN or not python_knows_timezone(value):
             raise ValueError(f"{key} must be a known time zone name such as America/Los_Angeles")
@@ -127,6 +146,40 @@ def validate(key: str, raw: str) -> str:
     if not value or len(value) > MAX_TEXT or any(ord(c) < 32 for c in value):
         raise ValueError(f"{key} must be 1 to {MAX_TEXT} characters of plain text")
     return value
+
+
+STOCK_CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{0,11}$")
+MAX_STOCK_LEVEL = 100000
+
+
+def normalize_stock_levels(key: str, value: str) -> str:
+    """``CODE=N,CODE=N``: item codes (letters, digits, dashes, up to 12) each once, N a whole number from 0 to
+    100000. Normalized to upper case without spaces. The database reads the same format (hub/0008)."""
+    pairs: list[str] = []
+    seen: set[str] = set()
+    for part in value.replace(" ", "").split(","):
+        code, sep, number = part.upper().partition("=")
+        if not sep or not STOCK_CODE_RE.match(code) or not number.isdigit() or len(number) > 6:
+            raise ValueError(f"{key} must look like RK=3,WIPES=20 (item code = whole number)")
+        if int(number) > MAX_STOCK_LEVEL or code in seen:
+            raise ValueError(f"{key}: each item once, with a number from 0 to {MAX_STOCK_LEVEL}")
+        seen.add(code)
+        pairs.append(f"{code}={int(number)}")
+    text = ",".join(pairs)
+    if len(text) > MAX_TEXT:
+        raise ValueError(f"{key} must be at most {MAX_TEXT} characters")
+    return text
+
+
+def parse_stock_levels(raw: str | None) -> dict[str, int]:
+    """The provisioned value as {code: n}; a malformed value counts as not provisioned (empty)."""
+    if not raw:
+        return {}
+    try:
+        text = normalize_stock_levels("stock", raw)
+    except ValueError:
+        return {}
+    return {c: int(n) for c, n in (p.split("=") for p in text.split(","))}
 
 
 def current_values() -> dict[str, str]:

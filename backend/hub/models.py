@@ -44,6 +44,7 @@ SOURCES = [
     ("equipment_check", "Failed equipment check"),
     ("charge_forecast", "Charge forecast"),  # v2 02B: a visit's robot needs charge before departure
     ("maintenance_status", "Maintenance status"),  # v2 02C: maintenance due soon, overdue or unknown
+    ("stock_level", "Stock below minimum"),  # v2 02D: available stock of an item below its minimum level
 ]
 
 
@@ -245,3 +246,115 @@ class RobotSocReading(models.Model):
 
     def __str__(self) -> str:
         return f"{self.robot_id}: {self.soc_pct}% at {self.observed_at}"
+
+
+# ------------------------------------------------ v2 02D: kit inventory (contract 11, 8.5, 8.6, 8.8)
+STOCK_KINDS = [("reusable", "Reusable (kit, comes back)"), ("consumable", "Consumable (used up)")]
+MOVEMENT_KINDS = [
+    ("receive", "Received"),
+    ("adjust", "Adjusted"),
+    ("reserve", "Reserved"),
+    ("release", "Released"),
+    ("issue", "Issued"),
+    ("return", "Returned"),
+    ("consume", "Consumed"),
+]
+
+
+class StockItem(models.Model):
+    """A kind of kit or consumable kept at the hub (one hub in Phase 02). Configuration, not stock: created ONLY
+    by hub_create_stock_item() (SECURITY DEFINER; ops_app has SELECT), so its kind can never change under the
+    ledger. There is NO quantity column: every quantity is derived from hub_stock_movement."""
+
+    code = models.CharField(max_length=12, unique=True)
+    name = models.CharField(max_length=80)
+    kind = models.CharField(max_length=12, choices=STOCK_KINDS)
+    unit = models.CharField(max_length=20, default="pieces")
+    hub = models.ForeignKey(
+        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "hub_stock_item"
+        ordering = ["code"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(kind__in=[k for k, _ in STOCK_KINDS]), name="hub_stock_item_kind_valid"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class StockReservation(models.Model):
+    """Stock held for one visit. One ACTIVE reservation per (item, visit): reserving again sets its quantity, so
+    re-planning never duplicates it, and its id is stable. Written ONLY by hub_reserve_stock(),
+    hub_release_stock() and the issue / consume functions that draw it down (ops_app has SELECT)."""
+
+    item = models.ForeignKey(StockItem, on_delete=models.PROTECT, related_name="reservations")
+    visit = models.ForeignKey("planning.Visit", on_delete=models.PROTECT, related_name="+")
+    quantity = models.PositiveIntegerField()
+    created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+    released_at = models.DateTimeField(null=True, blank=True)
+    released_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    released_reason = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        db_table = "hub_stock_reservation"
+        constraints = [
+            models.CheckConstraint(condition=Q(quantity__gt=0), name="hub_stock_res_quantity_positive"),
+            models.UniqueConstraint(
+                fields=["item", "visit"],
+                condition=Q(released_at__isnull=True),
+                name="hub_stock_res_one_active_per_visit",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.item_id}:{self.visit_id} x{self.quantity}"
+
+
+class StockMovement(models.Model):
+    """The append-only stock ledger (trigger: no UPDATE, DELETE or TRUNCATE, even for the owner without
+    disabling it). Written ONLY by the hub_*_stock() functions, under the item's row lock, after checking that
+    on hand and available stay at or above 0. ``quantity`` is what the person entered (always > 0);
+    ``on_hand_delta`` and ``reserved_delta`` are the signed effects (database check per kind):
+
+        on hand   = sum(on_hand_delta)   = received + adjustments + returned - issued - consumed
+        reserved  = sum(reserved_delta)  = the active reservations
+        available = on hand - reserved
+    """
+
+    item = models.ForeignKey(StockItem, on_delete=models.PROTECT, related_name="movements")
+    kind = models.CharField(max_length=10, choices=MOVEMENT_KINDS)
+    quantity = models.PositiveIntegerField()
+    on_hand_delta = models.IntegerField()
+    reserved_delta = models.IntegerField()
+    visit = models.ForeignKey(
+        "planning.Visit", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    reservation = models.ForeignKey(
+        StockReservation, null=True, blank=True, on_delete=models.PROTECT, related_name="movements"
+    )
+    reason = models.CharField(max_length=200, blank=True, default="")
+    actor = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    occurred_at = models.DateTimeField()
+    request_id = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "hub_stock_movement"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(kind__in=[k for k, _ in MOVEMENT_KINDS]), name="hub_stock_movement_kind_valid"
+            ),
+            models.CheckConstraint(condition=Q(quantity__gt=0), name="hub_stock_movement_quantity_positive"),
+        ]
+        indexes = [models.Index(fields=["item", "id"]), models.Index(fields=["visit", "item"])]
+
+    def __str__(self) -> str:
+        return f"{self.kind} {self.quantity} of {self.item_id}"

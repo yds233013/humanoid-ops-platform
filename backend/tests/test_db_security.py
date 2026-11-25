@@ -63,7 +63,10 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             # Phase 02C (contract 8.8): maintenance rules, their approvals and withdrawals, and maintenance
             # records are written only through SECURITY DEFINER functions (fleet/0010). Asserted below.
             "'fleet_maintenancerule', 'fleet_maintenanceruleapproval', 'fleet_maintenancerulewithdrawal', "
-            "'fleet_maintenancerecord') "
+            "'fleet_maintenancerecord', "
+            # Phase 02D (contract 8.8): stock items, stock reservations and the stock ledger are written only
+            # through SECURITY DEFINER functions (hub/0008). Asserted below.
+            "'hub_stock_item', 'hub_stock_reservation', 'hub_stock_movement') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
@@ -75,6 +78,9 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "fleet_maintenanceruleapproval",
             "fleet_maintenancerulewithdrawal",
             "fleet_maintenancerecord",
+            "hub_stock_item",
+            "hub_stock_reservation",
+            "hub_stock_movement",
         ):
             cur.execute(
                 "SELECT has_table_privilege(current_user, %s, 'SELECT'), "
