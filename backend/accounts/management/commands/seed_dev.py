@@ -1,14 +1,21 @@
 """Create SYNTHETIC development users, one per role. Never run against production."""
 
 import os
-from typing import Any
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
-from accounts.models import RoleGrant
 from accounts.roles import ALL_ROLES, HUB_SCOPED_ROLES
+
+
+def seed_grant(user_id: int, role: str, hub_id: int | None = None) -> int:
+    """v2 03A-3: an active grant of ``role`` (at ``hub_id``), created when missing, through the owner-only
+    accounts_seed_grant (accounts/0006, audited as accounts.seed_grant). Seeds run as the schema owner; the
+    runtime role cannot call it."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT accounts_seed_grant(%s, %s, %s, %s)", [user_id, role, hub_id, "seed"])
+        return int(cur.fetchone()[0])
 
 
 def _default_hub_id() -> int:
@@ -33,10 +40,7 @@ class Command(BaseCommand):
             if created:
                 user.set_password(password)
                 user.save()
-            hub: dict[str, Any] = (
-                {"hub_id": _default_hub_id()} if role in HUB_SCOPED_ROLES else {"hub__isnull": True}
-            )
-            RoleGrant.objects.get_or_create(user=user, role=role, revoked_at=None, **hub)
+            seed_grant(user.pk, role, _default_hub_id() if role in HUB_SCOPED_ROLES else None)
             self.stdout.write(f"{'created' if created else 'exists '} {username} [{role}]")
         # v2 01A: the demo workspace is initialized (never claimable through /setup/).
         from django.utils import timezone

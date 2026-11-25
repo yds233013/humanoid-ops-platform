@@ -20,7 +20,7 @@ from accounts.models import RoleGrant
 from accounts.permissions import has_permission
 from planning import services as ps
 from planning.models import Person, Qualification, Vehicle
-from platform_core.hubscope import add_owner_hub_field
+from platform_core.hubscope import add_owner_hub_field, hub_scope
 from platform_core.interaction import ConfirmForm, UIForm, command_page, denied, holds_any
 from platform_core.timezones import workspace_zone
 
@@ -238,7 +238,8 @@ def vehicle_list(request: HttpRequest) -> HttpResponse:
     from fleet.transfers import open_transfer_text
     from platform_core.models import Hub
 
-    vehicles = list(Vehicle.objects.select_related("hub").order_by("code"))
+    # v2 03A-3 (I-8): the vans of the viewer's hubs only (regional = all). There is no vehicle detail page.
+    vehicles = list(hub_scope(request).filter(Vehicle.objects.select_related("hub").order_by("code")))
     for v in vehicles:  # v2 03A-2: its hub and whether it is on its way to another one
         v.moving = open_transfer_text("vehicle", v.pk)  # type: ignore[attr-defined]
     return render(

@@ -31,7 +31,7 @@ from planning.models import Reservation, Site, SiteAssessment, Visit
 from planning.options import plan_options, suggest
 from planning.plain import ALREADY_DONE, plain_blockers, refusal_text, role_words, who_can
 from platform_core.commands import CommandError
-from platform_core.hubscope import hub_scope
+from platform_core.hubscope import hub_scope, other_hub_refusal
 from platform_core.interaction import consume_form_token
 from platform_core.timezones import workspace_zone_name
 
@@ -109,6 +109,8 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _guard(request)) is not None:
         return deny
     v = get_object_or_404(Visit.objects.select_related("site"), code=code)
+    if (deny := other_hub_refusal(request, v.hub_id)) is not None:  # v2 03A-3: another hub's visit
+        return deny
     can_plan = has_permission(request.user, "planning.plan")
     wants_suggestion = request.GET.get("suggest") == "1"
     if wants_suggestion and not can_plan:

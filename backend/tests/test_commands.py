@@ -3,7 +3,6 @@
 import pytest
 
 from accounts.models import RoleGrant
-from platform_core import commands
 from platform_core.models import AuditEvent, IdempotencyKey
 from tests.conftest import make_user
 
@@ -66,19 +65,22 @@ def test_self_grant_is_refused(admin, client_for):
     assert not AuditEvent.objects.filter(outcome="committed").exists()
 
 
-def test_failure_after_write_rolls_back_change_and_audit(admin, plain_user, monkeypatch):
-    real_create = AuditEvent.objects.create
+def test_failure_after_write_rolls_back_change_and_audit(admin, plain_user):
+    # v2 03A-3: the grant and its committed audit row are both written by accounts_grant_role (accounts/0006),
+    # so the failure is injected right before commit, after both writes.
+    from platform_core import testhooks
 
-    def failing_create(**kw):
-        if kw.get("outcome") == "committed":
-            raise RuntimeError("injected audit failure")
-        return real_create(**kw)
+    def fail() -> None:
+        raise RuntimeError("injected failure after the write")
 
-    monkeypatch.setattr(commands.AuditEvent.objects, "create", failing_create)
+    testhooks.register("before_commit:accounts.grant_role", fail)
     from accounts.services import grant_role
 
-    with pytest.raises(RuntimeError):
-        grant_role(admin, user_id=plain_user.pk, role="ops_lead", idempotency_key="k-fail")
+    try:
+        with pytest.raises(RuntimeError):
+            grant_role(admin, user_id=plain_user.pk, role="ops_lead", idempotency_key="k-fail")
+    finally:
+        testhooks.clear()
     assert not RoleGrant.objects.filter(user=plain_user).exists()
     assert not IdempotencyKey.objects.filter(key="k-fail").exists()  # a retry can run again
     assert AuditEvent.objects.count() == 0

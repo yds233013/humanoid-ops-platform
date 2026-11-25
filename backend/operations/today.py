@@ -415,7 +415,14 @@ def _scope_timeline(t: Today, tl: Any) -> Any:
 
 
 def _read_visits(t: Today) -> None:
-    tl = readmodels.timeline(t.at, window_min=window_minutes(t.at, t.local_date))
+    # v2 03A-3: the hub scope is applied BEFORE the readiness cap, so the evaluated visits, the coverage
+    # counts and the coverage notice describe the viewer's hubs only (then the runs are scoped).
+    window = window_minutes(t.at, t.local_date)
+    tl = (
+        readmodels.timeline(t.at, window_min=window)
+        if t.hub_ids is None
+        else readmodels.timeline(t.at, window_min=window, hub_ids=t.hub_ids)
+    )
     tl = _scope_timeline(t, tl)
     approvals = _usable_approvals([v.visit_id for v in tl.visits], t.at)
     rows = [_visit_row(v, approvals.get(v.visit_id), t.local_date) for v in tl.visits]

@@ -407,7 +407,10 @@ def _capture_locks(fn):
 
     def wrapper(execute, sql, params, many, context):
         m = LOCK_RE.search(sql)
-        if m:
+        # v2 03A-3: the grants' FOR SHARE runs as the owner, in accounts_lock_grants (accounts/0006)
+        if "accounts_lock_grants(" in sql:
+            seen.append(("accounts_rolegrant", "SHARE", params[0]))
+        elif m:
             seen.append((m.group(1), m.group(2), params[0] if params else None))
         return execute(sql, params, many, context)
 
