@@ -32,7 +32,9 @@ from django.views.decorators.http import require_GET
 from accounts.permissions import active_roles
 from accounts.roles import PERMISSIONS
 from fleet.services import demo_mode
+from operations import scope
 from operations.snapshot import SnapshotNotOutermost, snapshot_view
+from platform_core.hubscope import hub_scope
 
 DEMO_BANNER = "SYNTHETIC DEMO - not real robots and not a departure decision"
 PAGE_SIZE = 50
@@ -185,21 +187,21 @@ def _read_model(name: str) -> Any:
     return importlib.import_module(f"operations.{name}")
 
 
-def overview_data(at: datetime) -> dict[str, Any]:
+def overview_data(at: datetime, hub_ids: set[int] | None = None) -> dict[str, Any]:
     readmodels = _read_model("readmodels")
 
     return {
         "as_of": at,
-        "robots": list(readmodels.fleet_overview(at)),
+        "robots": scope.keep_robots(list(readmodels.fleet_overview(at)), hub_ids),  # v2 03A: viewer's hubs
         # Slice 7 (contract 07a 5.6): the production-blocker panel, in BOTH modes
-        "production_blockers": readmodels.production_blockers(at),
+        "production_blockers": scope.keep_blockers(readmodels.production_blockers(at), hub_ids),
     }
 
 
-def production_blockers_data(at: datetime) -> dict[str, Any]:
+def production_blockers_data(at: datetime, hub_ids: set[int] | None = None) -> dict[str, Any]:
     readmodels = _read_model("readmodels")
 
-    panel = readmodels.production_blockers(at)
+    panel = scope.keep_blockers(readmodels.production_blockers(at), hub_ids)
     return {
         "as_of": at,
         "production": panel.production,
@@ -209,12 +211,13 @@ def production_blockers_data(at: datetime) -> dict[str, Any]:
     }
 
 
-def closeout_data(at: datetime, date_raw: str | None) -> dict[str, Any]:
-    """X-10 (contract 07a section 8). A bad or future date is a 400 (BadParam) when the view is dated."""
+def closeout_data(at: datetime, date_raw: str | None, hub_ids: set[int] | None = None) -> dict[str, Any]:
+    """X-10 (contract 07a section 8). A bad or future date is a 400 (BadParam) when the view is dated.
+    v2 03A: ``hub_ids`` (None = every hub) keeps the runs dispatched from those hubs, counts included."""
     closeout = _read_model("closeout")
 
     try:
-        result = closeout.closeout(at, date_raw)
+        result = closeout.closeout(at, date_raw, hub_ids=hub_ids)
     except closeout.CloseoutDateError as exc:
         raise BadParam(str(exc)) from exc
     data: dict[str, Any] = {
@@ -254,7 +257,7 @@ def closeout_data(at: datetime, date_raw: str | None) -> dict[str, Any]:
     return {"result": result, "data": data}
 
 
-def exceptions_data(at: datetime, cursor: str | None) -> dict[str, Any]:
+def exceptions_data(at: datetime, cursor: str | None, hub_ids: set[int] | None = None) -> dict[str, Any]:
     cont = decode_cursor(cursor) if cursor else None  # a bad token is refused before anything is read
     after = _after_for_read_model(cont["after"]) if cont else None
     exceptions = _read_model("exceptions")
@@ -270,7 +273,7 @@ def exceptions_data(at: datetime, cursor: str | None) -> dict[str, Any]:
         "first_page_as_of": first_at,
         "previous_page_as_of": cont["prev_at"] if cont else None,
         "new_snapshot": cont is not None,
-        "items": list(field(result, "items", [])),
+        "items": scope.keep_issues(list(field(result, "items", [])), hub_ids),  # v2 03A: viewer's hubs
         "readiness_coverage": field(result, "readiness_coverage"),
         # EM B2: runs whose RETURN_OVERDUE cannot be computed (no planned unloading end) are shown, not hidden
         "unknown_basis": list(field(result, "unknown_basis", []) or []),
@@ -278,10 +281,10 @@ def exceptions_data(at: datetime, cursor: str | None) -> dict[str, Any]:
     }
 
 
-def incidents_data(at: datetime) -> dict[str, Any]:
+def incidents_data(at: datetime, hub_ids: set[int] | None = None) -> dict[str, Any]:
     readmodels = _read_model("readmodels")
 
-    return {"as_of": at, "incidents": list(readmodels.incident_queue(at))}
+    return {"as_of": at, "incidents": scope.keep_incidents(list(readmodels.incident_queue(at)), hub_ids)}
 
 
 def parse_window(raw: str | None) -> int:
@@ -296,10 +299,16 @@ def parse_window(raw: str | None) -> int:
     return window
 
 
-def timeline_data(at: datetime, window_min: int) -> dict[str, Any]:
+def timeline_data(at: datetime, window_min: int, hub_ids: set[int] | None = None) -> dict[str, Any]:
     readmodels = _read_model("readmodels")
 
-    result = readmodels.timeline(at, window_min=window_min)
+    # v2 03A: the viewer's hubs, visits filtered BEFORE the readiness cap (coverage describes their hubs)
+    result = scope.keep_timeline(
+        readmodels.timeline(at, window_min=window_min)
+        if hub_ids is None
+        else readmodels.timeline(at, window_min=window_min, hub_ids=hub_ids),
+        hub_ids,
+    )
     return {
         "as_of": at,
         "window_min": window_min,
@@ -400,10 +409,9 @@ def coverage_view(coverage: Any) -> dict[str, Any] | None:
 def today_page(request: HttpRequest, at: datetime) -> HttpResponse:
     """The landing page (v2 01B): built only from the existing read models, see operations.today."""
     from operations import today
-    from platform_core.hubscope import hub_scope
 
-    scope = hub_scope(request)  # v2 03A-1: the viewer's hubs; ?hub=CODE narrows
-    t = today.build_today(at, request.user, scope.ids)
+    viewer = hub_scope(request)  # v2 03A-1: the viewer's hubs; ?hub=CODE narrows
+    t = today.build_today(at, request.user, viewer.ids)
     roles = active_roles(request.user)
     can = {
         perm.replace(".", "_"): bool(roles & PERMISSIONS[perm])
@@ -417,7 +425,7 @@ def today_page(request: HttpRequest, at: datetime) -> HttpResponse:
         "robot_group_notes": today.ROBOT_GROUP_NOTES,
         "today_rows": [r for r in t.visits if r.day == "today"],
         "tomorrow_rows": [r for r in t.visits if r.day == "tomorrow"],
-        "scope": scope,
+        "scope": viewer,
     }
     return render(request, "operations/today.html", ctx)
 
@@ -430,7 +438,8 @@ def robot_status_page(request: HttpRequest, at: datetime) -> HttpResponse:
     readmodels = _read_model("readmodels")
     group = request.GET.get("group", "")
     labels = dict(today.ROBOT_GROUPS)
-    robots = list(readmodels.fleet_overview(at))
+    hubs = hub_scope(request)  # v2 03A: the viewer's hubs; ?hub=CODE narrows
+    robots = scope.keep_robots(list(readmodels.fleet_overview(at)), hubs.ids)
     if group in labels:
         robots = [r for r in robots if today.robot_group(r.status_rule) == group]
     else:
@@ -445,6 +454,7 @@ def robot_status_page(request: HttpRequest, at: datetime) -> HttpResponse:
         "label_counts": sorted(counts.items()),
         "group": group,
         "group_label": labels.get(group, ""),
+        "scope": hubs,
     }
     return render(request, "operations/overview.html", ctx)
 
@@ -454,7 +464,9 @@ def production_readiness_page(request: HttpRequest, at: datetime) -> HttpRespons
     readmodels = _read_model("readmodels")
     ctx = {
         **_base(request, at, "production-readiness"),
-        "production_blockers": readmodels.production_blockers(at),
+        "production_blockers": scope.keep_blockers(
+            readmodels.production_blockers(at), hub_scope(request).ids
+        ),
     }
     return render(request, "operations/production_readiness.html", ctx)
 
@@ -462,7 +474,7 @@ def production_readiness_page(request: HttpRequest, at: datetime) -> HttpRespons
 @ops_view("operations.read")
 def closeout_page(request: HttpRequest, at: datetime) -> HttpResponse:
     try:
-        built = closeout_data(at, request.GET.get("date"))
+        built = closeout_data(at, request.GET.get("date"), hub_scope(request).ids)
     except BadParam as exc:
         return _bad(request, at, "closeout", exc)
     result = built["result"]
@@ -477,7 +489,7 @@ def closeout_page(request: HttpRequest, at: datetime) -> HttpResponse:
 @ops_view("operations.read")
 def exceptions_page(request: HttpRequest, at: datetime) -> HttpResponse:
     try:
-        data = exceptions_data(at, request.GET.get("cursor"))
+        data = exceptions_data(at, request.GET.get("cursor"), hub_scope(request).ids)
     except BadParam as exc:
         return _bad(request, at, "exceptions", exc)
     ctx = {
@@ -494,14 +506,14 @@ def exceptions_page(request: HttpRequest, at: datetime) -> HttpResponse:
 
 @ops_view("operations.read")
 def incidents_page(request: HttpRequest, at: datetime) -> HttpResponse:
-    ctx = {**_base(request, at, "incidents"), **incidents_data(at)}
+    ctx = {**_base(request, at, "incidents"), **incidents_data(at, hub_scope(request).ids)}
     return render(request, "operations/incidents.html", ctx)
 
 
 @ops_view("operations.read")
 def timeline_page(request: HttpRequest, at: datetime) -> HttpResponse:
     try:
-        data = timeline_data(at, parse_window(request.GET.get("window_min")))
+        data = timeline_data(at, parse_window(request.GET.get("window_min")), hub_scope(request).ids)
     except BadParam as exc:
         return _bad(request, at, "timeline", exc)
     ctx = {**_base(request, at, "timeline"), **data, "coverage": coverage_view(data["readiness_coverage"])}

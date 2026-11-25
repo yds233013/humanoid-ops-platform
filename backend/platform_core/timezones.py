@@ -21,6 +21,7 @@ for the template helpers, so a page that renders hundreds of times reads the zon
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -113,3 +114,20 @@ class DisplayTimeZoneMiddleware:
             return self.get_response(request)
         with display_zone():
             return self.get_response(request)
+
+
+_UTC_TEXT = re.compile(r"(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC")
+
+
+def localize_utc_text(text: str) -> str:
+    """v2 03A walk: a database refusal names times as ``2026-12-08 03:35 UTC``; show them in the workspace
+    zone with its label, as the rest of the UI does (``Tue 08 Dec, 19:35 PST``)."""
+    from datetime import UTC, datetime
+
+    zone = workspace_zone()
+
+    def local(m: re.Match[str]) -> str:
+        at = datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}").replace(tzinfo=UTC).astimezone(zone)
+        return at.strftime("%a %d %b %Y, %H:%M %Z")
+
+    return _UTC_TEXT.sub(local, text)

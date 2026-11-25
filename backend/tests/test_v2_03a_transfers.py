@@ -814,7 +814,11 @@ def test_ops_app_cannot_write_transfers_or_call_the_internal_steps(app_role_conn
 def test_transfer_pages_and_services_are_scoped_to_the_record_hub():
     w = _world("pg_")
     # HB's technician cannot start a transfer of a HUB-1 robot (service, before the database)
-    with pytest.raises(PermissionDenied, match="at hub HUB-1"):
+    with pytest.raises(
+        PermissionDenied,
+        match=r"^You don't have permission to send it to another hub at Main hub \(HUB-1\)\. "
+        r"Ask a hub technician of HUB-1 or a regional ops lead\.$",
+    ):
         tr.start_transfer(w.tech_b, kind="robot", code="R-02", to_hub_code="HB", reason="x")
     ops = Client()
     ops.force_login(w.ops)
@@ -970,3 +974,25 @@ def test_a_transfer_and_a_grant_revocation_are_ordered_both_ways(first):
         assert not HubTransfer.objects.filter(robot=r2).exists()
     grant.refresh_from_db()
     assert grant.revoked_at is not None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_refusals_name_the_hub_and_who_can_act_and_use_workspace_local_time():
+    """03A walk: a permission refusal says where and who can act (the record's hub only); a refusal's times are
+    in the workspace zone with its label, never UTC."""
+    w = _world("rw_")
+    tid = _start(w)
+    tr.abandon_transfer(w.ops, transfer_id=tid, reason="SYN: back")
+    with pytest.raises(PermissionDenied) as denied:
+        tr.receive_transfer(w.tech_b, transfer_id=tid)
+    assert str(denied.value) == (
+        "You don't have permission to receive this transfer at Main hub (HUB-1). "
+        "Ask a hub technician of HUB-1 or a regional ops lead."
+    )
+    with pytest.raises(PermissionDenied, match=r"^You don't have permission to abandon this transfer at Main hub "
+                       r"\(HUB-1\)\. Ask a regional ops lead\.$"):  # fmt: skip
+        tr.abandon_transfer(w.tech_a, transfer_id=tid, reason="x")
+    with pytest.raises(Conflict) as booked:  # R-01 is booked on w.visit
+        _start(w, code="R-01")
+    text = str(booked.value)
+    assert "until" in text and "UTC" not in text and ("PST" in text or "PDT" in text), text

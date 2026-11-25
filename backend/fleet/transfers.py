@@ -30,6 +30,7 @@ from planning.models import Vehicle
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, run_command
 from platform_core.middleware import current_request_id
 from platform_core.models import Hub
+from platform_core.timezones import localize_utc_text
 
 KINDS = ("robot", "vehicle")
 STATE_LABELS = dict(HubTransfer._meta.get_field("state").choices)  # type: ignore[arg-type]
@@ -52,6 +53,33 @@ def open_transfer_text(kind: str, asset_id: int) -> str | None:
         return None
     extra = {"receipt_refused": ", receipt refused", "abandoned": ", abandoned"}.get(last.state, "")
     return f"{last.code} from {last.from_hub.code} to {last.to_hub.code}{extra}"
+
+
+# What each step needs, in plain words: (what the viewer tried, who can do it), for the permission refusal.
+ACTIONS = {
+    "fleet.start_transfer": ("send it to another hub", "a hub technician of {code} or a regional ops lead"),
+    "fleet.receive_transfer": ("receive this transfer", "a hub technician of {code} or a regional ops lead"),
+    "fleet.refuse_transfer": ("refuse this receipt", "a hub technician of {code} or a regional ops lead"),
+    "fleet.abandon_transfer": ("abandon this transfer", "a regional ops lead"),
+}
+
+
+def _plain(name: str, hub: Callable[[], int | None], call: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run a transfer command; a permission refusal names the record's hub and who can act there (never more
+    of another hub than the record already shows), and refusal times are in the workspace zone."""
+    try:
+        return call()
+    except PermissionDenied as exc:
+        hub_id = hub()
+        h = Hub.objects.filter(pk=hub_id).only("code", "name").first() if hub_id is not None else None
+        what, who = ACTIONS.get(name, ("do this", "a regional ops lead"))
+        label = "" if h is None else (h.name if h.name.lower().endswith("hub") else f"{h.name} hub")
+        where = f" at {label} ({h.code})" if h is not None else ""
+        raise PermissionDenied(
+            f"You don't have permission to {what}{where}. Ask {who.format(code=h.code if h else 'that hub')}."
+        ) from exc
+    except Conflict as exc:
+        raise Conflict(localize_utc_text(str(exc))) from exc
 
 
 def _sql(sql: str, params: list[Any]) -> int:
@@ -123,10 +151,10 @@ def start_transfer(
         )
         return Outcome("hub_transfer", code_of(tid), {"id": tid, "code": code_of(tid), "state": "in_transit"})
 
-    return run_command(
+    return _plain(name, hub, lambda: run_command(
         actor, name, permission="fleet.transfer", payload=payload, handler=handler, hub=hub,
         idempotency_key=idempotency_key,
-    )  # fmt: skip
+    ))  # fmt: skip
 
 
 def _step(
@@ -148,7 +176,11 @@ def _step(
             "hub_transfer", code_of(transfer_id), {"id": transfer_id, "step_id": step, "state": state}
         )
 
-    return run_command(actor, name, permission=permission, payload=payload, handler=handler, hub=hub)
+    return _plain(
+        name,
+        hub,
+        lambda: run_command(actor, name, permission=permission, payload=payload, handler=handler, hub=hub),
+    )
 
 
 def receive_transfer(actor: Any, *, transfer_id: int) -> dict[str, Any]:
