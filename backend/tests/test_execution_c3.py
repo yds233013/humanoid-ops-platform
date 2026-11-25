@@ -37,20 +37,8 @@ def test_baseline_robot_with_no_history_is_at_hub():
     assert ROBOT_NOT_AT_HUB not in _codes(w.visit)
 
 
-def test_open_run_blocks_evaluator_and_authorization_for_another_visit(app_role_conn):
+def test_open_run_blocks_evaluator_and_authorization_for_another_visit():
     w = build_execution(prefix="c3b_")
-    # v2 03A-2 (contract 10.A): a robot in a vehicle is not at a verified hub, so another visit cannot even be
-    # planned for it (stricter than before, where it was refused at authorization): the plan is recorded as
-    # blocked with that reason, and confirming it is refused
-    with pytest.raises(Conflict, match="Only a planned visit can be confirmed"):
-        _second_visit(w)
-    blocked = Visit.objects.exclude(code=w.visit).order_by("-id").first()
-    assert blocked is not None and "Not at a hub: in vehicle" in str(blocked.current_revision.blockers)
-    # once it is back at the hub (verified) but its run is still open, the other visit is planned and blocked
-    with app_role_conn.cursor() as cur:
-        to_site(cur, w)
-        go_check(cur, w)
-        to_hub(cur, w)
     other = _second_visit(w)
     assert ROBOT_NOT_AT_HUB in _codes(other)
     with pytest.raises(Conflict, match="open run"):
@@ -71,11 +59,11 @@ def test_record_departure_revalidates_the_hub_gate():
 
 def test_robot_is_back_at_hub_only_after_reconciliation_and_trip_closure(app_role_conn):
     w = build_execution(prefix="c3d_")
+    other = _second_visit(w)
     with app_role_conn.cursor() as cur:
         to_site(cur, w)
         go_check(cur, w)
         to_hub(cur, w)
-    other = _second_visit(w)  # v2 03A-2: plannable once verified at the hub (it was in a vehicle before)
     # custody is a verified hub receipt, but the run is still open: still blocked
     assert current_custody(w.robot.pk).kind == "hub"
     assert "open run" in (departure_problem(w.robot.pk) or "")

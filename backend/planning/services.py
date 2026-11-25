@@ -15,6 +15,7 @@ from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from fleet import services as fleet_services
+from fleet.location import AT_RISK
 from fleet.models import CapabilityProfile, ManifestPattern, Robot
 from planning.models import (
     AssessmentApproval,
@@ -279,15 +280,40 @@ def evaluate(
                 f"{robot.code}: " + "; ".join(e.reasons),
                 "Choose another robot or resolve its holds",
             )
-        # v2 03A-2 (10.A): a verified hub location makes the robot available only at THAT hub (planning/0011)
-        if visit is not None and e.location is not None and e.location.at_verified_hub:
-            if not e.location.dispatchable_at(visit.hub_id):
+        # v2 03A-2 section 12: the FUTURE-PLANNING location predicate, for this visit's hub and window (the
+        # same rule as fleet_planning_location_problem in the planning triggers, planning/0012). Physical
+        # dispatch stays strict at authorization and departure.
+        where = e.location
+        if visit is not None and where is not None and not where.planning_problem:
+            window = (
+                start - timedelta(minutes=travel_out or 0),
+                end + timedelta(minutes=travel_back or 0),
+            )
+            other = where.planning_problem_for(visit.hub_id, *window)
+            if other and where.kind == "hub":
                 _add(
                     b,
                     "blocked",
                     "ROBOT_AT_ANOTHER_HUB",
-                    f"{robot.code} is at hub {e.location.ref}, not at this visit's hub",
+                    f"{robot.code} is at hub {where.ref}, not at this visit's hub",
                     "Choose a robot at this hub, or move this one here first",
+                )
+            elif other:
+                _add(
+                    b,
+                    "blocked",
+                    "ROBOT_AWAY_OVERLAP",
+                    f"{robot.code}: {other}",
+                    "Choose another robot, or a time after its run is back and verified at the hub",
+                )
+            elif where.away:
+                snap["at_risk"] = AT_RISK
+                _add(
+                    b,
+                    "at_risk",
+                    "ROBOT_AWAY",
+                    f"{robot.code}: {AT_RISK} (run {where.away_run})",
+                    "Record its return to the hub; it cannot be authorized to depart before that",
                 )
         if e.pattern_code:
             pattern = ManifestPattern.objects.get(code=e.pattern_code)

@@ -49,7 +49,8 @@ from typing import Any
 from django.db import connection
 
 from fleet import services as fleet_services
-from fleet.location import Location
+from fleet.location import COLUMNS as location_columns
+from fleet.location import from_row as location_from_row
 from fleet.models import ConfigurationManifest, Inspection, ManifestPattern, Robot
 from planning.models import Person, Reservation, Resource, Visit, VisitRevision
 from planning.services import Plan, inspection_signer_problem, live_feasibility
@@ -244,9 +245,9 @@ def _periodic_status(
             " fleet_maintenance_block_reasons(%(r)s, %(p)s, coalesce(%(at)s, clock_timestamp())),"
             " CASE WHEN fleet_maintenance_gate_active() THEN (SELECT min(m.due_at) FROM"
             " fleet_maintenance_status(%(r)s, %(p)s, coalesce(%(at)s, clock_timestamp())) m) END,"
-            " l.kind, l.hub_id, l.ref, l.verified, fleet_location_problem(l.kind, l.ref, l.verified)"
+            f" {location_columns}"
             " FROM readiness_periodic_inspection_status(%(r)s, %(p)s, coalesce(%(at)s, clock_timestamp())) s"
-            " CROSS JOIN fleet_robot_location(%(r)s) l",
+            " CROSS JOIN fleet_planning_location(%(r)s) l",
             {"r": robot.pk, "p": production, "at": at},
         )
         state, due_at, inspection_id, rule_id, m_reasons, m_due, *loc = cur.fetchone()
@@ -259,7 +260,7 @@ def _periodic_status(
         maintenance_reasons=list(m_reasons or []),
         maintenance_due=m_due,
         # v2 03A-2: the location in the same statement, so the evaluator's statement count does not grow
-        location=Location(loc[0], loc[1], loc[2], bool(loc[3]), loc[4]),
+        location=location_from_row(loc),
     )
 
 

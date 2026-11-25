@@ -91,6 +91,15 @@ BLOCKERS: dict[str, tuple[str, str]] = {
         "The chosen robot is at another hub.",
         "Pick a robot at this visit's hub, or move this one here first.",
     ),
+    # v2 03A-2 section 12: a robot away on an open run of this hub
+    "ROBOT_AWAY_OVERLAP": (
+        "The chosen robot is away on a run during this time, or on a run of another hub.",
+        "Pick another robot, or a time after its run is back and verified at the hub.",
+    ),
+    "ROBOT_AWAY": (
+        "At risk: the chosen robot is away until it is verified back at the hub.",
+        "It can be booked, but it cannot be authorized to depart until its return is recorded.",
+    ),
     "UNKNOWN_LOAD_TIME": (
         "How long this robot takes to load and unload is not known.",
         "Ask engineering to publish the loading time for this robot.",
@@ -290,6 +299,13 @@ _ROBOT_REASONS: list[tuple[str, str, str, str, str]] = [
         "it is on its way to another hub and is available at neither hub until it is received",
         "fleet.transfer",
         "receive it at the hub (Hub, Transfers)",
+    ),
+    (
+        "Away on run",
+        "away, return overdue or unknown",
+        "it is away on a run whose return is overdue or cannot be determined",
+        "execution.record_field_event",
+        "record its return to the hub",
     ),
     (
         "Not at a hub",

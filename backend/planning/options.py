@@ -37,6 +37,9 @@ from django.db import connection
 from django.db.models.expressions import RawSQL
 
 from fleet import services as fleet_services
+from fleet.location import AT_RISK
+from fleet.location import COLUMNS as location_columns
+from fleet.location import from_row as location_from_row
 from fleet.models import ManifestPattern, Robot
 from hub import charging
 from planning import services as p
@@ -49,8 +52,11 @@ FREE, BUSY, UNUSABLE = "free", "busy", "unusable"
 _RANK = {FREE: 0, BUSY: 1, UNUSABLE: 2}
 
 ROBOT_SQL = (
-    "SELECT robot_id, robot_code, pattern_code, eligible, reasons FROM operations_robot_eligibility "
-    "WHERE lifecycle <> 'retired' ORDER BY robot_code"
+    "SELECT e.robot_id, e.robot_code, e.pattern_code, e.eligible, e.reasons, "
+    # v2 03A-2 section 12: the future-planning location (away on an open run: its hub and reserved window)
+    f"{location_columns} FROM operations_robot_eligibility e "
+    "CROSS JOIN LATERAL fleet_planning_location(e.robot_id) l "
+    "WHERE e.lifecycle <> 'retired' ORDER BY e.robot_code"
 )
 
 
@@ -62,6 +68,7 @@ class Option:
     selected: bool = False
     obj: Any = None
     note: str = ""
+    at_risk: str = ""  # v2 03A-2 section 12: "At risk: robot away until verified back at hub"
 
 
 @dataclass
@@ -182,15 +189,25 @@ def plan_options(visit: Visit) -> PlanOptions:
         if out.charge_on
         else {}
     )
-    for robot_id, code, pattern, eligible, reasons in robot_rows:
+    for robot_id, code, pattern, eligible, reasons, *loc_row in robot_rows:
         f = forecasts.get(robot_id)
-        home = robots.get(robot_id)
+        where = location_from_row(loc_row)
+        risk = ""
         if not eligible:
             shorts = list(dict.fromkeys(robot_reason(x).short for x in reasons))
             status, note = UNUSABLE, "not ready: " + ", ".join(shorts)
-        elif home is not None and home.hub_id != visit.hub_id:
-            # v2 03A-2 (10.A): eligible = verified at its hub, which is its home hub; only that hub may use it
-            status, note = UNUSABLE, "at another hub"
+        elif (why := where.planning_problem_for(visit.hub_id, *robot_window(pattern))) is not None:
+            # v2 03A-2 section 12: the future-planning predicate for this visit's hub and window
+            status, note = (
+                UNUSABLE,
+                (
+                    "at another hub"
+                    if where.kind == "hub"
+                    else "away during this window"
+                    if "overlaps" in why
+                    else "away on another hub's run"
+                ),
+            )
         elif f is not None and f.cannot_in_time:
             status, note = UNUSABLE, "cannot charge in time"
         elif c := busy.clash("robot", robot_id, *robot_window(pattern)):
@@ -199,8 +216,18 @@ def plan_options(visit: Visit) -> PlanOptions:
             status, note = FREE, "free"
         if status != UNUSABLE and f is not None and f.state != charging.ENOUGH:
             note += " · needs charge" if f.state == charging.NEEDS else " · charge forecast unknown"
+        if status != UNUSABLE and where.away:
+            risk = AT_RISK
         out.robots.append(
-            Option(code, f"{code} · {note}", status, robot_id == rev.robot_id, robots.get(robot_id), note)
+            Option(
+                code,
+                f"{code} · {note}" + (f" · {risk}" if risk else ""),
+                status,
+                robot_id == rev.robot_id,
+                robots.get(robot_id),
+                note,
+                risk,
+            )
         )
     out.robots = _sort(out.robots)
 
@@ -329,6 +356,12 @@ def suggest(visit: Visit, opts: PlanOptions) -> Suggestion:
                     f" Its {charge}: it must be charged and pass the battery check before it leaves."
                     if charge
                     else ""
+                ),
+                # v2 03A-2 section 12: a robot away on an open run of this hub, outside that run's window
+                *(
+                    [f"{robot.at_risk}: it cannot be authorized to depart until its return is recorded."]
+                    if robot.at_risk
+                    else []
                 ),
                 f"{lead.obj.label} is qualified as lead and has no other booking in this window.",
                 f"{second.obj.label} is qualified as second and has no other booking in this window.",
