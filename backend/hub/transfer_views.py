@@ -79,6 +79,9 @@ def transfers_page(request: HttpRequest) -> HttpResponse:
             "done_rows": [r for r in rows if not r.open][:30],
             "hubs": list(Hub.objects.order_by("code")),
             "can_transfer": _allowed(scope.roles, "fleet.transfer"),
+            # 03A walk W1: receive / refuse only at a hub where the viewer holds a role (regional: all);
+            # the database refuses anyway, this keeps the page from offering an action that cannot succeed
+            "act_hubs": {h.code for h in scope.hubs},
             "can_abandon": _allowed(scope.roles, "fleet.abandon_transfer"),
             "prefill": {"kind": request.GET.get("kind", "robot"), "code": request.GET.get("code", "")},
             "scope": scope,
