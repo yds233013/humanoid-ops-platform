@@ -348,3 +348,207 @@ def test_every_metric_states_its_parts_and_what_it_does_not_establish():
     text = " ".join([fh.note, fh.denominator_text, *fh.does_not_establish.values()]).lower()
     for word in ("safe", "cleared", "reliable", "guarantee"):
         assert word not in text
+
+
+# ================================================================== predictor log (observational only)
+def predictor_world(prefix: str = "pl_") -> Any:
+    """R-01: maintenance overdue (a 1-visit rule, a record, then one closed visit; the gate is NOT active, so
+    nothing blocks), a 72% reading, a non-blocking hold, then departs. R-02: no reading, departs; a reading and an
+    incident recorded AFTER its departure must not count. R-03: an incident resolved (not closed) and its hold
+    released, then departs: one open incident at departure."""
+    from datetime import UTC
+
+    from fleet import maintenance as mnt
+    from fleet.models import MaintenanceRecord
+    from hub import charging as hc
+    from planning import services as ps
+    from tests.conftest import make_user
+
+    w = ow.ops_world(prefix, robots=3)
+    w.tech = make_user(f"{prefix}tech", "hub_technician")
+    ps.register_person(w.ops, username=w.tech.username, code="P-9")
+    ps.grant_qualification(
+        w.safety,
+        person_code="P-9",
+        kind="maintenance_technician",
+        valid_from=None,
+        valid_to=datetime(2027, 6, 1, tzinfo=UTC),
+        basis_ref="SYNTHETIC-MNT-TRAINING",
+    )
+    rid = int(
+        mnt.propose_rule(
+            w.eng,
+            pattern_code="P-A",
+            requirement_code="JOINT",
+            visit_count=1,
+            warning_pct=0,
+            source="synthetic_demo",
+        )["rule_id"]
+    )
+    mnt.approve_rule(w.lead, rule_id=rid, slot="engineering")
+    mnt.approve_rule(w.safety, rule_id=rid, slot="safety")
+    rec = int(mnt.record_maintenance(w.tech, robot_code="R-01", requirement_code="JOINT")["record_id"])
+    assert MaintenanceRecord.objects.filter(pk=rec).exists()
+    w.run0 = ow.depart_new(w, "R-01")  # one completed visit since the record: the 1-visit rule is now overdue
+    ow.advance(w, w.run0, "closed")
+    w.rule_id = rid
+    w.reading = hc.record_soc(w.ops, robot_code="R-01", soc_pct=72)
+    w.soft = ow.place_hold(w, "robot", "R-01", source="manual", blocking=False)
+    w.run1 = ow.depart_new(w, "R-01")
+    w.run2 = ow.depart_new(w, "R-02")
+    hc.record_soc(w.ops, robot_code="R-02", soc_pct=90)  # after R-02 departed: not its battery at start
+    w.late_incident = report(w, "R-02", "other")  # after R-02 departed: not open at its departure
+    w.i3 = report(w, "R-03", "contact")
+    for to in ("triaged", "response_in_progress", "resolved"):  # resolved, NOT closed: still an open issue
+        inc.change_incident_status(w.safety, incident_code=w.i3, to_status=to)
+    ow.release(w, Incident.objects.get(code=w.i3).hold.code)
+    w.run3 = ow.depart_new(w, "R-03")
+    return w
+
+
+def log() -> int:
+    with connection.cursor() as cur:
+        cur.execute("SELECT operations_log_predictor_signals()")
+        return cur.fetchone()[0]
+
+
+@pytest.mark.django_db
+def test_predictor_log_records_each_signal_as_of_the_departure():
+    from operations.models import PredictorObservation
+
+    w = predictor_world()
+    before = AuditEvent.objects.count()
+    assert log() == 4  # R-01 twice, R-02, R-03
+    assert log() == 0  # idempotent: one observation per departure
+    assert AuditEvent.objects.count() == before + 2
+    a = AuditEvent.objects.filter(command="operations.log_predictor_signals").order_by("id")
+    assert [e.result for e in a] == [{"logged": 4}, {"logged": 0}] and a[0].actor_id is None
+
+    o0 = PredictorObservation.objects.get(departure_id=w.run0.departure_id)  # before the visit: not overdue
+    assert o0.maintenance_overdue is False and o0.battery_state == "unknown" and o0.open_holds == 0
+    o1 = PredictorObservation.objects.get(departure_id=w.run1.departure_id)
+    assert (o1.battery_state, o1.battery_soc_pct, o1.battery_reading_id) == ("known", 72, w.reading)
+    assert o1.battery_source == "manual_reading" and o1.battery_observed_at <= o1.departed_at
+    assert o1.open_holds == 1 and o1.source_refs["holds"] == [w.soft]
+    assert o1.open_incidents == 0
+    assert o1.maintenance_overdue is True
+    assert {s["requirement"]: s["state"] for s in o1.maintenance_states} == {"JOINT": "overdue"}
+    assert o1.source_refs["maintenance_rules"] == [w.rule_id]
+    assert o1.departure_id == w.run1.departure_id and o1.visit_id == w.run1.visit_id
+    assert o1.observed_at >= o1.departed_at
+
+    o2 = PredictorObservation.objects.get(robot__code="R-02")
+    assert (o2.battery_state, o2.battery_soc_pct, o2.battery_reading_id) == ("unknown", None, None)
+    assert o2.open_incidents == 0 and o2.open_holds == 0  # the later incident and its hold are not counted
+    assert o2.maintenance_overdue is False  # no record: 'unknown', not overdue
+    assert {s["state"] for s in o2.maintenance_states} == {"unknown"}
+
+    o3 = PredictorObservation.objects.get(robot__code="R-03")
+    assert o3.open_incidents == 1 and o3.source_refs["incidents"] == [w.i3]
+    assert o3.open_holds == 0  # its hold was released before the departure
+
+
+TABLE_DIGEST = """
+SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'r'
+  AND c.relname NOT IN ('platform_core_auditevent', 'operations_predictor_observation')
+ORDER BY c.relname
+"""
+
+
+def digest() -> dict[str, str]:
+    """Every application table's full content (except the audit log and the predictor log), as an md5."""
+    out = {}
+    with connection.cursor() as cur:
+        cur.execute(TABLE_DIGEST)
+        for (t,) in cur.fetchall():
+            cur.execute(f"SELECT md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) FROM \"{t}\" x")
+            out[t] = cur.fetchone()[0]
+    return out
+
+
+def decisions(at: datetime, visit: Any) -> dict[str, Any]:
+    from readiness.evaluator import evaluate_readiness
+
+    with connection.cursor() as cur:
+        cur.execute("SELECT * FROM operations_robot_eligibility ORDER BY 1")
+        elig = cur.fetchall()
+        cur.execute(
+            "SELECT * FROM fleet_maintenance_status_set(ARRAY(SELECT id FROM fleet_robot), fleet_production_mode(),"
+            " %s) ORDER BY robot_id, requirement_code NULLS FIRST",
+            [at],
+        )
+        maint = cur.fetchall()
+    holds = list(Hold.objects.order_by("id").values_list("code", "blocking", "released_at"))
+    return {
+        "eligibility": elig,
+        "maintenance": maint,
+        "holds": holds,
+        "readiness": evaluate_readiness(visit, at),
+    }
+
+
+@pytest.mark.django_db
+def test_logging_changes_nothing_else_planning_readiness_holds_maintenance_or_authorization():
+    from planning.models import Visit
+    from readiness import commands as rc
+    from tests.readiness_world import new_confirmed_visit, record_all_evidence
+
+    w = predictor_world("pn_")
+    ow.add_robot(w, "R-04")  # R-01..R-03 are out on their runs (or held)
+    code = new_confirmed_visit(w, robot="R-04", d=ow.DAY + timedelta(days=w.next_day))
+    record_all_evidence(w, code, robot="R-04")
+    visit = Visit.objects.get(code=code)
+    at = clock()
+    tables, before = digest(), decisions(at, visit)
+    audit_before = AuditEvent.objects.count()
+    assert log() == 4
+    assert digest() == tables  # no other table changed, byte for byte
+    assert decisions(at, visit) == before  # eligibility, maintenance status, holds, readiness: identical
+    assert AuditEvent.objects.count() == audit_before + 1  # only the logger's own audit row
+    assert before["readiness"].ready  # and authorization is issued exactly as without the log
+    assert rc.authorize_departure(w.ops, visit_code=code)["code"]
+
+
+PROTECTED_APPS = ("planning", "readiness", "fleet", "hub", "execution", "accounts", "capacity")
+
+
+@pytest.mark.django_db
+def test_no_decision_module_imports_or_reads_the_predictor_log():
+    """Grep: nothing in planning, readiness, fleet, hub, execution (code, templates or SQL migrations) refers to
+    the predictor module, model or table; inside operations only the page and the logger do."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    needles = ("predictor", "PredictorObservation")
+    hits = [
+        str(p.relative_to(root))
+        for app in PROTECTED_APPS
+        for p in (root / app).rglob("*")
+        if p.suffix in (".py", ".html", ".sql") and any(n in p.read_text() for n in needles)
+    ]
+    assert hits == []
+    ops_hits = sorted(
+        str(p.relative_to(root))
+        for p in (root / "operations").rglob("*")
+        if p.suffix in (".py", ".html") and "predictor" in p.read_text()
+    )
+    assert ops_hits == [
+        "operations/management/commands/log_predictor_signals.py",
+        "operations/migrations/0008_predictor_log.py",
+        "operations/models.py",
+        "operations/predictors.py",
+        "operations/templates/operations/health.html",
+        "operations/views.py",
+    ]
+    with connection.cursor() as cur:  # no view or function other than the logger mentions the table
+        cur.execute(
+            "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+            " WHERE n.nspname = 'public' AND p.prosrc LIKE '%%predictor_observation%%'"
+        )
+        assert [r[0] for r in cur.fetchall()] == ["operations_log_predictor_signals"]
+        cur.execute(
+            "SELECT viewname FROM pg_views WHERE schemaname = 'public'"
+            " AND definition LIKE '%%predictor_observation%%'"
+        )
+        assert cur.fetchall() == []
