@@ -18,6 +18,7 @@ from django.utils import timezone
 
 from fleet.models import Robot
 from planning.models import ConsentRecord, Person, Site, SiteAssessment, Vehicle
+from platform_core.hubscope import add_owner_hub_field
 from platform_core.templatetags.ui import home_text
 from platform_core.timezones import workspace_zone_name
 
@@ -212,6 +213,7 @@ class BookForm(forms.Form):
         self.fields["site"].choices = [("", "Choose a home")] + [  # type: ignore[attr-defined]
             (s.code, home_text(s)) for s in Site.objects.order_by("code")
         ]
+        add_owner_hub_field(self, "The hub the visit is dispatched from: its robot and van come from there.")
 
     def clean(self) -> dict[str, Any]:
         data: dict[str, Any] = super().clean() or {}

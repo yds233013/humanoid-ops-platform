@@ -40,8 +40,9 @@ from platform_core.commands import (
     PermissionDenied,
     run_command,
 )
+from platform_core.hubscope import owner_hub
 from platform_core.middleware import current_request_id
-from platform_core.models import AuditEvent, Hub
+from platform_core.models import AuditEvent
 from platform_core.templatetags.ui import localize_utc_text
 
 MANAGE_CHARGERS = "hub.manage_chargers"
@@ -57,9 +58,17 @@ SOURCE_PHRASES = {
 
 
 # ------------------------------------------------------------------ chargers (configuration)
-def create_charger(actor: Any, *, code: str, name: str, note: str = "") -> dict[str, Any]:
+def create_charger(
+    actor: Any, *, code: str, name: str, note: str = "", hub_code: str | None = None
+) -> dict[str, Any]:
+    """A charger belongs to ``hub_code`` (v2 03A-1), or to the only hub when there is one: the database
+    default
+    refuses to guess when there are several. The Phase 02 "first hub" lookup is gone."""
     code, name, note = code.strip().upper(), name.strip(), note.strip()
+    hub = owner_hub(hub_code)
     payload = {"code": code, "name": name, "note": note}
+    if hub is not None:
+        payload["hub"] = hub.code
 
     def handler() -> Outcome:
         if not code or len(code) > 12 or not all(c.isalnum() or c == "-" for c in code):
@@ -68,12 +77,12 @@ def create_charger(actor: Any, *, code: str, name: str, note: str = "") -> dict[
             raise Invalid("Give the charger a name (up to 80 characters)")
         if Charger.objects.filter(code=code).exists():
             raise Conflict(f"A charger with code {code} already exists")
-        ch = Charger.objects.create(code=code, name=name, note=note, hub=Hub.objects.order_by("id").first(),
-                                    created_by=actor)  # fmt: skip
-        return Outcome("charger", ch.code, {"in_service": True})
+        extra = {"hub": hub} if hub is not None else {}
+        ch = Charger.objects.create(code=code, name=name, note=note, created_by=actor, **extra)
+        return Outcome("charger", ch.code, {"in_service": True, "hub_id": ch.hub_id})
 
     return run_command(
-        actor, "hub.create_charger", permission=MANAGE_CHARGERS, payload=payload, handler=handler
+        actor, "hub.create_charger", permission=MANAGE_CHARGERS, payload=payload, handler=handler, hub=hub
     )
 
 
@@ -94,8 +103,9 @@ def set_charger_in_service(actor: Any, *, code: str, in_service: bool, reason: s
         return Outcome("charger", ch.code, {"in_service": in_service})
 
     return run_command(
-        actor, "hub.set_charger_in_service", permission=MANAGE_CHARGERS, payload=payload, handler=handler
-    )
+        actor, "hub.set_charger_in_service", permission=MANAGE_CHARGERS, payload=payload, handler=handler,
+        hub=lambda: Charger.objects.filter(code=code).values_list("hub_id", flat=True).first(),
+    )  # fmt: skip
 
 
 # ------------------------------------------------------------ guarded writes (SECURITY DEFINER functions)

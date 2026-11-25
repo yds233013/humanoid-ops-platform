@@ -18,6 +18,7 @@ from fleet.models import ConfigurationManifest, Inspection, Robot
 from planning import services as planning_services
 from planning.models import Person, Visit
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, RetryTransaction, run_command
+from platform_core.hubscope import visit_hub
 from platform_core.locks import lock_guards
 from readiness.models import (
     EVIDENCE_KINDS,
@@ -422,6 +423,7 @@ def record_evidence(
         permission="readiness.record_evidence",
         payload=payload,
         handler=handler,
+        hub=visit_hub(visit_code),
     )
 
 
@@ -448,6 +450,11 @@ def void_evidence(actor: Any, *, evidence_code: str, reason: str) -> dict[str, A
         permission="readiness.record_evidence",
         payload={"evidence": evidence_code, "reason": reason},
         handler=handler,
+        hub=lambda: (
+            ReadinessEvidence.objects.filter(code=evidence_code)
+            .values_list("visit__hub_id", flat=True)
+            .first()
+        ),
     )
 
 

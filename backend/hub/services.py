@@ -14,6 +14,14 @@ Authorization is two-step: the broad permission ``hub.work`` is checked by run_c
 lock; then the handler checks THIS task (its owner, its creator, its status) for anyone without
 ``hub.manage_all``. A field operator cannot start, complete or cancel someone else's task.
 
+v2 03A-1 (docs/13_v2_phase03_contract.md 11.2): every command passes the TASK's hub to run_command (read from
+the
+task record, or for a new task from its robot, never from client input), so ``hub.work`` and the handler's
+``hub.manage_all`` / ``hub.claim`` checks count only grants that apply at that hub. A hub technician of hub A
+cannot create, take, start, complete or cancel a task of hub B. (Work orders are written by the runtime role
+through this command layer (8.8), so this Python check is their boundary; the trigger hub_workorder_same_hub
+keeps the task's robot and visit at the task's hub.)
+
 Work orders are not safety evidence (contract 8.1): nothing here touches holds, inspections, custody,
 readiness evidence, eligibility or maintenance. The only table written is hub_workorder (plus the audit row).
 """
@@ -36,6 +44,7 @@ from platform_core.commands import (
     holds_permission_locked,
     run_command,
 )
+from platform_core.hubscope import owner_hub
 
 WORK = "hub.work"
 MANAGE = "hub.manage_all"
@@ -70,8 +79,12 @@ def _lock(task_id: int, version: int | None) -> WorkOrder:
     return task
 
 
-def _is_manager(actor: Any) -> bool:
-    return holds_permission_locked(actor, MANAGE)
+def _is_manager(actor: Any, hub_id: int | None) -> bool:
+    return holds_permission_locked(actor, MANAGE, hub_id)
+
+
+def _task_hub(task_id: int) -> Any:
+    return lambda: WorkOrder.objects.filter(pk=task_id).values_list("hub_id", flat=True).first()
 
 
 def _owns(actor: Any, task: WorkOrder) -> bool:
@@ -112,10 +125,22 @@ def create_task(
     due_at: datetime | None = None,
     owner_code: str | None = None,
     note: str = "",
+    hub_code: str | None = None,
 ) -> dict[str, Any]:
+    """A task about a robot belongs to the robot's hub; otherwise to ``hub_code`` (or the only hub)."""
     title, note = title.strip(), note.strip()
     payload = {"type": type, "title": title, "robot": robot_code, "owner": owner_code,
                "due_at": due_at.isoformat() if due_at else None}  # fmt: skip
+    named = owner_hub(hub_code)
+    if named is not None:
+        payload["hub"] = named.code
+
+    def hub_id() -> int | None:
+        if robot_code:
+            rid = Robot.objects.filter(code=robot_code).values_list("hub_id", flat=True).first()
+            if rid is not None:
+                return int(rid)
+        return named.pk if named is not None else None
 
     def handler() -> Outcome:
         if type not in TYPE_WORDS:
@@ -130,9 +155,12 @@ def create_task(
             if robot is None:
                 raise Invalid(f"No robot {robot_code}")
         owner = _person(owner_code)
-        if not _is_manager(actor):
+        task_hub = robot.hub_id if robot is not None else (named.pk if named is not None else None)
+        if robot is not None and named is not None and named.pk != robot.hub_id:
+            raise Invalid(f"Robot {robot.code} belongs to another hub than {named.code}")
+        if not _is_manager(actor, task_hub):
             me = person_of(actor)
-            if holds_permission_locked(actor, CLAIM):
+            if holds_permission_locked(actor, CLAIM, task_hub):
                 allowed = owner is None or (me is not None and owner.pk == me.pk)
             else:  # a field operator creates tasks for themselves only
                 if me is None:
@@ -151,12 +179,15 @@ def create_task(
             source_kind="manual",
             note=note,
             created_by=actor,
+            **({"hub_id": task_hub} if task_hub is not None else {}),
         )
         return Outcome(
             "work_order", str(task.pk), {"status": task.status, "owner": owner.code if owner else None}
         )
 
-    return run_command(actor, "hub.create_task", permission=WORK, payload=payload, handler=handler)
+    return run_command(
+        actor, "hub.create_task", permission=WORK, payload=payload, handler=handler, hub=hub_id
+    )
 
 
 # ------------------------------------------------------------------ transitions
@@ -173,9 +204,9 @@ def assign_task(actor: Any, *, task_id: int, owner_code: str, version: int | Non
             raise Conflict(
                 f"Task WO-{task.pk:04d} is already in progress; cancel it or let the owner finish it"
             )
-        if not _is_manager(actor):
+        if not _is_manager(actor, task.hub_id):
             me = person_of(actor)
-            if not holds_permission_locked(actor, CLAIM):
+            if not holds_permission_locked(actor, CLAIM, task.hub_id):
                 raise PermissionDenied("Only the ops lead or engineering can assign tasks")
             if me is None or owner.pk != me.pk:
                 raise PermissionDenied("You can only take a task for yourself; the ops lead assigns others")
@@ -183,7 +214,9 @@ def assign_task(actor: Any, *, task_id: int, owner_code: str, version: int | Non
                 raise PermissionDenied(f"Task WO-{task.pk:04d} is already assigned to someone else")
         return _save(task, actor, owner=owner, status="assigned")
 
-    return run_command(actor, "hub.assign_task", permission=WORK, payload=payload, handler=handler)
+    return run_command(
+        actor, "hub.assign_task", permission=WORK, payload=payload, handler=handler, hub=_task_hub(task_id)
+    )
 
 
 def start_task(actor: Any, *, task_id: int, version: int | None = None) -> dict[str, Any]:
@@ -196,11 +229,13 @@ def start_task(actor: Any, *, task_id: int, version: int | None = None) -> dict[
             raise Conflict(
                 f"Task WO-{task.pk:04d} is {STATUS_WORDS[task.status]}; only an assigned task can be started"
             )
-        if not _is_manager(actor) and not _owns(actor, task):
+        if not _is_manager(actor, task.hub_id) and not _owns(actor, task):
             raise PermissionDenied("Only the person this task is assigned to (or the ops lead) can start it")
         return _save(task, actor, status="in_progress", started_at=timezone.now())
 
-    return run_command(actor, "hub.start_task", permission=WORK, payload=payload, handler=handler)
+    return run_command(
+        actor, "hub.start_task", permission=WORK, payload=payload, handler=handler, hub=_task_hub(task_id)
+    )
 
 
 def complete_task(actor: Any, *, task_id: int, version: int | None = None, note: str = "") -> dict[str, Any]:
@@ -214,7 +249,7 @@ def complete_task(actor: Any, *, task_id: int, version: int | None = None, note:
             raise Conflict(
                 f"Task WO-{task.pk:04d} is {STATUS_WORDS[task.status]}; start it before marking it done"
             )
-        if not _is_manager(actor) and not _owns(actor, task):
+        if not _is_manager(actor, task.hub_id) and not _owns(actor, task):
             raise PermissionDenied(
                 "Only the person this task is assigned to (or the ops lead) can mark it done"
             )
@@ -225,7 +260,9 @@ def complete_task(actor: Any, *, task_id: int, version: int | None = None, note:
             changes["close_reason"] = note
         return _save(task, actor, **changes)
 
-    return run_command(actor, "hub.complete_task", permission=WORK, payload=payload, handler=handler)
+    return run_command(
+        actor, "hub.complete_task", permission=WORK, payload=payload, handler=handler, hub=_task_hub(task_id)
+    )
 
 
 def cancel_task(actor: Any, *, task_id: int, reason: str, version: int | None = None) -> dict[str, Any]:
@@ -237,11 +274,13 @@ def cancel_task(actor: Any, *, task_id: int, reason: str, version: int | None = 
         _refuse_final(task, "cancelled")
         if not reason or len(reason) > 300:
             raise Invalid("Give a short reason for cancelling (up to 300 characters)")
-        if not _is_manager(actor):
+        if not _is_manager(actor, task.hub_id):
             own_creation = task.created_by_id == actor.pk and task.source_kind == "manual"
             resolved_and_mine = task.source_cleared_at is not None and _owns(actor, task)
             if not ((own_creation and _owns(actor, task)) or resolved_and_mine):
                 raise PermissionDenied("Only the ops lead or engineering can cancel this task")
         return _save(task, actor, status="cancelled", finished_at=timezone.now(), close_reason=reason)
 
-    return run_command(actor, "hub.cancel_task", permission=WORK, payload=payload, handler=handler)
+    return run_command(
+        actor, "hub.cancel_task", permission=WORK, payload=payload, handler=handler, hub=_task_hub(task_id)
+    )

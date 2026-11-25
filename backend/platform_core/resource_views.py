@@ -20,6 +20,7 @@ from accounts.models import RoleGrant
 from accounts.permissions import has_permission
 from planning import services as ps
 from planning.models import Person, Qualification, Vehicle
+from platform_core.hubscope import add_owner_hub_field
 from platform_core.interaction import ConfirmForm, UIForm, command_page, denied, holds_any
 from platform_core.timezones import workspace_zone
 
@@ -70,6 +71,9 @@ class PersonForm(UIForm):
         free = User.objects.filter(is_active=True, person__isnull=True).order_by("username")
         field: Any = self.fields["username"]
         field.choices = [(u.username, u.username) for u in free]
+        add_owner_hub_field(
+            self, "Their home hub. It gives no permission: roles are given per hub in Settings."
+        )
 
 
 class QualificationForm(UIForm):
@@ -122,6 +126,10 @@ class VehicleForm(UIForm):
         help_text="Leave empty if unknown. An unknown kit blocks visits that carry a robot.",
     )
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        add_owner_hub_field(self, "The hub that owns the vehicle.")
+
 
 # ------------------------------------------------------------------ people
 @login_required
@@ -151,7 +159,9 @@ def person_new(request: HttpRequest) -> HttpResponse:
         permission=MANAGE_PEOPLE,
         form_class=PersonForm,
         template="resources/person_new.html",
-        call=lambda actor, d: ps.register_person(actor, username=d["username"], code=d["code"].strip()),
+        call=lambda actor, d: ps.register_person(
+            actor, username=d["username"], code=d["code"].strip(), hub_code=d.get("hub") or None
+        ),
         ok=lambda r: f"{r['entity_id']} registered. They have no qualification yet: that is a separate step.",
         success_url=lambda r: f"/people/{r['entity_id']}/",
     )
@@ -240,6 +250,7 @@ def vehicle_new(request: HttpRequest) -> HttpResponse:
             code=d["code"].strip(),
             robot_capacity=d.get("robot_capacity"),
             restraint_kit=(d.get("restraint_kit") or "").strip(),
+            hub_code=d.get("hub") or None,
         ),
         ok=lambda r: f"Vehicle {r['entity_id']} added.",
         success_url="/vehicles/",
