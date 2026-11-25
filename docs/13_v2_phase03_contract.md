@@ -483,3 +483,59 @@ run reports the eligible candidate count and benchmarks the revised predicate.
 
 03A closure package: final SHA and diff, migration and backfill evidence, exact runtime privileges, transfer and
 concurrency tests, full CI, perf, and a **browser walkthrough showing hub-scoped permissions and transfers**.
+
+## 13. 03B amendments (draft for EM review, 2026-11-25)
+
+### 13.1 Design acceptance bar (EM-approved product owner direction, binding for 03B)
+
+The product owner's direction was "make it as real and nice as possible with a good taste". The EM approved it on
+2026-11-25 as an enforceable acceptance requirement, not a finishing pass. The screen specs are in
+`docs/14_v2_03b_design_spec.md`.
+
+| Area | Acceptance requirement |
+|---|---|
+| Screen specification | Primary user, decision, actions, and the empty, loading, blocked and error states are defined before implementation |
+| Visual hierarchy | The key action and operational risks are visible immediately; the dispatch board is designed around decisions, not inventory |
+| Reassignment | Explains every re-check and its outcome; never implies departure approval |
+| Language | Hub names first, local times with the zone, refusals that say what to do without revealing another hub's details |
+| Responsive design | Real browser review at 1024, 768 and 375 px |
+| Accessibility | Status never by colour alone; keyboard access; readable labels |
+| Demo realism | Three distinct fictional hubs, plausible crew and visit schedules |
+| Evidence | Screenshots, defect log, fixes, final design review |
+
+### 13.2 03B interface (to be frozen before code)
+
+- **Zones:** `platform_core_zone` (hub, code, name, active), plus `planning_visit.zone_id`. The zone is taken from the
+  site's zone when known. Unknown is allowed and shown.
+- **Travel times:** `planning_travel_time` holds the from zone, to zone, minutes, version, source (company or demo),
+  effective_from and created_by.
+  - Append-only; the latest effective version per pair is the one in force.
+  - A missing pair means **Travel time unknown** (10.H).
+  - A visit planned before 03B keeps its recorded travel minutes.
+- **Regional pause:** `operations_region_pause` is append-only. It records pause and lift rows: hub, or hub and zone;
+  reason; actor; time.
+  - Written only through SECURITY DEFINER `operations_pause_region(actor, hub, zone, reason, request_id)` and
+    `operations_lift_pause(actor, pause, reason, request_id)`, for an ops lead or a grant at that hub.
+- **Pause gate (I-9, 10.G):** `readiness_issue_authorization` and the departure guard refuse while an active pause
+  covers the visit's hub or zone. The hub and zone are taken from the visit, never from client input.
+  - Pause and lift take the hub row lock, then the settings lock in shared mode. Authorization and departure take the
+    same locks in the same order. The lock graph doc is extended accordingly.
+- **Planning under a pause:** planning stays allowed during a pause and shows "Paused: cannot leave until lifted".
+  A cross-hub reassignment cannot route around a paused hub, because the gate follows the visit's hub at
+  authorization time.
+- **Suggest and next free time:** a read-only Python service on top of the existing feasibility checks and the
+  future-planning predicate (section 12).
+  - It returns up to three slots within a look-ahead set by the owner (`dispatch_lookahead_days`, demo value 7).
+  - A slot whose travel time is unknown is never offered as free.
+- **Dispatch board:** read-only, built from one snapshot like Today, with a statement-count test that stays constant
+  in hubs and visits. p95 at most 2 s on a 3-hub fixture of 200 robots (section 8).
+
+### 13.3 03B exit tests (in addition to section 6, items 10 and 12)
+
+- Pause vs authorization and pause vs departure, both orders, waiter seen.
+- A pause blocks authorization through a direct-SQL call as `ops_app`.
+- A cross-hub reassignment of a paused visit is still blocked at authorization.
+- Lift restores the gate.
+- Suggest and next-free-time oracle tests, including a missing travel pair.
+- Travel version auditability: a suggestion names its matrix version.
+- Design bar evidence per 13.1.
