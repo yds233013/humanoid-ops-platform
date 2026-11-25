@@ -860,9 +860,11 @@ def _incident_row(i: Incident) -> dict[str, Any]:
     }
 
 
-def _report_context() -> dict[str, Any]:
+def _report_context(request: HttpRequest | None = None) -> dict[str, Any]:
+    robots = Robot.objects.order_by("code")
     return {
-        "robots": Robot.objects.order_by("code"),
+        # v2 03A: the robots of the viewer's hubs (a regional viewer: every robot)
+        "robots": hub_scope(request).filter(robots) if request is not None else robots,
         "event_types": INCIDENT_EVENT_TYPES,
         "knowledge_sources": KNOWLEDGE_SOURCES,
         "now_local": datetime.now(workspace_zone()).strftime("%Y-%m-%dT%H:%M"),
@@ -874,14 +876,23 @@ def _report_context() -> dict[str, Any]:
 def incidents(request: HttpRequest) -> HttpResponse:
     if (deny := _deny(request)) is not None:
         return deny
-    rows = [
-        _incident_row(i)
-        for i in Incident.objects.select_related("robot", "run", "visit__site", "hold").order_by("-id")
-    ]
+    incidents = Incident.objects.select_related("robot", "run", "visit__site", "hold").order_by("-id")
+    ids = hub_scope(request).ids  # v2 03A (I-8): the visit's hub, else the robot's home hub
+    if ids is not None:
+        hubs = sorted(ids)
+        incidents = incidents.filter(
+            Q(visit__isnull=False, visit__hub_id__in=hubs) | Q(visit__isnull=True, robot__hub_id__in=hubs)
+        )
+    rows = [_incident_row(i) for i in incidents]
     return render(
         request,
         "execution/incidents.html",
-        {"rows": rows, "preselect": request.GET.get("robot", ""), **_report_context(), **_base(request)},
+        {
+            "rows": rows,
+            "preselect": request.GET.get("robot", ""),
+            **_report_context(request),
+            **_base(request),
+        },
     )
 
 
@@ -895,6 +906,9 @@ def incident_detail(request: HttpRequest, code: str) -> HttpResponse:
         ),
         code=code,
     )
+    hub = i.visit.hub_id if i.visit is not None else i.robot.hub_id
+    if (refused := other_hub_refusal(request, hub)) is not None:  # v2 03A: another hub's incident
+        return refused
     row = _incident_row(i)
     tz = row["tz"]
     severities = (

@@ -20,7 +20,7 @@ from accounts.models import RoleGrant
 from accounts.permissions import has_permission
 from planning import services as ps
 from planning.models import Person, Qualification, Vehicle
-from platform_core.hubscope import add_owner_hub_field, hub_scope
+from platform_core.hubscope import add_owner_hub_field, hub_scope, other_hub_refusal
 from platform_core.interaction import ConfirmForm, UIForm, command_page, denied, holds_any
 from platform_core.timezones import workspace_zone
 
@@ -147,7 +147,8 @@ def people_list(request: HttpRequest) -> HttpResponse:
             "roles": roles.get(p.user_id, []),
             "quals": sorted(quals.get(p.pk, [])),
         }
-        for p in Person.objects.select_related("user").order_by("code")
+        # v2 03A (I-8): people of the viewer's hubs (home hub); a regional viewer sees everyone
+        for p in hub_scope(request).filter(Person.objects.select_related("user").order_by("code"))
     ]
     return render(request, "resources/people.html", {"rows": rows})
 
@@ -171,6 +172,8 @@ def person_new(request: HttpRequest) -> HttpResponse:
 def person_detail(request: HttpRequest, code: str) -> HttpResponse:
     """Qualifications of one person. POST grants one with grant_qualification."""
     person = get_object_or_404(Person.objects.select_related("user"), code=code)
+    if (refused := other_hub_refusal(request, person.hub_id)) is not None:  # v2 03A: another hub's person
+        return refused
     now = timezone.now()
     quals = [{"q": q, "state": _qual_state(q, now)} for q in person.qualifications.order_by("-granted_at")]
     ctx = {

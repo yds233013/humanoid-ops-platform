@@ -234,7 +234,11 @@ def test_closeout_view_stage_once_equals_the_per_run_view(seed):
     with connection.cursor() as cur:
         cur.execute("SELECT (now() AT TIME ZONE 'America/Los_Angeles')::date")
         day = cur.fetchone()[0]
-        for params in ({"tz": "America/Los_Angeles", "day": day}, {"tz": None, "day": None}):
+        # v2 03A: the hub filter (None = every hub) is part of the parameters
+        for params in (
+            {"tz": "America/Los_Angeles", "day": day, "hubs": None},
+            {"tz": None, "day": None, "hubs": None},
+        ):
             cur.execute(co.OPEN_RUNS_SQL, params)
             a = cur.fetchall()
             cur.execute(previous, params)

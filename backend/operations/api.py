@@ -13,6 +13,7 @@ from django.urls import path
 
 from fleet.services import demo_mode
 from operations import views as v
+from platform_core.hubscope import hub_scope
 
 
 def _ok(data: dict[str, Any]) -> JsonResponse:
@@ -27,26 +28,26 @@ def _bad(exc: v.BadParam) -> JsonResponse:
 
 @v.ops_view("operations.read", json_api=True)
 def overview(request: HttpRequest, at: datetime) -> JsonResponse:
-    return _ok(v.overview_data(at))
+    return _ok(v.overview_data(at, hub_scope(request).ids))
 
 
 @v.ops_view("operations.read", json_api=True)
 def exceptions(request: HttpRequest, at: datetime) -> JsonResponse:
     try:
-        return _ok(v.exceptions_data(at, request.GET.get("cursor")))
+        return _ok(v.exceptions_data(at, request.GET.get("cursor"), hub_scope(request).ids))
     except v.BadParam as exc:
         return _bad(exc)
 
 
 @v.ops_view("operations.read", json_api=True)
 def incidents(request: HttpRequest, at: datetime) -> JsonResponse:
-    return _ok(v.incidents_data(at))
+    return _ok(v.incidents_data(at, hub_scope(request).ids))
 
 
 @v.ops_view("operations.read", json_api=True)
 def timeline(request: HttpRequest, at: datetime) -> JsonResponse:
     try:
-        return _ok(v.timeline_data(at, v.parse_window(request.GET.get("window_min"))))
+        return _ok(v.timeline_data(at, v.parse_window(request.GET.get("window_min")), hub_scope(request).ids))
     except v.BadParam as exc:
         return _bad(exc)
 
@@ -62,13 +63,13 @@ def metrics(request: HttpRequest, at: datetime) -> JsonResponse:
 
 @v.ops_view("operations.read", json_api=True)
 def production_blockers(request: HttpRequest, at: datetime) -> JsonResponse:
-    return _ok(v.production_blockers_data(at))
+    return _ok(v.production_blockers_data(at, hub_scope(request).ids))
 
 
 @v.ops_view("operations.read", json_api=True)
 def closeout(request: HttpRequest, at: datetime) -> JsonResponse:
     try:
-        return _ok(v.closeout_data(at, request.GET.get("date"))["data"])
+        return _ok(v.closeout_data(at, request.GET.get("date"), hub_scope(request).ids)["data"])
     except v.BadParam as exc:
         return _bad(exc)
 

@@ -119,6 +119,10 @@ FROM operations_closeout_runs c
 LEFT JOIN s ON s.run_id = c.run_id
 WHERE NOT c.closed
   AND (%(tz)s::text IS NULL OR (c.departed_at AT TIME ZONE %(tz)s::text)::date <= %(day)s::date)
+  -- v2 03A: a hub-scoped viewer's runs only (the visit's dispatch hub); NULL = every hub
+  AND (%(hubs)s::bigint[] IS NULL
+       OR EXISTS (SELECT 1 FROM planning_visit v
+                  WHERE v.code = c.visit_code AND v.hub_id = ANY(%(hubs)s::bigint[])))
 ORDER BY c.departed_at, c.run_code COLLATE "C"
 """
 
@@ -126,6 +130,9 @@ COUNTS_SQL = r"""
 SELECT count(*), count(*) FILTER (WHERE c.closed)
 FROM operations_closeout_runs c
 WHERE (c.departed_at AT TIME ZONE %(tz)s::text)::date = %(day)s::date
+  AND (%(hubs)s::bigint[] IS NULL
+       OR EXISTS (SELECT 1 FROM planning_visit v
+                  WHERE v.code = c.visit_code AND v.hub_id = ANY(%(hubs)s::bigint[])))
 """
 
 
@@ -206,7 +213,7 @@ def local_today(at: datetime, tz: TimezoneSetting) -> date | None:
     return at.astimezone(ZoneInfo(tz.name)).date() if tz.name else None
 
 
-def closeout(at: datetime, date_raw: str | None = None) -> Closeout:
+def closeout(at: datetime, date_raw: str | None = None, *, hub_ids: set[int] | None = None) -> Closeout:
     """The close-out for local day ``date_raw`` (default today) as of ``at``. Raises CloseoutDateError
     for a bad
     or future date when the time zone is valid; ignores ``date_raw`` when it is not."""
@@ -215,12 +222,13 @@ def closeout(at: datetime, date_raw: str | None = None) -> Closeout:
     today = local_today(at, tz)
     day = parse_day(date_raw, today) if dated and today is not None else None
     with connection.cursor() as cur:
-        cur.execute(OPEN_RUNS_SQL, {"tz": tz.name if dated else None, "day": day})
+        hubs = None if hub_ids is None else sorted(hub_ids)
+        cur.execute(OPEN_RUNS_SQL, {"tz": tz.name if dated else None, "day": day, "hubs": hubs})
         cols = [d.name for d in cur.description]
         rows = [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
         counts: tuple[int, int] | None = None
         if dated:
-            cur.execute(COUNTS_SQL, {"tz": tz.name, "day": day})
+            cur.execute(COUNTS_SQL, {"tz": tz.name, "day": day, "hubs": hubs})
             got = cur.fetchone()
             assert got is not None
             counts = (int(got[0]), int(got[1]))
