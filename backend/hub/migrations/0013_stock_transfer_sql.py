@@ -146,7 +146,8 @@ forward = (
     + ONLY_TRANSFERS_NAME
     + FUNCTIONS.replace("{roles}", ROLES)
     + "".join(
-        f"REVOKE ALL ON FUNCTION {s} FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION {s} TO {APP};\n" for s in SIGNATURES
+        f"REVOKE ALL ON FUNCTION {s} FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION {s} TO {APP};\n"
+        for s in SIGNATURES
     )
 )
 reverse = (

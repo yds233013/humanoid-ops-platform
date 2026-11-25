@@ -350,8 +350,9 @@ class StockMovement(models.Model):
     actor = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     occurred_at = models.DateTimeField()
     request_id = models.CharField(max_length=64, blank=True, default="")
-    # v2 03A-2 (contract 11.5, 10.C): a transfer_out names the hub it is sent to; the transfer_in at that hub names
-    # the transfer_out it receives (one receipt per transfer: unique). In between the quantity is on hand nowhere.
+    # v2 03A-2 (contract 11.5, 10.C): a transfer_out names the hub it is sent to; the transfer_in at that
+    # hub names the transfer_out it receives (one receipt per transfer: unique). In between the quantity
+    # is on hand nowhere.
     to_hub = models.ForeignKey(
         "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )

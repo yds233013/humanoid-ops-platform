@@ -116,15 +116,15 @@ BEGIN
     END IF;
   ELSIF c.kind = 'vehicle' THEN
     RETURN QUERY SELECT 'vehicle'::text, NULL::bigint,
-      coalesce((SELECT v.code FROM planning_vehicletrip tr JOIN planning_vehicle v ON v.id = tr.vehicle_id
+      coalesce((SELECT v.code::text FROM planning_vehicletrip tr JOIN planning_vehicle v ON v.id = tr.vehicle_id
                 WHERE tr.id = e.trip_id), ''), coalesce(c.verified, false);
   ELSIF c.kind = 'site' THEN
     RETURN QUERY SELECT 'site'::text, NULL::bigint,
-      coalesce((SELECT s.code FROM planning_visit v JOIN planning_site s ON s.id = v.site_id
+      coalesce((SELECT s.code::text FROM planning_visit v JOIN planning_site s ON s.id = v.site_id
                 WHERE v.id = e.visit_id), ''), coalesce(c.verified, false);
   ELSIF c.kind = 'unaccounted' THEN
     RETURN QUERY SELECT 'unaccounted'::text, NULL::bigint,
-      coalesce((SELECT i.code FROM execution_incident i WHERE i.id = e.incident_id), ''), false;
+      coalesce((SELECT i.code::text FROM execution_incident i WHERE i.id = e.incident_id), ''), false;
   ELSE
     RETURN QUERY SELECT 'unknown'::text, NULL::bigint, ''::text, false;
   END IF;
@@ -188,7 +188,7 @@ BEGIN
     END IF;
   ELSE
     res := res || ARRAY(
-      SELECT 'it is res on the trip of visit ' || v.code
+      SELECT 'it is out on the trip of visit ' || v.code
       FROM planning_vehicletrip tr JOIN execution_executionrun x ON x.trip_id = tr.id
       JOIN planning_visit v ON v.id = x.visit_id
       WHERE tr.vehicle_id = p_asset AND NOT execution_run_closed(x.id) ORDER BY v.code);

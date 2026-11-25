@@ -706,9 +706,9 @@ TRANSFER_STATES = [
 
 
 class HubTransfer(models.Model):
-    """v2 03A-2 (contract 11.5, correction 10.C): the APPEND-ONLY record of moving a robot or a vehicle to another
-    hub. One row per step; a transfer is its first row (``seq`` 1, ``transfer`` = itself, state in_transit) and
-    the rows that point to it. Its current state is its latest row:
+    """v2 03A-2 (contract 11.5, correction 10.C): the APPEND-ONLY record of moving a robot or a vehicle
+    to another hub. One row per step; a transfer is its first row (``seq`` 1, ``transfer`` = itself,
+    state in_transit) and the rows that point to it. Its current state is its latest row:
 
         in_transit -> receipt_refused (still on its way, with a reason) -> abandoned (ops lead) -> received
         in_transit / receipt_refused -> received (at the destination hub)
@@ -742,7 +742,9 @@ class HubTransfer(models.Model):
             models.UniqueConstraint(
                 fields=["transfer"], condition=Q(state="received"), name="fleet_transfer_received_once"
             ),
-            models.CheckConstraint(condition=_in("asset_kind", TRANSFER_ASSET_KINDS), name="fleet_transfer_kind"),
+            models.CheckConstraint(
+                condition=_in("asset_kind", TRANSFER_ASSET_KINDS), name="fleet_transfer_kind"
+            ),
             models.CheckConstraint(condition=_in("state", TRANSFER_STATES), name="fleet_transfer_state"),
             models.CheckConstraint(
                 condition=Q(asset_kind="robot", robot__isnull=False, vehicle__isnull=True)
@@ -766,9 +768,9 @@ class HubTransfer(models.Model):
             models.Index(fields=["vehicle", "id"], name="fleet_transfer_vehicle_idx"),
         ]
 
+    def __str__(self) -> str:
+        return f"{self.code} #{self.seq} {self.state}"
+
     @property
     def code(self) -> str:
         return f"TR-{self.transfer_id:04d}"
-
-    def __str__(self) -> str:
-        return f"{self.code} #{self.seq} {self.state}"

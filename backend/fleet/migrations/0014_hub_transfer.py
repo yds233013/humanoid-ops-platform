@@ -7,7 +7,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fleet", "0013_maintenance_record_hub_authority"),
         ("planning", "0010_hub_ownership"),
@@ -52,9 +51,7 @@ class Migration(migrations.Migration):
                 ("request_id", models.CharField(blank=True, default="", max_length=64)),
                 (
                     "recorded_at",
-                    models.DateTimeField(
-                        db_default=django.db.models.functions.datetime.Now()
-                    ),
+                    models.DateTimeField(db_default=django.db.models.functions.datetime.Now()),
                 ),
                 (
                     "actor",
@@ -122,12 +119,8 @@ class Migration(migrations.Migration):
             options={
                 "db_table": "fleet_hub_transfer",
                 "indexes": [
-                    models.Index(
-                        fields=["robot", "id"], name="fleet_transfer_robot_idx"
-                    ),
-                    models.Index(
-                        fields=["vehicle", "id"], name="fleet_transfer_vehicle_idx"
-                    ),
+                    models.Index(fields=["robot", "id"], name="fleet_transfer_robot_idx"),
+                    models.Index(fields=["vehicle", "id"], name="fleet_transfer_vehicle_idx"),
                 ],
                 "constraints": [
                     models.UniqueConstraint(
@@ -174,9 +167,7 @@ class Migration(migrations.Migration):
                         name="fleet_transfer_one_asset",
                     ),
                     models.CheckConstraint(
-                        condition=models.Q(
-                            ("from_hub", models.F("to_hub")), _negated=True
-                        ),
+                        condition=models.Q(("from_hub", models.F("to_hub")), _negated=True),
                         name="fleet_transfer_two_hubs",
                     ),
                     models.CheckConstraint(

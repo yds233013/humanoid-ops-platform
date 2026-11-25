@@ -6,7 +6,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("hub", "0011_hub_authority"),
         ("platform_core", "0005_default_hub"),

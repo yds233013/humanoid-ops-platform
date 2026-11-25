@@ -18,9 +18,11 @@ ordered. Transfer first: the booking waits, then sees "in transfer" and is refus
 waits, then sees the booking and is refused with it listed (fleet_transfer_blockers).
 
 Existing bookings are never re-planned silently. Refusals are check_violation (fleet_fail). Not SECURITY DEFINER;
-EXECUTE revoked from PUBLIC. Reverse drops the triggers and functions.
+EXECUTE revoked from PUBLIC (planning_location_problem: granted to ops_app, whose
+statements fire these triggers). Reverse drops the triggers and functions.
 """
 
+from django.conf import settings
 from django.db import migrations
 
 SQL = r"""
@@ -48,6 +50,7 @@ BEGIN
   RETURN NULL;
 END $fn$;
 REVOKE ALL ON FUNCTION planning_location_problem(bigint, bigint, bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION planning_location_problem(bigint, bigint, bigint) TO {app};
 
 CREATE OR REPLACE FUNCTION planning_revision_location_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $fn$
@@ -115,4 +118,4 @@ class Migration(migrations.Migration):
         ("planning", "0010_hub_ownership"),
         ("fleet", "0015_location_and_transfer_sql"),
     ]
-    operations = [migrations.RunSQL(SQL, REVERSE)]
+    operations = [migrations.RunSQL(SQL.replace("{app}", settings.DB_APP_ROLE), REVERSE)]
