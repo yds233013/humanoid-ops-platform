@@ -1,28 +1,28 @@
-"""v2 02D fleet health (docs/11_v2_phase02_contract.md section 2 "Fleet health", 4 milestone 02D). SYNTHETIC
-demo data only. Read-only: called inside the caller's ``operations.snapshot.read_snapshot`` (REPEATABLE READ, READ
-ONLY); no writes, no locks, no evaluator.
+"""v2 02D fleet health (docs/11_v2_phase02_contract.md section 2 "Fleet health", 4 milestone 02D).
+SYNTHETIC demo data only. Read-only: called inside the caller's ``operations.snapshot.read_snapshot``
+(REPEATABLE READ, READ ONLY); no writes, no locks, no evaluator.
 
-``fleet_health(start, end, at)`` over the half-open window [start, min(end, at)): time after the snapshot is never
-counted. ONE SQL statement, whatever the fleet size; the per-robot and fleet figures are summed in Python from its
-rows.
+``fleet_health(start, end, at)`` over the half-open window [start, min(end, at)): time after the snapshot is
+never counted. ONE SQL statement, whatever the fleet size; the per-robot and fleet figures are summed in
+Python from its rows.
 
 DEFINITIONS (every metric carries numerator, denominator, window and a "does not establish" note):
 
-* In-service time (the uptime denominator): per robot, the time inside the window during which its lifecycle was
-  ``in_service``, reconstructed from the committed ``fleet.lifecycle.*`` audit events (the only path that changes a
-  robot's lifecycle). A robot put in service mid-window counts only from that moment (prorated); a robot taken out
-  of service stops counting. A robot that is in service now but has no recorded lifecycle event has no
-  reconstructable history: its uptime is N/A and it is listed as such, never assumed.
+* In-service time (the uptime denominator): per robot, the time inside the window during which its lifecycle
+  was ``in_service``, reconstructed from the committed ``fleet.lifecycle.*`` audit events (the only path that
+  changes a robot's lifecycle). A robot put in service mid-window counts only from that moment (prorated); a
+  robot taken out of service stops counting. A robot that is in service now but has no recorded lifecycle
+  event has no reconstructable history: its uptime is N/A and it is listed as such, never assumed.
 * Held time: the part of the in-service time covered by at least one BLOCKING hold that applies to the robot,
-  each hold active over [placed_at, released_at) (released_at later than ``at`` counts as still open). Robot-scoped
-  holds apply to their robot; configuration-pattern holds apply to the robots whose CURRENT manifest is on that
-  pattern (configuration history is not reconstructed). Overlapping holds count once.
+  each hold active over [placed_at, released_at) (released_at later than ``at`` counts as still open).
+  Robot-scoped holds apply to their robot; configuration-pattern holds apply to the robots whose CURRENT
+  manifest is on that pattern (configuration history is not reconstructed). Overlapping holds count once.
 * Uptime share = (in-service time - held time) / in-service time. Zero in-service time gives N/A.
   Maintenance-due status is NOT subtracted: its history is not recorded, so it cannot be reconstructed.
 * Holds by source: holds applying to the robot whose active period overlaps the window, by ``source_type``;
   split into released by ``at`` and still open at ``at``. Fleet totals count each hold once.
-* Incidents by event type and severity: incidents with ``occurred_at`` in the window and reported by ``at``; the
-  severity is the latest severity decision recorded by ``at``, else "unclassified".
+* Incidents by event type and severity: incidents with ``occurred_at`` in the window and reported by ``at``;
+  the severity is the latest severity decision recorded by ``at``, else "unclassified".
 * Repeat failure: a robot with two or more of those incidents of the SAME event type inside the window. Only
   recorded incidents count; different event types are not a repeat.
 """
@@ -38,18 +38,18 @@ from django.db import connection
 SYNTHETIC_NOTE = "Synthetic demo data: fictional robots and events, not measurements of any real robot."
 DOES_NOT_ESTABLISH = {
     "uptime": (
-        "Does not establish how often a robot fails, how it will behave next, or that it may be used: it only "
-        "measures recorded hold time against recorded in-service time. Maintenance-due periods are not "
-        "subtracted."
+        "Does not establish how often a robot fails, how it will behave next, or that it may be used: it "
+        "only measures recorded hold time against recorded in-service time. Maintenance-due periods are "
+        "not subtracted."
     ),
     "holds": "Does not establish why a hold was needed or that a released hold's cause is gone; counts only.",
     "incidents": (
-        "Does not establish a cause or a rate: counts of recorded incident reports only. Unreported events are "
-        "not here."
+        "Does not establish a cause or a rate: counts of recorded incident reports only. Unreported events "
+        "are not here."
     ),
     "repeat": (
-        "Does not establish a common cause or predict a next failure: two recorded incidents of the same type "
-        "in the window, nothing more."
+        "Does not establish a common cause or predict a next failure: two recorded incidents of the same "
+        "type in the window, nothing more."
     ),
 }
 DENOMINATOR_TEXT = (
@@ -99,8 +99,8 @@ hwin AS (
 ),
 held AS (
   SELECT hwin.robot_id,
-         range_agg(tstzrange(greatest(hwin.placed_at, win.ws), least(coalesce(hwin.released_at, 'infinity'), win.we),
-                             '[)')) AS mr
+         range_agg(tstzrange(greatest(hwin.placed_at, win.ws),
+                             least(coalesce(hwin.released_at, 'infinity'), win.we), '[)')) AS mr
   FROM hwin CROSS JOIN win
   WHERE hwin.blocking
   GROUP BY hwin.robot_id

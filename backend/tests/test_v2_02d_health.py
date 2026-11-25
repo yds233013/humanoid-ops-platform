@@ -94,7 +94,9 @@ def oracle(start: datetime, end: datetime, at: datetime) -> dict[str, Any]:
         if h.scope == "robot":
             return [h.robot_id]
         return [
-            r.id for r in robots.values() if r.current_manifest and r.current_manifest.pattern_id == h.pattern_id
+            r.id
+            for r in robots.values()
+            if r.current_manifest and r.current_manifest.pattern_id == h.pattern_id
         ]
 
     holds: dict[int, list[dict[str, Any]]] = {}
@@ -104,20 +106,31 @@ def oracle(start: datetime, end: datetime, at: datetime) -> dict[str, Any]:
             continue
         for rid in applies(h):
             holds.setdefault(rid, []).append(
-                {"code": h.code, "source": h.source_type, "blocking": h.blocking, "placed": h.placed_at, "rel": rel}
+                {
+                    "code": h.code,
+                    "source": h.source_type,
+                    "blocking": h.blocking,
+                    "placed": h.placed_at,
+                    "rel": rel,
+                }
             )
     incidents: dict[int, list[tuple[str, str]]] = {}
     for i in Incident.objects.filter(occurred_at__gte=start, occurred_at__lt=we, reported_at__lte=at):
         dec = (
-            SeverityDecision.objects.filter(incident=i, recorded_at__lte=at).order_by("-recorded_at", "-id").first()
+            SeverityDecision.objects.filter(incident=i, recorded_at__lte=at)
+            .order_by("-recorded_at", "-id")
+            .first()
         )
         incidents.setdefault(i.robot_id, []).append((i.event_type, dec.level if dec else "unclassified"))
 
     out: dict[str, Any] = {"robots": {}}
     num = den = 0.0
-    for rid in {k for k, v in service.items() if v} | set(holds) | set(incidents) | {
-        r.id for r in robots.values() if r.lifecycle == "in_service"
-    }:
+    for rid in (
+        {k for k, v in service.items() if v}
+        | set(holds)
+        | set(incidents)
+        | {r.id for r in robots.values() if r.lifecycle == "in_service"}
+    ):
         svc = service.get(rid, [])
         blocked = clip(
             [(h["placed"], h["rel"] or FAR) for h in holds.get(rid, []) if h["blocking"]], start, we
@@ -193,7 +206,9 @@ def health_world() -> Any:
     w.h_span = ow.place_hold(w, "robot", "R-01", source="manual")
     w.start = clock()
     ow.add_robot(w, "R-04")
-    w.r04_in_service = AuditEvent.objects.get(command="fleet.lifecycle.in_service", entity_id="R-04").occurred_at
+    w.r04_in_service = AuditEvent.objects.get(
+        command="fleet.lifecycle.in_service", entity_id="R-04"
+    ).occurred_at
     ow.add_robot(w, "R-05")
     from fleet import services as fs
 
@@ -229,7 +244,9 @@ def test_health_matches_the_python_oracle_and_known_answers():
     assert r2.holds_by_source == {"engineering": 1}
 
     r3 = fh.robot("R-03")  # non-blocking hold never counts as held time; incident holds do
-    first_incident_hold = Hold.objects.filter(source_type="incident", robot__code="R-03").order_by("placed_at")[0]
+    first_incident_hold = Hold.objects.filter(source_type="incident", robot__code="R-03").order_by(
+        "placed_at"
+    )[0]
     assert r3.held_s == pytest.approx((w.at - first_incident_hold.placed_at).total_seconds())
     assert r3.holds_by_source == {"incident": 2, "manual": 1}
     assert r3.repeat_failures == {"fall": 2}
@@ -276,7 +293,9 @@ def test_pattern_hold_applies_to_every_robot_on_the_pattern_and_counts_once():
     at = clock()
     fh = oh.fleet_health(w.start, at, at)
     assert_matches_oracle(fh)
-    on_pattern = [r.code for r in fh.robots if r.holds_by_source.get("engineering", 0) >= 1 and r.code != "R-02"]
+    on_pattern = [
+        r.code for r in fh.robots if r.holds_by_source.get("engineering", 0) >= 1 and r.code != "R-02"
+    ]
     assert len(on_pattern) >= 2
     assert sum(1 for r in fh.robots for h in r.holds if h["code"] == code) == len(on_pattern) + (
         1 if any(h["code"] == code for h in fh.robot("R-02").holds) else 0
