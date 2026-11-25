@@ -63,6 +63,14 @@ class Command(BaseCommand):
             f"decision. Open incident {summary.incident}; robot {summary.attention_robot} has no periodic "
             "inspection yet. Past visits are historical scheduled visits (no execution records)."
         )
+        if summary.practice:
+            runs = ", ".join(f"{visit} ({run}, {robot})" for visit, run, robot in summary.practice)
+            self.stdout.write(
+                f"Hub day (J8): practice runs of today, recorded and closed at build time: {runs}. "
+                f"Maintenance due soon on {summary.due_soon_robot}; "
+                f"overdue (blocked) on {summary.overdue_robot}. "
+                f"Predictor log: {summary.predictor_rows} observation(s)."
+            )
         self.stdout.write(f"Demo logins (password: the {demo.PASSWORD_ENV} environment variable):")
         for username, role, note in summary.logins:
             self.stdout.write(f"  {username:16s} {role:17s} {note}")

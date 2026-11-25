@@ -26,8 +26,15 @@ What is fictional and what is not:
   the baseline maintenance records of today: demo maintenance rules labelled "Demo value, not an engineering
   requirement", the hub technician qualified as maintenance technician by the safety reviewer, the maintenance
   gate active, and one in-service robot without a baseline (Unknown, so blocked and never booked).
-* No visit of today or later is authorized. The visit prepared for journey J4 has everything it needs except
-  the checks a crew records on the day; the ops lead's decision is made in the app by a person.
+* v2 02E (Hub day, J8): two short PRACTICE visits at 00:30 local today are run end to end through the real
+  readiness and execution commands and closed at build time (crews B and C, home H-104). These are the only
+  execution records. Every one of them is stamped at the build (database time), never back-dated, so a run
+  reads "departed at <build time>" for a visit planned at 00:30. They exist so that the predictor log has
+  departures and the visit-count demo maintenance rules have closed runs: one robot is then "Due soon" and one
+  "Overdue" (blocked; its visit tomorrow shows the block). The build also runs the owner-only predictor log
+  once (the same function as ``log_predictor_signals``).
+* No other visit of today or later is authorized. The visit prepared for journey J4 has everything it needs
+  except the checks a crew records on the day; the ops lead's decision is made in the app by a person.
 
 ``wipe`` (``--reset``) empties every application table of this database as the schema owner, with the owner's
 own user triggers disabled for the TRUNCATE only (the documented owner trust boundary, the same one the test
@@ -153,7 +160,23 @@ NO_MAINTENANCE_BASELINE = "NB-044"
 MAINTENANCE_RULES: list[tuple[str, int | None, int | None, int | None, int, bool]] = [
     ("JOINT-SERVICE", 30, 40, 60, 20, False),
     ("HAND-SERVICE", None, 25, None, 20, True),
+    # v2 02E: two short visit-count demo rules, so the two practice runs below give one robot "Due soon" and
+    # one "Overdue" from real closed runs (counters cannot be back-dated). Demo values like the others.
+    ("SENSOR-CLEAN", None, 1, None, 0, False),  # after every closed visit
+    ("GRIPPER-PADS", None, 4, None, 75, False),  # due soon from the first closed visit
 ]
+# Periodic inspection interval per configuration (demo values). v2 02E: the beta build is inspected every day
+# while it is in validation, so its robots inspected today show "due soon" on the Hub within the look-ahead.
+PERIODIC_INTERVALS: dict[str, tuple[int, str]] = {
+    PATTERN_HOME: (4320, "Every three days"),
+    PATTERN_ENG: (1440, "Every day while the beta build is in validation"),
+}
+# v2 02E practice runs: two short visits at 00:30 local today (crews B and C, home H-104 in Emeryville), run
+# through the real readiness and execution commands and closed at build time. They give the predictor log its
+# departures, the visit-count maintenance rules their closed runs, and Hub day its due-soon / overdue robots.
+# Every record they create is stamped at the build (database time); nothing is back-dated.
+PRACTICE_HOME, PRACTICE_START, PRACTICE_MIN = "H-104", dtime(0, 30), 60
+PRACTICE_CREWS = ("B", "C")
 
 CHECKLIST: list[dict[str, Any]] = [
     {"id": "R1", "label": "Body shell, joints and covers undamaged", "robot_condition": True},
@@ -397,6 +420,11 @@ class Summary:
     attention_robot: str = NEVER_INSPECTED
     incident: str = ""
     notes: list[str] = field(default_factory=list)
+    # v2 02E: the practice runs (visit, run, robot) and the robot whose maintenance is due soon / overdue
+    practice: list[tuple[str, str, str]] = field(default_factory=list)
+    due_soon_robot: str = ""
+    overdue_robot: str = ""
+    predictor_rows: int = 0
 
 
 def workspace_today() -> date:
@@ -478,8 +506,9 @@ class _Builder:
             fs.create_inspection_template(
                 eng, pattern_code=code, version="T1", items=CHECKLIST, source="synthetic_demo"
             )
+            interval, every = PERIODIC_INTERVALS[code]
             fs.create_periodic_rule(
-                eng, pattern_code=code, interval_min=4320, source="synthetic_demo", notes="Every three days"
+                eng, pattern_code=code, interval_min=interval, source="synthetic_demo", notes=every
             )
             rule = PeriodicInspectionRule.objects.get(pattern__code=code, version_no=1)
             fs.approve_periodic_rule(lead, rule_id=rule.pk, slot="engineering")
@@ -817,6 +846,104 @@ class _Builder:
         self.s.incident = str(reported["code"])
         self.lap("exceptions (holds, incident, blocked and waiting visits)")
 
+    # .............................................................. practice runs (v2 02E)
+    def practice_runs(self, homes: list[tuple[str, int]]) -> None:
+        """Two short visits at 00:30 local today, each run end to end through the real commands and closed
+        now: readiness evidence, the ops lead's authorization, departure, custody, site check, session,
+        return, post-visit inspection, reconciliation and trip closure. Every record is stamped at the
+        build (database time); nothing is back-dated. Robot "overdue" is booked tomorrow, so its visit shows
+        the maintenance block; robot "due soon" is not booked today or tomorrow. After its run the hub
+        technician records SENSOR-CLEAN on the due-soon robot, so only GRIPPER-PADS is due soon there."""
+        from execution import logistics as lg  # noqa: PLC0415
+        from execution import reconciliation as rcn  # noqa: PLC0415
+        from execution import sessions as ses  # noqa: PLC0415
+        from execution import site_checks as sc  # noqa: PLC0415
+        from execution.models import ExecutionRun  # noqa: PLC0415
+        from hub import charging as hc  # noqa: PLC0415
+        from readiness import commands as rc  # noqa: PLC0415
+
+        ops = self.u["dana.ortiz"]
+        today, tomorrow = self.anchor, self.anchor + timedelta(days=1)
+
+        def robots_on(day: date, *, regular: bool = False) -> list[str]:
+            """Robots booked on the day; ``regular``: only the regular visits (not the special homes')."""
+            visits = Visit.objects.exclude(site__code__in=SPECIAL_HOMES) if regular else Visit.objects.all()
+            return list(
+                visits.filter(
+                    current_revision__on_site_start__gte=self.at(day, dtime(0, 0)),
+                    current_revision__on_site_start__lt=self.at(day + timedelta(days=1), dtime(0, 0)),
+                    current_revision__robot__isnull=False,
+                )
+                .exclude(status="cancelled")
+                .order_by("current_revision__on_site_start", "code")
+                .values_list("current_revision__robot__code", flat=True)
+            )
+
+        booked_today, booked_tomorrow = set(robots_on(today)), robots_on(tomorrow)
+        j4_robot = Visit.objects.filter(code=self.s.j4_visit).values_list(
+            "current_revision__robot__code", flat=True
+        )[0]
+        # The robot of tomorrow's last regular visit (not J4's, not one charging() reads first) becomes
+        # overdue. Its practice visit ends hours before any visit of today, so it may also be booked today.
+        overdue = next(r for r in reversed(robots_on(tomorrow, regular=True)) if r != j4_robot)
+        due_soon = next(r for r in self.pool if r not in booked_today and r not in booked_tomorrow)
+        crews = {c[0]: c for c in CREWS}
+        travel = dict(homes)[PRACTICE_HOME]
+        for robot, crew_name in ((due_soon, PRACTICE_CREWS[0]), (overdue, PRACTICE_CREWS[1])):
+            crew = crews[crew_name]
+            _name, lead_code, second_code, _van = crew
+            lead, second = self.username(lead_code), self.username(second_code)
+            lead_u, second_u = self.u[lead], self.u[second]
+            row = {"day": today, "start": PRACTICE_START, "minutes": PRACTICE_MIN, "home": PRACTICE_HOME,
+                   "travel": travel, "crew": crew, "robot": robot}  # fmt: skip
+            visit = self.book(row)
+            self.recovery_plan(visit)
+            insp = fs.submit_inspection(
+                ops, robot_code=robot, template_version="T1", answers=dict(ALL_PASS), performer=lead,
+                verifier=second, visit_ref=visit,
+            )["entity_id"]  # fmt: skip
+            rx.record_evidence(
+                ops, visit_code=visit, kind="pre_departure_inspection", result="pass", inspection_code=insp
+            )
+            rx.record_evidence(
+                second_u, visit_code=visit, kind="equipment_check", result="pass", details=EQUIPMENT
+            )
+            # the hub technician reads the battery by hand (the predictor log's "battery at start"), then the
+            # crew records the departure battery check (the readiness evidence; a reading is never evidence)
+            hc.record_soc(self.u["lily.tran"], robot_code=robot, soc_pct=92)
+            rx.record_evidence(
+                second_u, visit_code=visit, kind="battery_check", result="pass", details={"soc_pct": 92}
+            )
+            auth = rc.authorize_departure(ops, visit_code=visit)["code"]
+            rc.record_departure(ops, authorization_code=auth)
+            run = ExecutionRun.objects.get(visit__code=visit)
+            lg.verify_custody(lead_u, run_code=run.code, custody_seq=1, verifier_code=lead_code)
+            lg.record_trip_event(lead_u, run_code=run.code, kind="arrived_site")
+            lg.transfer_custody(lead_u, run_code=run.code, to_kind="site", custodian_code=lead_code,
+                                received_by_code=second_code)  # fmt: skip
+            check = sc.record_site_check(lead_u, run_code=run.code, template_version="SC-1", adults_present=1,
+                                         conditions={i["id"]: "ok" for i in SITE_CHECK_ITEMS},
+                                         verifier_code=second_code)  # fmt: skip
+            ses.record_session_event(lead_u, run_code=run.code, kind="start", site_check_id=check["id"])
+            ses.record_session_event(lead_u, run_code=run.code, kind="stop")
+            lg.transfer_custody(lead_u, run_code=run.code, to_kind="vehicle", custodian_code=second_code,
+                                received_by_code=lead_code)  # fmt: skip
+            lg.record_trip_event(lead_u, run_code=run.code, kind="departed_site")
+            lg.record_trip_event(lead_u, run_code=run.code, kind="arrived_hub")
+            lg.transfer_custody(lead_u, run_code=run.code, to_kind="hub", custodian_code=lead_code,
+                                received_by_code=HUB_TECH)  # fmt: skip
+            post = fs.submit_inspection(
+                ops, robot_code=robot, template_version="T1", answers=dict(ALL_PASS),
+                performer=self.username(HUB_TECH), verifier="dana.ortiz", visit_ref=visit,
+            )["entity_id"]  # fmt: skip
+            rcn.reconcile_return(ops, run_code=run.code, inspection_code=post)
+            rcn.close_trip(ops, run_code=run.code)
+            self.s.practice.append((visit, run.code, robot))
+        fm.record_maintenance(self.u["lily.tran"], robot_code=due_soon, requirement_code="SENSOR-CLEAN",
+                              notes="Sensors cleaned after the practice run")  # fmt: skip
+        self.s.due_soon_robot, self.s.overdue_robot = due_soon, overdue
+        self.lap("practice runs (2, recorded now)")
+
     # .............................................................. hub work queue (v2 02A)
     def hub_tasks(self) -> None:
         """A few hand-made hub tasks; the ones derived from records (inspections due, holds, failed equipment
@@ -922,10 +1049,20 @@ class _Builder:
         self.robots()
         homes = self.homes()
         self.visits(homes)
+        self.practice_runs(homes)
         self.hub_tasks()
         self.charging()
         self.stock()
+        self.predictor_log()
         return self.s
+
+    def predictor_log(self) -> None:
+        """v2 02D/02E: the owner-only predictor log, run once for the practice departures (the same function
+        as ``manage.py log_predictor_signals``). Observational only."""
+        from operations.management.commands.log_predictor_signals import log_predictor_signals  # noqa: PLC0415
+
+        self.s.predictor_rows = log_predictor_signals()
+        self.lap("predictor log")
 
 
 def build(
