@@ -106,9 +106,8 @@ def test_ops_app_privileges_are_exactly_select_on_the_guarded_tables(w):
         )
         assert [r[0] for r in cur.fetchall()] == [
             "SELECT",
-            "INSERT",
             "UPDATE",
-        ]  # configuration, never deleted
+        ]  # configuration, never deleted; created only by hub_create_charger (03A closure, hub/0015)
         for fn in ("hub_reserve_charger", "hub_release_charger_reservation", "hub_start_charging",
                    "hub_end_charging", "hub_record_soc_reading"):  # fmt: skip
             cur.execute(

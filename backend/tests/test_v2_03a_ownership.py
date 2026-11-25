@@ -278,10 +278,9 @@ def test_default_hub_with_two_hubs_refuses_to_guess(app_role_conn):
         Vehicle.objects.create(code="V-X")
     with pytest.raises(Conflict, match="hub required"):  # a command: refused, nothing written
         ps.register_vehicle(ops, code="V-Y")
+    # 03A closure: ops_app creates a van only through planning_create_vehicle (hub/0015), which refuses too
     with app_role_conn.cursor() as cur, pytest.raises(psycopg.errors.CheckViolation, match="hub required"):
-        cur.execute(
-            "INSERT INTO planning_vehicle (code, robot_capacity, restraint_kit, notes) VALUES ('V-Z', 1, '', '')"
-        )
+        cur.execute("SELECT planning_create_vehicle(%s, 'V-Z', 1, '', NULL, '')", [ops.pk])
     assert not Vehicle.objects.exists() and Hub.objects.count() == 2
     # naming the hub works, through the command and through SQL
     ps.register_vehicle(ops, code="V-Y", hub_code="H2")

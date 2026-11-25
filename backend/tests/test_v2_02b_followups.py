@@ -23,6 +23,7 @@ from tests.test_v2_02b_charging import (
 pytestmark = pytest.mark.django_db
 
 ENTRY = {
+    "hub_create_charger",  # 03A closure (hub/0015): the guarded charger creation
     "hub_reserve_charger",
     "hub_release_charger_reservation",
     "hub_start_charging",

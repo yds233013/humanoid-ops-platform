@@ -32,9 +32,18 @@ from planning.models import (
     Visit,
     VisitRevision,
 )
-from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, RetryTransaction, run_command
+from platform_core.commands import (
+    Conflict,
+    Invalid,
+    Outcome,
+    PermissionDenied,
+    RetryTransaction,
+    guarded_function,
+    run_command,
+)
 from platform_core.hubscope import owner_hub
 from platform_core.locks import lock_guards
+from platform_core.middleware import current_request_id
 from platform_core.testhooks import checkpoint
 
 User = get_user_model()
@@ -866,12 +875,15 @@ def register_vehicle(
             raise Invalid("Robot capacity must be at least 1, or unknown")
         if Vehicle.objects.filter(code=code).exists():
             raise Conflict(f"Vehicle {code} exists")
-        extra = {"hub": hub} if hub is not None else {}
-        v = Vehicle.objects.create(
-            code=code, robot_capacity=robot_capacity, restraint_kit=restraint_kit, **extra
-        )
-        Resource.objects.create(kind="vehicle", vehicle=v)
-        return Outcome("vehicle", v.code, {"robot_capacity": robot_capacity})
+        # v2 03A closure: the runtime role cannot INSERT planning_vehicle; planning_create_vehicle (hub/0015)
+        # re-checks the rules and the role at the target hub, creates the van and its planning resource, and
+        # appends the audit row.
+        guarded_function(
+            "SELECT planning_create_vehicle(%s, %s, %s, %s, %s, %s)",
+            [actor.pk, code, robot_capacity, restraint_kit, hub.pk if hub is not None else None,
+             current_request_id.get()],
+        )  # fmt: skip
+        return Outcome("vehicle", code, {"robot_capacity": robot_capacity}, audited=True)
 
     return run_command(
         actor,

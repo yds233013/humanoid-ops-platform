@@ -46,9 +46,17 @@ from fleet.models import (
     ReleaseApprovalWithdrawal,
     Robot,
 )
-from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, run_command
+from platform_core.commands import (
+    Conflict,
+    Invalid,
+    Outcome,
+    PermissionDenied,
+    guarded_function,
+    run_command,
+)
 from platform_core.hubscope import owner_hub, robot_hub
 from platform_core.locks import lock_guards
+from platform_core.middleware import current_request_id
 
 User = get_user_model()
 
@@ -628,9 +636,16 @@ def register_robot(
     def handler() -> Outcome:
         if Robot.objects.filter(code=code).exists() or Robot.objects.filter(serial=serial).exists():
             raise Conflict(f"A robot with code {code} or serial {serial} already exists")
-        extra = {"hub": hub} if hub is not None else {}
-        robot = Robot.objects.create(code=code, serial=serial, registered_by=actor, **extra)
-        return Outcome("robot", robot.code, {"lifecycle": robot.lifecycle, "hub_id": robot.hub_id})
+        # v2 03A closure: the runtime role cannot INSERT fleet_robot; fleet_create_robot (hub/0015) re-checks
+        # the role at the target hub under the grant locks, creates the robot and appends the audit row.
+        rid = guarded_function(
+            "SELECT fleet_create_robot(%s, %s, %s, %s, %s)",
+            [actor.pk, code, serial, hub.pk if hub is not None else None, current_request_id.get()],
+        )
+        robot = Robot.objects.get(pk=rid)
+        return Outcome(
+            "robot", robot.code, {"lifecycle": robot.lifecycle, "hub_id": robot.hub_id}, audited=True
+        )
 
     return run_command(
         actor,

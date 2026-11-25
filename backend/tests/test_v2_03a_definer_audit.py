@@ -75,6 +75,9 @@ APP_FUNCTIONS: dict[str, str] = {
     ),
     "accounts_revoke_grant(bigint,bigint,text,text)": "admin only",
     "accounts_bootstrap_admin(bigint,text)": "first admin of an empty workspace only; once",
+    "fleet_create_robot(bigint,text,text,bigint,text)": "ops lead or engineering lead, at the target hub",
+    "planning_create_vehicle(bigint,text,integer,text,bigint,text)": "ops lead, at the target hub",
+    "hub_create_charger(bigint,text,text,text,bigint,text)": "admin or ops lead, at the target hub",
 }
 
 # signature -> why ops_app must NOT execute it
@@ -146,6 +149,13 @@ ACTOR_CALLS: dict[str, str] = {
         "SELECT accounts_grant_role({a}, {user}, 'founder', NULL, NULL, NULL, '')"
     ),
     "accounts_revoke_grant(bigint,bigint,text,text)": "SELECT accounts_revoke_grant({a}, {grant}, 'x', '')",
+    "fleet_create_robot(bigint,text,text,bigint,text)": "SELECT fleet_create_robot({a}, 'R-Z', 'SN-Z', {hub}, '')",
+    "planning_create_vehicle(bigint,text,integer,text,bigint,text)": (
+        "SELECT planning_create_vehicle({a}, 'V-Z', 1, '', {hub}, '')"
+    ),
+    "hub_create_charger(bigint,text,text,text,bigint,text)": (
+        "SELECT hub_create_charger({a}, 'C-Z', 'Bay Z', '', {hub}, '')"
+    ),
 }
 
 # Hub-owned tables written only through the functions above: ops_app may read them and nothing else.
@@ -205,6 +215,10 @@ def _written() -> dict[str, int]:
             "platform_core_auditevent",
             "platform_core_hub",
             "readiness_departureauthorization",
+            "fleet_robot",  # created by the hub/0015 functions
+            "planning_vehicle",
+            "hub_charger",
+            "planning_resource",
         ]:
             cur.execute(f"SELECT count(*) FROM {t}")
             out[t] = cur.fetchone()[0]
