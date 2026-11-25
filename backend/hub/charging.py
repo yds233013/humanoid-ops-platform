@@ -38,6 +38,7 @@ from platform_core.commands import (
     NotAuthenticated,
     Outcome,
     PermissionDenied,
+    guarded_function,
     run_command,
 )
 from platform_core.hubscope import owner_hub
@@ -76,9 +77,14 @@ def create_charger(
             raise Invalid("Give the charger a name (up to 80 characters)")
         if Charger.objects.filter(code=code).exists():
             raise Conflict(f"A charger with code {code} already exists")
-        extra = {"hub": hub} if hub is not None else {}
-        ch = Charger.objects.create(code=code, name=name, note=note, created_by=actor, **extra)
-        return Outcome("charger", ch.code, {"in_service": True, "hub_id": ch.hub_id})
+        # v2 03A closure: the runtime role cannot INSERT hub_charger; hub_create_charger (hub/0015) re-checks
+        # the rules and the role at the target hub, creates the charger and appends the audit row.
+        cid = guarded_function(
+            "SELECT hub_create_charger(%s, %s, %s, %s, %s, %s)",
+            [actor.pk, code, name, note, hub.pk if hub is not None else None, current_request_id.get()],
+        )
+        ch = Charger.objects.get(pk=cid)
+        return Outcome("charger", ch.code, {"in_service": True, "hub_id": ch.hub_id}, audited=True)
 
     return run_command(
         actor, "hub.create_charger", permission=MANAGE_CHARGERS, payload=payload, handler=handler, hub=hub

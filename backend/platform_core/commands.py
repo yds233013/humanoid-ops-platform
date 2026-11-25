@@ -109,6 +109,28 @@ def holds_permission_locked(actor: User, permission: str, hub: HubRef = None) ->
         return bool(cur.fetchone()[0])
 
 
+def guarded_function(sql: str, params: list[Any]) -> Any:
+    """Call a guarded SECURITY DEFINER function inside a command's handler (v2 03A: the creation functions
+    of hub/0015) and return its first column. Its refusals become the command errors: the actor ->
+    PermissionDenied (audited as denied by run_command), a duplicate -> Conflict, a rule -> Invalid.
+    Nothing is written on a refusal."""
+    try:
+        with connection.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchone()[0]
+    except DatabaseError as exc:
+        cause = exc.__cause__
+        state = getattr(cause, "sqlstate", None)
+        text = getattr(getattr(cause, "diag", None), "message_primary", None) or str(exc)
+        if state == "42501":
+            raise PermissionDenied(text) from exc
+        if state == "23505":
+            raise Conflict(text) from exc
+        if state == "23514":
+            raise Invalid(text) from exc
+        raise
+
+
 def _denied(permission: str, hub_id: int | None) -> PermissionDenied:
     if hub_id is None:
         return PermissionDenied(f"Not allowed: {permission}")
