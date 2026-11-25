@@ -9,6 +9,8 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 
+from platform_core.models import hub_field
+
 USER = settings.AUTH_USER_MODEL
 
 
@@ -94,6 +96,8 @@ class Person(models.Model):
     user = models.OneToOneField(USER, on_delete=models.PROTECT, related_name="person")
     code = models.CharField(max_length=12, unique=True)
     version = models.PositiveIntegerField(default=1)  # guard version, bumped by qualification triggers
+    # v2 03A-1: the person's HOME hub. It never confers a grant: authority is a hub-qualified RoleGrant.
+    hub = hub_field()
 
     def __str__(self) -> str:
         return self.code
@@ -159,6 +163,7 @@ class Vehicle(models.Model):
     robot_capacity = models.PositiveSmallIntegerField(null=True, blank=True)  # NULL = unknown -> blocks cargo
     restraint_kit = models.CharField(max_length=60, blank=True)  # empty = unknown -> blocks cargo
     notes = models.TextField(blank=True)
+    hub = hub_field()  # v2 03A-1: the hub that owns the vehicle
 
     class Meta:
         constraints = [
@@ -217,6 +222,8 @@ class Visit(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     cancelled_reason = models.TextField(blank=True)
     version = models.PositiveIntegerField(default=1)  # guard version, bumped on every update (trigger)
+    # v2 03A-1: the DISPATCH hub. Its robot and vehicle must belong to it (trigger planning_visit_hub_guard).
+    hub = hub_field()
 
     def __str__(self) -> str:
         return self.code

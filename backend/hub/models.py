@@ -18,6 +18,8 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 
+from platform_core.models import hub_field
+
 USER = settings.AUTH_USER_MODEL
 
 TYPES = [
@@ -74,6 +76,8 @@ class WorkOrder(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     version = models.PositiveIntegerField(default=1)  # bumped by every transition (stale form refusal)
+    # v2 03A-1: the hub that owns the task; its robot and visit belong to the same hub (trigger).
+    hub = hub_field()
 
     class Meta:
         constraints = [
@@ -125,9 +129,7 @@ class Charger(models.Model):
 
     code = models.CharField(max_length=12, unique=True)
     name = models.CharField(max_length=80)
-    hub = models.ForeignKey(
-        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
-    )
+    hub = hub_field()  # v2 03A-1: NOT NULL (contract 11.1)
     in_service = models.BooleanField(default=True)
     note = models.CharField(max_length=200, blank=True, default="")
     created_by = models.ForeignKey(USER, null=True, on_delete=models.PROTECT, related_name="+")
@@ -158,6 +160,7 @@ class ChargerReservation(models.Model):
     released_at = models.DateTimeField(null=True, blank=True)
     released_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     released_reason = models.CharField(max_length=200, blank=True, default="")
+    hub = hub_field()  # v2 03A-1: the charger's hub (set by hub_reserve_charger; trigger-checked)
 
     class Meta:
         db_table = "hub_charger_reservation"
@@ -190,6 +193,7 @@ class ChargingSession(models.Model):
     end_soc_pct = models.PositiveSmallIntegerField(null=True, blank=True)
     started_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     ended_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    hub = hub_field()  # v2 03A-1: the charger's hub (set by hub_start_charging; trigger-checked)
 
     class Meta:
         db_table = "hub_charging_session"
@@ -266,13 +270,11 @@ class StockItem(models.Model):
     ONLY by hub_create_stock_item() (SECURITY DEFINER; ops_app has SELECT), so its kind can never change under
     the ledger. There is NO quantity column: every quantity is derived from hub_stock_movement."""
 
-    code = models.CharField(max_length=12, unique=True)
+    code = models.CharField(max_length=12)  # v2 03A-1: unique per hub (hub_stock_item_code_per_hub)
     name = models.CharField(max_length=80)
     kind = models.CharField(max_length=12, choices=STOCK_KINDS)
     unit = models.CharField(max_length=20, default="pieces")
-    hub = models.ForeignKey(
-        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
-    )
+    hub = hub_field()  # v2 03A-1: NOT NULL (contract 11.1)
     created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     created_at = models.DateTimeField()
 
@@ -283,6 +285,7 @@ class StockItem(models.Model):
             models.CheckConstraint(
                 condition=Q(kind__in=[k for k, _ in STOCK_KINDS]), name="hub_stock_item_kind_valid"
             ),
+            models.UniqueConstraint(fields=["hub", "code"], name="hub_stock_item_code_per_hub"),
         ]
 
     def __str__(self) -> str:
