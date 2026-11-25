@@ -7,6 +7,7 @@ section 8.1). Fictional data only.
 """
 
 import io
+import os
 import re
 from datetime import date, timedelta
 from typing import Any
@@ -15,11 +16,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection
 from django.test import Client
 from django.utils import timezone
 
-from execution.models import CustodyEvent, ExecutionRun, TripClosure
+from execution.custody import current_custody, open_run_id
+from execution.models import CustodyEvent, ExecutionRun, Incident, TripClosure
 from fleet import maintenance as fm
 from fleet import services as fs
 from fleet.models import DeploymentSetting, Hold, Inspection, MaintenanceRecord, Robot
@@ -29,14 +32,18 @@ from hub import services as hs
 from hub import stock as st
 from hub.models import WorkOrder
 from operations import demo_workspace as demo
+from operations.health import fleet_health
 from operations.management.commands.log_predictor_signals import log_predictor_signals
 from planning.models import Visit
+from platform_core.models import AuditEvent
+from readiness.evaluator import evaluate_readiness
 from readiness.models import (
     AuthorizationRevocation,
     DepartureAuthorization,
     DepartureEvent,
     ReadinessEvidence,
 )
+from tests.fleet_world import set_setting
 
 pytestmark = pytest.mark.django_db(transaction=True)
 User = get_user_model()
@@ -95,6 +102,25 @@ def _safety_snapshot() -> dict[str, Any]:
     }
 
 
+def _states() -> dict[str, Any]:
+    """What a rebuild of the same date must reproduce."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT count(*) FROM operations_predictor_observation")
+        predictor = cur.fetchone()[0]
+    return {
+        "maintenance": [(r[0], r[1], r[2]) for r in _maintenance()],
+        "holds": sorted(
+            Hold.objects.filter(released_at__isnull=True).values_list("robot__code", "source_type")
+        ),
+        "runs": sorted(ExecutionRun.objects.values_list("code", "visit__code", "robot__code")),
+        "closures": TripClosure.objects.count(),
+        "authorizations": sorted(DepartureAuthorization.objects.values_list("visit__code", flat=True)),
+        "predictor": predictor,
+        "kit_short": sorted(n.visit_code for n in st.visit_needs() if n.short),
+        "visits": sorted(Visit.objects.values_list("code", "status", "current_revision__robot__code")),
+    }
+
+
 @pytest.fixture
 def built(monkeypatch: pytest.MonkeyPatch) -> tuple[date, str]:
     today = demo.workspace_today()
@@ -118,13 +144,25 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     assert "Hub work queue" in hub_html
     tasks = WorkOrder.objects.all()
 
-    # ---- the practice runs: departed and closed through the real commands, stamped now
-    runs = list(ExecutionRun.objects.select_related("robot", "visit").order_by("code"))
-    assert {r.robot.code for r in runs} == {due_soon, overdue}
-    assert TripClosure.objects.count() == 2 and DepartureEvent.objects.count() == 2
+    # ---- EM ruling 8.9: exactly two closed practice runs, labelled, through the real commands, stamped now
+    runs = list(ExecutionRun.objects.select_related("robot", "visit", "visit__site").order_by("code"))
+    practice = {r.visit.code for r in runs}
+    assert len(runs) == 2 and {r.robot.code for r in runs} == {due_soon, overdue}
     assert all(r.visit.site.code == demo.PRACTICE_HOME for r in runs)
+    assert TripClosure.objects.filter(run__in=runs).count() == 2 == TripClosure.objects.count()
+    assert set(DepartureAuthorization.objects.values_list("visit__code", flat=True)) == practice
+    assert DepartureAuthorization.objects.count() == 2 == DepartureEvent.objects.count()
     assert all(timezone.now() - d < timedelta(hours=1) for d in DepartureEvent.objects.values_list(
         "departed_at", flat=True))  # fmt: skip
+    # no open run and no unfinished custody transfer: every robot that moved is back at the hub
+    assert not ExecutionRun.objects.exclude(pk__in=TripClosure.objects.values("run_id")).exists()
+    for robot_id in CustodyEvent.objects.values_list("robot_id", flat=True).distinct():
+        c = current_custody(robot_id)
+        assert c.kind == "hub" and c.verified and open_run_id(robot_id) is None, c
+    for r in runs:  # the label is visible on the visit, readiness and run pages
+        for url in (f"/planning/visits/{r.visit.code}/", f"/readiness/visits/{r.visit.code}/",
+                    f"/execution/runs/{r.code}/"):  # fmt: skip
+            assert "Fictional practice visit" in ops.get(url).content.decode(), url
 
     # ---- 1. charging tasks / needs-charge risk
     soon = Visit.objects.filter(
@@ -149,6 +187,14 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     assert f"Maintenance JOINT-SERVICE of {demo.NO_MAINTENANCE_BASELINE} has an unknown status" in titles
     page = kenji.get(f"/fleet/{overdue}/maintenance/").content.decode()
     assert "Demo value" in page and "SENSOR-CLEAN" in page
+    upcoming = Visit.objects.filter(
+        current_revision__robot__code=overdue, current_revision__on_site_start__gt=timezone.now(),
+        status="confirmed",
+    ).order_by("current_revision__on_site_start").first()  # fmt: skip
+    assert upcoming is not None
+    blocked = evaluate_readiness(upcoming).blockers
+    assert any("SENSOR-CLEAN overdue" in b["message"] for b in blocked), blocked
+    assert "due soon" in _text(kenji.get(f"/fleet/{due_soon}/maintenance/").content.decode()).lower()
 
     # ---- 3. a periodic inspection due (the beta build: every day, demo value) and one never done
     inspection_titles = set(tasks.filter(type="inspection_due").values_list("title", flat=True))
@@ -158,8 +204,13 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     )
 
     # ---- 4. a kit shortage on an upcoming visit and a restock task
+    kit_visit = re.search(r"Kit short \(its only At-risk cause from the build\): (V-\d+)", out)[1]
     short = [n for n in st.visit_needs() if n.short]
-    assert short and short[0].item_code == "RK"
+    assert {(n.visit_code, n.item_code) for n in short} == {(kit_visit, "RK")}
+    kv = Visit.objects.get(code=kit_visit)
+    assert kv.site.code not in demo.SPECIAL_HOMES and kv.code != j4
+    assert {b["code"] for b in evaluate_readiness(kv).blockers} == {"EVIDENCE_MISSING"}  # day's checks only
+    assert hc.visit_forecasts([kv.pk])[kv.pk].state == hc.ENOUGH
     assert tasks.filter(type="kit_low", source_kind="stock_level").exists()  # gloves below their minimum
     assert tasks.filter(type="kit_low", source_kind="manual").exists()
 
@@ -175,14 +226,36 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
         assert cur.fetchone() == (2, 2)
     health = _text(ops.get("/ops/health/").content.decode())
     assert "Showing 2 of 2 logged departure(s)" in health
-    assert re.search(r"Uptime share .*? \d+(\.\d+)?%", health)
+    assert re.search(r"Recorded availability .*? \d+(\.\d+)?%", health)
     assert "Nothing logged yet" not in health
+    assert "configuration history is not reconstructed" in health
+    # the figures are derived from recorded facts: recompute them from the lifecycle audit rows and the holds
+    at = timezone.now()
+    h = fleet_health(at - timedelta(days=7), at, at)
+    in_service = {
+        a.entity_id: a.occurred_at
+        for a in AuditEvent.objects.filter(entity_type="robot", outcome="committed",
+                                           command__startswith="fleet.lifecycle.").order_by("occurred_at")
+        if a.result.get("to") == "in_service"
+    }  # fmt: skip
+    assert len(in_service) == demo.IN_SERVICE
+    denominator = sum((at - t).total_seconds() for t in in_service.values())
+    held = sum((at - max(hd.placed_at, in_service[hd.robot.code])).total_seconds()
+               for hd in Hold.objects.filter(released_at__isnull=True, blocking=True, robot__isnull=False)
+               if hd.robot.code in in_service)  # fmt: skip
+    assert h.uptime.denominator_s == pytest.approx(denominator, rel=1e-3)
+    assert h.uptime.numerator_s == pytest.approx(denominator - held, rel=1e-3)
+    assert h.holds_total == Hold.objects.count() and h.incidents_total == Incident.objects.count()
 
     # ---- J2 Today: battery, maintenance and kit facts
     today_page = _text(ops.get("/ops/").content.decode())
     assert "Needs charge before departure" in today_page
     assert "SENSOR-CLEAN overdue" in today_page  # the overdue robot's visit tomorrow is blocked
-    assert "Kit short" in today_page
+    kit_line = today_page[today_page.index(f"{kit_visit} robot") :]
+    kit_line = kit_line[: kit_line.index(" V-", 5)]
+    assert "At risk Kit short" in kit_line, kit_line
+    for other in ("Charge forecast", "Needs charge", "Blocked", "recovery plan", "Maintenance"):
+        assert other not in kit_line, kit_line
 
     # ---- J3 Customers > Book visit / Suggest: the overdue robot is offered as not ready
     assert ops.get("/planning/book/").status_code == 200
@@ -191,8 +264,6 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     assert f"{overdue} · not ready" in plan
 
     # ---- J4: the prepared visit misses only the day's checks
-    from readiness.evaluator import evaluate_readiness
-
     assert {b["code"] for b in evaluate_readiness(Visit.objects.get(code=j4)).blockers} == {
         "EVIDENCE_MISSING"
     }
@@ -215,3 +286,25 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     derive.refresh()
     assert WorkOrder.objects.filter(pk__in=done, status="done").count() == len(done)
     assert _safety_snapshot() == before
+
+    # ---- production mode: no practice runs, and the demo maintenance rules are not accepted
+    states = _states()
+    set_setting("demo_mode", "false")
+    try:
+        with pytest.raises(demo.DemoRefused, match="only in a demo workspace"):
+            demo._Builder(PASSWORD, today, lambda _m: None).practice_runs()
+        prod = {(r[1], r[2], r[3]) for r in _maintenance() if r[1] is not None}
+        assert prod and all(state == "no_rule" and blocking for _req, state, blocking in prod)
+        with pytest.raises(CommandError):
+            call_command("build_demo_workspace", "--reset", stdout=io.StringIO())
+        assert ExecutionRun.objects.count() == 2  # nothing generated
+    finally:
+        set_setting("demo_mode", "true")
+
+    # ---- a rebuild of the same date gives the same states and never accumulates history
+    os.environ[demo.FINGERPRINT_ENV] = demo.database_fingerprint()
+    try:
+        call_command("build_demo_workspace", "--reset", stdout=io.StringIO())
+    finally:
+        del os.environ[demo.FINGERPRINT_ENV]
+    assert _states() == states

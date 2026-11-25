@@ -171,11 +171,14 @@ PERIODIC_INTERVALS: dict[str, tuple[int, str]] = {
     PATTERN_HOME: (4320, "Every three days"),
     PATTERN_ENG: (1440, "Every day while the beta build is in validation"),
 }
-# v2 02E practice runs: two short visits at 00:30 local today (crews B and C, home H-104 in Emeryville), run
-# through the real readiness and execution commands and closed at build time. They give the predictor log its
-# departures, the visit-count maintenance rules their closed runs, and Hub day its due-soon / overdue robots.
-# Every record they create is stamped at the build (database time); nothing is back-dated.
-PRACTICE_HOME, PRACTICE_START, PRACTICE_MIN = "H-104", dtime(0, 30), 60
+# v2 02E practice runs (EM ruling 2026-11-25, contract 11 section 8.9): two short visits at 00:30 local
+# today (crews B and C) at a home of their own whose label says "Fictional practice visit" on every visit
+# and run page, run through the real readiness and execution commands and closed at build time. They give
+# the predictor log its departures, the visit-count maintenance rules their closed runs, and Hub day its
+# due-soon / overdue robots. Every record they create is stamped at the build (database time); nothing is
+# back-dated.
+PRACTICE_HOME, PRACTICE_START, PRACTICE_MIN = "PRACTICE", dtime(0, 30), 60
+PRACTICE_ZONE, PRACTICE_CRM, PRACTICE_TRAVEL = "Fictional practice visit (Emeryville)", "PRACTICE-RUNS", 15
 PRACTICE_CREWS = ("B", "C")
 
 CHECKLIST: list[dict[str, Any]] = [
@@ -244,7 +247,9 @@ SETTINGS = {
     "ops_readiness_lookahead_min": "2880",  # today and tomorrow (provision_settings --with-defaults)
     "ops_closeout_timezone": TZ,
     "ops_periodic_due_lookahead_min": "1440",
-    "ops_soc_fresh_min": "240",  # v2 02B: demo value (labelled on Settings > Operating settings)
+    # v2 02B: demo value (labelled on Settings > Operating settings). v2 02E: a day, not 4 hours, because the
+    # demo is rebuilt at 04:00 and walked during the day: the build's hand readings must still count then.
+    "ops_soc_fresh_min": "1440",
     # v2 02C: the maintenance gate is ACTIVE in the demo (the build records the rules, the qualification and
     # the baselines before any visit is planned: the rollout order of docs/runbook_deploy_backup_rollback.md)
     "maintenance_gate_active": "true",
@@ -425,6 +430,7 @@ class Summary:
     due_soon_robot: str = ""
     overdue_robot: str = ""
     predictor_rows: int = 0
+    kit_short_visit: str = ""
 
 
 def workspace_today() -> date:
@@ -847,7 +853,7 @@ class _Builder:
         self.lap("exceptions (holds, incident, blocked and waiting visits)")
 
     # .............................................................. practice runs (v2 02E)
-    def practice_runs(self, homes: list[tuple[str, int]]) -> None:
+    def practice_runs(self) -> None:
         """Two short visits at 00:30 local today, each run end to end through the real commands and closed
         now: readiness evidence, the ops lead's authorization, departure, custody, site check, session,
         return, post-visit inspection, reconciliation and trip closure. Every record is stamped at the
@@ -862,8 +868,24 @@ class _Builder:
         from hub import charging as hc  # noqa: PLC0415
         from readiness import commands as rc  # noqa: PLC0415
 
-        ops = self.u["dana.ortiz"]
+        if fs.production_mode():  # never in production: practice runs exist only in the demo workspace
+            raise DemoRefused(
+                "Practice runs are built only in a demo workspace (demo_mode 'true'); nothing done."
+            )
+        ops, field_user = self.u["dana.ortiz"], self.u["lily.tran"]
         today, tomorrow = self.anchor, self.anchor + timedelta(days=1)
+        # the practice home: its own code, and its town field says "Fictional practice visit" (shown with the
+        # home on the visit, readiness and run pages). Assessed and consented like every demo home.
+        ps.create_site(
+            ops, code=PRACTICE_HOME, zone=PRACTICE_ZONE, tz=TZ, crm_ref=PRACTICE_CRM, expected_adults=1
+        )
+        a = ps.record_assessment(
+            field_user, site_code=PRACTICE_HOME, decision="eligible", valid_until=today + timedelta(days=180)
+        )
+        ps.approve_assessment(ops, assessment_id=int(a["entity_id"]))
+        ps.record_consent(field_user, site_code=PRACTICE_HOME, participant_ref="A1",
+                          form_version=SETTINGS["consent_form_version"], scope=["presence", "recording"],
+                          evidence_ref=f"SIGN-{PRACTICE_HOME}-1")  # fmt: skip
 
         def robots_on(day: date, *, regular: bool = False) -> list[str]:
             """Robots booked on the day; ``regular``: only the regular visits (not the special homes')."""
@@ -888,7 +910,7 @@ class _Builder:
         overdue = next(r for r in reversed(robots_on(tomorrow, regular=True)) if r != j4_robot)
         due_soon = next(r for r in self.pool if r not in booked_today and r not in booked_tomorrow)
         crews = {c[0]: c for c in CREWS}
-        travel = dict(homes)[PRACTICE_HOME]
+        travel = PRACTICE_TRAVEL
         for robot, crew_name in ((due_soon, PRACTICE_CREWS[0]), (overdue, PRACTICE_CREWS[1])):
             crew = crews[crew_name]
             _name, lead_code, second_code, _van = crew
@@ -1012,13 +1034,61 @@ class _Builder:
         self.lap("charging")
 
     # .............................................................. kit inventory (v2 02D)
+    def kit_short_visit(self) -> str:
+        """v2 02E: the visit that will be "Kit short", chosen so that kits are its ONLY At-risk cause the
+        build controls: tomorrow's last regular visit (not at a special home, not J4) whose robot is not
+        held, not blocked by maintenance, not due soon and has no battery reading from the build (the
+        needs-charge and "Enough" robots), with no other visit before it from today. It gets a recovery plan
+        like J4 and a hand battery reading of 88%, so readiness misses only the day's checks and the charge
+        forecast says Enough."""
+        from hub.models import RobotSocReading  # noqa: PLC0415
+
+        tomorrow = self.anchor + timedelta(days=1)
+        skip = {MAINTENANCE_ROBOT, INSPECTION_HOLD_ROBOT, INCIDENT_ROBOT, NO_MAINTENANCE_BASELINE,
+                self.s.overdue_robot, self.s.due_soon_robot,
+                *RobotSocReading.objects.values_list("robot__code", flat=True)}  # fmt: skip
+        visits = (
+            Visit.objects.filter(
+                status="confirmed",
+                current_revision__on_site_start__gte=self.at(tomorrow, dtime(0, 0)),
+                current_revision__on_site_start__lt=self.at(tomorrow + timedelta(days=1), dtime(0, 0)),
+                current_revision__robot__isnull=False,
+            )
+            .exclude(site__code__in=(*SPECIAL_HOMES, PRACTICE_HOME))
+            .exclude(code=self.s.j4_visit)
+            .exclude(current_revision__robot__code__in=skip)
+            .order_by("-current_revision__on_site_start", "-code")
+        )
+        from hub import charging as hc  # noqa: PLC0415
+
+        day_start = self.at(self.anchor, dtime(0, 0))
+        for v in visits.select_related("current_revision__robot"):
+            rev = v.current_revision
+            assert rev is not None and rev.robot is not None
+            earlier = Visit.objects.filter(  # another visit first would make the charge forecast Unknown
+                current_revision__robot=rev.robot,
+                current_revision__on_site_start__gte=day_start,
+                current_revision__on_site_start__lt=rev.on_site_start,
+            ).exclude(status="cancelled")
+            if not earlier.exists():
+                break
+        else:
+            raise DemoRefused("No clean visit tomorrow for the kit shortage; nothing more built.")
+        self.recovery_plan(v.code)
+        # read by hand today, above the 80% demo minimum: the charge forecast says Enough for this visit
+        hc.record_soc(self.u["lily.tran"], robot_code=rev.robot.code, soc_pct=88)
+        return v.code
+
     def stock(self) -> None:
-        """Fictional kits and consumables, every quantity recorded TODAY through the stock ledger (no invented
-        history). Each visit takes one restraint kit (demo setting): one kit per visit of the next two days is
-        received and one is written off, so the last of those visits shows At risk "Kit short"; the first few
-        are reserved. Gloves end below their minimum, so the Hub queue gets a restocking task. None of it is
-        an equipment check."""
+        """Fictional kits and consumables, every quantity recorded TODAY through the stock ledger (no
+        invented history). Each visit takes one restraint kit (demo setting). v2 02E: one kit is
+        reserved for every visit that departs from now to the end of the day after tomorrow, except ONE
+        clean visit tomorrow (``kit_short_visit``); the count received covers exactly those reservations
+        after one kit is written off, so that visit, and only it, shows At risk "Kit short" all day (and
+        restraint kits fall below their minimum: a restock task). Gloves end below their minimum too.
+        None of it is an equipment check."""
         from hub import stock as st  # noqa: PLC0415
+        from readiness.models import DepartureEvent  # noqa: PLC0415
 
         ops, lily = self.u["dana.ortiz"], self.u["lily.tran"]
         for code, name, kind, unit in (
@@ -1028,19 +1098,33 @@ class _Builder:
             ("GLOVE", "Nitrile gloves", "consumable", "boxes"),
         ):
             st.create_item(ops, code=code, name=name, kind=kind, unit=unit)
-        upcoming = [n.visit_code for n in st.visit_needs() if n.item_code == "RK"]
-        st.receive(lily, item_code="RK", quantity=max(len(upcoming), 2), note="Demo stock count")
+        short = self.s.kit_short_visit = self.kit_short_visit()
+        until = self.at(self.anchor + timedelta(days=3), dtime(0, 0))
+        departed = DepartureEvent.objects.values_list("visit_id", flat=True)
+        covered = [
+            v.code
+            for v in Visit.objects.exclude(status="cancelled")
+            .exclude(pk__in=departed)
+            .exclude(code=short)
+            .select_related("current_revision")
+            .order_by("current_revision__on_site_start", "code")
+            if v.current_revision is not None
+            and timezone.now()
+            <= v.current_revision.on_site_start - timedelta(minutes=v.current_revision.travel_out_min or 0)
+            < until
+        ]
+        st.receive(lily, item_code="RK", quantity=len(covered) + 1, note="Demo stock count")
         st.adjust(lily, item_code="RK", delta=-1, reason="Strap torn during the count; written off")
         st.receive(lily, item_code="RC", quantity=4, note="Demo stock count")
         st.receive(lily, item_code="WIPE", quantity=30, note="Demo stock count")
         st.consume(lily, item_code="WIPE", quantity=4)
         st.receive(lily, item_code="GLOVE", quantity=6, note="Demo stock count")
         st.consume(lily, item_code="GLOVE", quantity=3)  # 3 left, minimum 4: a restocking task
-        for code in upcoming[: min(3, max(len(upcoming) - 1, 0))]:
+        for code in covered:
             st.reserve(lily, item_code="RK", visit_code=code, quantity=1)
         if self.s.j4_visit:
             st.reserve(lily, item_code="RC", visit_code=self.s.j4_visit, quantity=1)
-        self.lap("stock")
+        self.lap(f"stock ({len(covered)} restraint kits reserved; {short} is kit short)")
 
     def build(self) -> Summary:
         self.company()
@@ -1049,7 +1133,7 @@ class _Builder:
         self.robots()
         homes = self.homes()
         self.visits(homes)
-        self.practice_runs(homes)
+        self.practice_runs()
         self.hub_tasks()
         self.charging()
         self.stock()

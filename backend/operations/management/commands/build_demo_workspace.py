@@ -69,7 +69,8 @@ class Command(BaseCommand):
                 f"Hub day (J8): practice runs of today, recorded and closed at build time: {runs}. "
                 f"Maintenance due soon on {summary.due_soon_robot}; "
                 f"overdue (blocked) on {summary.overdue_robot}. "
-                f"Predictor log: {summary.predictor_rows} observation(s)."
+                f"Predictor log: {summary.predictor_rows} observation(s). "
+                f"Kit short (its only At-risk cause from the build): {summary.kit_short_visit}."
             )
         self.stdout.write(f"Demo logins (password: the {demo.PASSWORD_ENV} environment variable):")
         for username, role, note in summary.logins:

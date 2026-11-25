@@ -299,8 +299,9 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     assert list(Charger.objects.values_list("code", "in_service")) == [
         ("C-1", True), ("C-2", True), ("C-3", True), ("C-4", False)
     ]  # fmt: skip
-    readings = list(RobotSocReading.objects.all())  # 2 for the forecast + 1 per practice run (02E)
-    assert len(readings) == 4 and {r.source for r in readings} == {"manual_reading"}
+    # 2 for the forecast + 1 per practice run + 1 for the kit-short visit (02E)
+    readings = list(RobotSocReading.objects.all())
+    assert len(readings) == 5 and {r.source for r in readings} == {"manual_reading"}
     assert all(
         timezone.now() - r.observed_at < timedelta(hours=1) for r in readings
     )  # stamped now, no history
@@ -315,7 +316,8 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     ops_c.force_login(User.objects.get(username="dana.ortiz"))
     operating = ops_c.get("/settings/operating/").content.decode()
     soc_row = operating.split('data-key="ops_soc_fresh_min"', 1)[1].split("</tr>", 1)[0]
-    assert "240" in soc_row and "Demo value" in soc_row
+    # 02E: a day (the demo is walked after a 04:00 build)
+    assert "1440" in soc_row and "Demo value" in soc_row
     charging_page = lily_c.get("/hub/charging/").content.decode()
     assert "Needs charge" in charging_page and "Out of service" in charging_page
     html = c.get("/ops/").content.decode()
