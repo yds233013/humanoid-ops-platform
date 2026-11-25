@@ -821,9 +821,11 @@ class _Builder:
         extra(3, RESTRICTED_HOME)
         # A home where the adult has not consented yet: cannot be planned until consent is recorded.
         extra(4, CONSENT_GAP_HOME)
-        # Requests not planned yet (no robot or crew assigned).
+        # Requests not planned yet (no robot or crew assigned). v2 02E (walk D6): in the evening, after every
+        # crew's afternoon visit is unloaded (the same window as the exception visits above, never used on
+        # these days), so J3's Suggest finds a free crew, van and robot and the plan can be saved.
         for k, home in enumerate(("H-120", "H-133", "H-138")):
-            start = self.at(self.anchor + timedelta(days=5 + k), dtime(10, 30))
+            start = self.at(self.anchor + timedelta(days=5 + k), evening)
             ps.request_visit(
                 ops,
                 site_code=home,
