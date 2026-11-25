@@ -221,9 +221,22 @@ class CustodyEvent(models.Model):
     note = models.TextField(blank=True)
     recorded_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     recorded_at = models.DateTimeField(db_default=Now())
+    # v2 03A-2 (contract 11.4): the hub at the hub end of the move (to_kind or from_kind = hub), set by the
+    # database (trigger execution_custody_hub, never the caller): the run's visit hub, or for a recovery
+    # without a run the robot's home hub. NULL for a move with no hub end.
+    hub = models.ForeignKey(
+        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    ((Q(from_kind="hub") | Q(to_kind="hub")) & Q(hub__isnull=False))
+                    | (~Q(from_kind="hub") & ~Q(to_kind="hub") & Q(hub__isnull=True))
+                ),
+                name="custody_hub_at_hub_end",
+            ),
             models.UniqueConstraint(fields=["robot", "seq"], name="uniq_custody_robot_seq"),
             models.CheckConstraint(condition=_in("from_kind", CUSTODY_KINDS), name="custody_from_valid"),
             models.CheckConstraint(condition=_in("to_kind", CUSTODY_KINDS), name="custody_to_valid"),
