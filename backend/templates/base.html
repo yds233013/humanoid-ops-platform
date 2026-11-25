@@ -113,10 +113,12 @@ label{font-size:var(--fs-sm);color:var(--ink)} fieldset{border:1px solid var(--l
 button,.btn{font:inherit;cursor:pointer;border-radius:8px;padding:8px 14px;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600;min-height:38px}
 button.primary,.btn.primary{background:var(--head);color:#fff;border-color:var(--head)} button.primary:hover{background:#17406A}
 button.danger{background:var(--red);color:#fff;border-color:var(--red)}
-.row{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center} form.inline{display:inline-flex;gap:var(--s2);align-items:center;flex-wrap:wrap}
+.row{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center} .row>label{min-width:0;max-width:100%} select{max-width:100%} form.inline{display:inline-flex;gap:var(--s2);align-items:center;flex-wrap:wrap}
 .waiting{color:var(--soft);font-size:var(--fs-sm);font-style:italic}
 .decision{border:1px solid var(--blueline);background:var(--bluebg);color:var(--ink);border-radius:var(--radius);padding:var(--s3) var(--s4)}
 .decision.waiting-note{border-color:var(--line);background:var(--neutralbg)}
+/* 02E walk: at tablet width (701-900 px) the nav wraps onto its own line like on phones, so every section stays visible */
+@media (min-width:701px) and (max-width:900px){.hdr{flex-wrap:wrap} .primary-nav{order:3;flex-basis:100%;flex-wrap:wrap;overflow-x:visible} .demo-badge{margin-left:auto}}
 @media (max-width:700px){main td,main th{overflow-wrap:anywhere} main table.stack td,main table.stack td::before{overflow-wrap:break-word;word-break:normal} main{padding:var(--s3) var(--s4) 48px} .site-header{position:static} .hdr{gap:var(--s2);flex-wrap:wrap;padding-top:6px} .brand{display:none} .demo-badge{margin-left:auto} .primary-nav{order:3;flex-basis:100%;flex-wrap:wrap;overflow-x:visible} .primary-nav a{padding:10px 8px} h1{font-size:1.25rem} .card{padding:var(--s3) var(--s4)} input,select,textarea{width:100%} .row>label{width:100%} .row>label input,.row>label select{margin-top:var(--s1)}}
 {% block extra_css %}{% endblock %}
 </style>

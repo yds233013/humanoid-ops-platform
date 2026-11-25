@@ -704,6 +704,16 @@ def _merge_cards(t: Today, roles: set[str]) -> None:
     t.cards = cards[:CARD_LIMIT]
 
 
+def _other_status_note(t: Today, cov: dict[str, Any]) -> str:
+    """Reconcile the notice with the "Readiness assessed" tile: that tile also counts visits whose status
+    comes from other records (holds, maintenance, charge or stock) without the full checklist (02E walk)."""
+    extra = (t.coverage_counts or {}).get("assessed", 0) - int(cov.get("evaluated") or 0)
+    if extra <= 0:
+        return ""
+    visits = "visit has" if extra == 1 else "visits have"
+    return f" {extra} more {visits} a status from other records (holds, maintenance, charge or stock)."
+
+
 def _coverage_notice(t: Today) -> None:
     if not t.visits_ok:
         return
@@ -712,7 +722,8 @@ def _coverage_notice(t: Today) -> None:
         t.notices.append(
             Notice(
                 "coverage",
-                f"Readiness checked for {cov['evaluated']} of {cov['qualifying']} visits. The rest show as "
+                f"Readiness checked for {cov['evaluated']} of {cov['qualifying']} visits "
+                f"(at most {READINESS_CAP} per page load).{_other_status_note(t, cov)} The rest show as "
                 "Scheduled; open the visit to see its checklist.",
             )
         )

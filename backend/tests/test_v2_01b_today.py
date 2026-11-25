@@ -454,6 +454,13 @@ def test_partial_readiness_coverage_is_announced(monkeypatch):
     body = page(client("ops_lead"))
     assert 'data-notice="coverage"' in body
     assert "Readiness checked for 10 of 14 visits" in body
+    assert "(at most 10 per page load)" in body
+    # 02E walk: the notice reconciles with the "Readiness assessed" tile when other records give a status
+    assessed = int(re.search(r"Readiness assessed: (\d+)", body).group(1))
+    if assessed > 10:
+        assert f"{assessed - 10} more visit" in body
+    else:
+        assert "a status from other records" not in body
 
 
 def test_missing_lookahead_setting_is_announced_not_hidden():
