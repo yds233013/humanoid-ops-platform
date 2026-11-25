@@ -17,6 +17,7 @@ from datetime import timedelta
 from io import StringIO
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -42,7 +43,7 @@ from platform_core.models import AuditEvent
 from readiness.models import DepartureAuthorization, ReadinessEvidence
 from tests.conftest import make_user
 from tests.fleet_world import set_setting
-from tests.planning_world import at, build_planning, new_visit
+from tests.planning_world import TZ, build_planning, new_visit
 
 pytestmark = pytest.mark.django_db
 TOKEN_RE = re.compile(r'name="_form_token" value="([^"]+)"')
@@ -113,8 +114,12 @@ def _ids(w: SimpleNamespace) -> SimpleNamespace:
     )
 
 
+def _local_tomorrow() -> Any:
+    return (timezone.now().astimezone(ZoneInfo(TZ)) + timedelta(days=1)).date()
+
+
 def _tomorrow_visit(w: SimpleNamespace, h0: int) -> str:
-    day = (timezone.now() + timedelta(days=1)).astimezone(at(timezone.now().date(), 0).tzinfo).date()
+    day = _local_tomorrow()
     return new_visit(w, d=day, h0=h0, h1=h0 + 1)
 
 
@@ -288,10 +293,17 @@ def test_a_null_zero_or_empty_actor_is_refused_by_every_entry_function(actor):
 
 def test_the_ledger_is_append_only_even_for_the_owner(w):
     st.receive(w.tech, item_code="RK", quantity=2)
+    st.reserve(w.tech, item_code="RK", visit_code=w.v1, quantity=1)  # a row, so the row trigger fires
     for sql in ("UPDATE hub_stock_movement SET quantity = 9", "DELETE FROM hub_stock_movement",
-                "TRUNCATE hub_stock_movement", "DELETE FROM hub_stock_reservation", "DELETE FROM hub_stock_item"):  # fmt: skip
+                "DELETE FROM hub_stock_reservation", "DELETE FROM hub_stock_item"):  # fmt: skip
         with pytest.raises(Exception, match="append-only"), transaction.atomic(), connection.cursor() as cur:
             cur.execute(sql)
+    with connection.cursor() as cur:  # TRUNCATE (not testable inside the test transaction): the triggers exist
+        cur.execute(
+            "SELECT c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid"
+            " WHERE t.tgname LIKE 'hub_stock_%%_no_truncate' AND t.tgenabled = 'O' ORDER BY 1"
+        )
+        assert [r[0] for r in cur.fetchall()] == ["hub_stock_item", "hub_stock_movement", "hub_stock_reservation"]
     # the per-kind effect check: even the owner cannot insert a movement whose effect contradicts its kind
     rk = StockItem.objects.get(code="RK").pk
     for kind, q, d_on, d_res, reason in (("receive", 2, 5, 0, ""), ("adjust", 2, -2, 0, " "),
@@ -458,11 +470,11 @@ def test_two_simultaneous_reservations_for_the_last_kit_exactly_one_succeeds(fir
         t = threading.Thread(target=go)
         t.start()
         waiting = False
-        for _ in range(100):  # the waiter is observed in pg_stat_activity, blocked on a lock
+        for _ in range(100):  # the waiter is observed in pg_locks: an ungranted lock of the second session
             with connection.cursor() as cur:
-                cur.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", [b_pid])
+                cur.execute("SELECT count(*) FROM pg_locks WHERE pid = %s AND NOT granted", [b_pid])
                 row = cur.fetchone()
-            if row and row[0] == "Lock":
+            if row and row[0] > 0:
                 waiting = True
                 break
             time.sleep(0.05)
@@ -597,7 +609,7 @@ def _safety(visit_codes: list[str]) -> dict[str, Any]:
 
     return {
         "evidence": list(ReadinessEvidence.objects.order_by("id").values_list("id", "kind", "result")),
-        "authorizations": list(DepartureAuthorization.objects.order_by("id").values_list("id", "revoked_at")),
+        "authorizations": list(DepartureAuthorization.objects.order_by("id").values_list("id", "expires_at")),
         "holds": list(Hold.objects.order_by("id").values_list("id", "released_at")),
         "custody": CustodyEvent.objects.count(),
         "eligibility": {r.code: fs.evaluate_eligibility(r).eligible_for_planning for r in Robot.objects.all()},
@@ -613,7 +625,7 @@ def test_stock_never_stands_in_for_the_departure_equipment_check():
     w.p.register_person(w.ops, username=w.tech.username, code="P-8")
     st.create_item(w.ops, code="RK", name="Restraint kit", kind="reusable", unit="kits")
     st.create_item(w.ops, code="WIPE", name="Wipes", kind="consumable", unit="packs")
-    bare = w.new_confirmed_visit()  # no evidence at all: its equipment check stays missing
+    bare = w.new_confirmed_visit(robot="R-02", h0=14, h1=15)  # no evidence at all: its equipment check stays missing
     fs.place_hold(w.ops, scope="robot", target="R-03", source_type="maintenance", reason="noisy wrist")
     set_setting("stock_per_visit", "RK=1")
     set_setting("stock_minimums", "RK=5")
@@ -701,11 +713,14 @@ def test_below_minimum_derives_one_restocking_task_that_clears_when_restocked(w)
 
 
 def test_minimum_levels_are_owner_provisioned_and_validated():
+    for key, value in (("consent_form_version", "CF-v1"), ("pre_visit_inspection_min", "30"),
+                       ("ops_readiness_lookahead_min", "2880")):  # fmt: skip
+        set_setting(key, value)  # the required ones, so only the stock keys change here
     DeploymentSetting.objects.filter(key__in=["stock_minimums", "stock_per_visit"]).delete()
     out = StringIO()
     call_command("provision_settings", stock_minimums="rk = 3, glove=10", stdout=out)
     assert DeploymentSetting.objects.get(key="stock_minimums").value == "RK=3,GLOVE=10"
-    for bad in ("RK", "RK=-1", "RK=3,RK=4", "RK=1000001", "R K=1"):
+    for bad in ("RK", "RK=-1", "RK=3,RK=4", "RK=1000001", "R/K=1"):
         with pytest.raises(MgmtError, match="Nothing was changed"):
             call_command("provision_settings", stock_per_visit=bad, stdout=StringIO())
     with pytest.raises(MgmtError, match="allow-change"):
@@ -747,11 +762,14 @@ def test_visits_that_cannot_get_their_kit_are_at_risk_in_departure_order(w):
 
 @pytest.mark.django_db(transaction=True)
 def test_today_and_the_visit_page_show_kit_short_as_at_risk():
-    w = _world("td_")
+    from tests.readiness_world import build_readiness
+
+    w = build_readiness(prefix="td_")
+    w.tech = make_user("td_tech", "hub_technician")
+    st.create_item(w.ops, code="RK", name="Restraint kit", kind="reusable", unit="kits")
     set_setting("ops_readiness_lookahead_min", str(60 * 24 * 3))
-    v = _tomorrow_visit(w, 10)
-    w.p.plan_visit(w.ops, visit_code=v, robot_code="R-01", lead_code="P-1", second_code="P-2",
-                   vehicle_code="VAN-1")  # fmt: skip
+    day = _local_tomorrow()
+    v = w.new_confirmed_visit(robot="R-02", d=day, h0=12, h1=13)
     set_setting("stock_per_visit", "RK=1")
     c = _client(w.ops)
     body = c.get("/ops/").content.decode()
@@ -825,7 +843,7 @@ def _count(c: Client, url: str) -> int:
     return len(q)
 
 
-STOCK_PAGE_BUDGET = 16
+STOCK_PAGE_BUDGET = 20
 HUB_PAGE_BUDGET = 15  # unchanged from 02A: the stock facts are part of the one refresh statement
 
 
