@@ -528,7 +528,7 @@ def evaluate_eligibility(
                 reasons.append("Capability profile is synthetic demo data, not engineering-supplied")
         for h in Hold.objects.filter(
             scope="manifest_pattern", pattern=pattern, released_at__isnull=True, blocking=True
-        ):
+        ).order_by("id"):
             reasons.append(f"Configuration hold {h.code}: {h.reason}")
         periodic = (
             shared
@@ -539,7 +539,11 @@ def evaluate_eligibility(
         if why:
             reasons.append(why)
         reasons.extend(maintenance if maintenance is not None else maintenance_block_reasons(robot, at))
-    for h in Hold.objects.filter(scope="robot", robot=robot, released_at__isnull=True, blocking=True):
+    # Same order as the SQL view (ORDER BY h.id); without it the row order is the heap order and the reasons
+    # list could differ from the view after an update (seen once in CI on the scale fixture).
+    for h in Hold.objects.filter(
+        scope="robot", robot=robot, released_at__isnull=True, blocking=True
+    ).order_by("id"):
         reasons.append(f"Robot hold {h.code} ({h.get_source_type_display()}): {h.reason}")
     ok = not reasons
     return Eligibility(
