@@ -11,7 +11,7 @@ function fails this file until someone decides who may run it:
 
 The hub-owned tables those functions write give ops_app no INSERT, UPDATE or DELETE (table or column level) and
 no sequence use; the home-hub columns of robots and vehicles, which ops_app may otherwise update, refuse a direct
-change by a trigger.
+change by a trigger (a received transfer is the only path), and a charger's hub never changes (hub/0014).
 
 The wrong-hub actor (a real technician of another hub, on a real record) is covered per function family by
 test_v2_03a_ownership (stock, charging), test_v2_03a_transfers (transfers) and test_v2_03a_authority (grants).
@@ -301,9 +301,34 @@ def test_a_direct_home_hub_change_of_a_robot_or_a_vehicle_by_ops_app_is_refused(
                 pytest.raises(psycopg.errors.InsufficientPrivilege, match="only by a transfer"),
             ):
                 cur.execute(f"UPDATE {table} SET hub_id = %s WHERE code = %s", [b.pk, code])
-            with conn.cursor() as cur:  # other columns stay writable for the commands that need them
+            with conn.cursor() as cur:  # the home hub is unchanged
                 cur.execute(f"SELECT hub_id FROM {table} WHERE code = %s", [code])
                 assert cur.fetchone()[0] == a.pk
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_charger_never_changes_hub_even_when_idle():
+    """hub/0014: chargers have no transfer flow, so any hub change is refused, for ops_app and the owner alike,
+    even with no reservation or session (the hub/0010 guard allowed that). Other charger updates still work."""
+    from hub import charging as hc
+    from hub.models import Charger
+
+    ops = make_user("ch_ops", "ops_lead")
+    a = Hub.objects.create(code="HA", name="Hub A")
+    b = Hub.objects.create(code="HB", name="Hub B")
+    hc.create_charger(ops, code="CA-1", name="Bay A1", hub_code="HA")
+    refused = "Charger CA-1 cannot change hub; register it at the new hub"
+    with _app_conn() as conn:
+        with conn.cursor() as cur, pytest.raises(psycopg.errors.InsufficientPrivilege, match=refused):
+            cur.execute("UPDATE hub_charger SET hub_id = %s WHERE code = 'CA-1'", [b.pk])
+        with conn.cursor() as cur:  # the same value rewritten (an ORM save of every column) passes
+            cur.execute("UPDATE hub_charger SET hub_id = hub_id, name = name WHERE code = 'CA-1'")
+    with connection.cursor() as cur, pytest.raises(Exception, match="cannot change hub"):
+        cur.execute("UPDATE hub_charger SET hub_id = %s WHERE code = 'CA-1'", [b.pk])  # the owner too
+    hc.set_charger_in_service(ops, code="CA-1", in_service=False, reason="broken plug")  # still works
+    ch = Charger.objects.get(code="CA-1")
+    ch.save()  # a full ORM save lists hub_id unchanged: allowed
+    assert (ch.hub_id, ch.in_service) == (a.pk, False)
 
 
 # ------------------------------------------------------------------ 3. actor checks, as ops_app
