@@ -1074,13 +1074,7 @@ def _second_visit(w, robot: str) -> str:
     return code
 
 
-def test_authorization_refused_while_the_robot_has_an_open_run(w, app_role_conn):
-    # v2 03A-2 (contract 10.A): only a robot verified at a hub can be planned, so the run's robot is brought back
-    # to the hub (verified receipt) first; its run stays open
-    with app_role_conn.cursor() as cur:
-        ew.to_site(cur, w)
-        ew.go_check(cur, w)
-        ew.to_hub(cur, w)
+def test_authorization_refused_while_the_robot_has_an_open_run(w):
     v2 = _second_visit(w, "R-01")
     with pytest.raises(Conflict, match="open run"):
         rc.authorize_departure(w.ops, visit_code=v2)  # through readiness_issue_authorization

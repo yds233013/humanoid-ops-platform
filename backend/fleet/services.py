@@ -555,8 +555,10 @@ def evaluate_eligibility(
     where = (
         shared.location if shared is not None and shared.location is not None else robot_location(robot.pk)
     )
-    if where.problem:
-        reasons.append(where.problem)
+    if (
+        where.planning_problem
+    ):  # v2 03A-2 section 12: the FUTURE-PLANNING predicate (physical: departure gates)
+        reasons.append(where.planning_problem)
     ok = not reasons
     return Eligibility(
         ok,
