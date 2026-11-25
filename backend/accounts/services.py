@@ -6,12 +6,19 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import DatabaseError, connection, transaction
 from django.utils import timezone
 
 from accounts.models import PasswordState, RoleGrant
 from accounts.roles import ALL_ROLES, HUB_SCOPED_ROLES
-from platform_core.commands import Conflict, Invalid, NotAuthenticated, Outcome, run_command
+from platform_core.commands import (
+    Conflict,
+    Invalid,
+    NotAuthenticated,
+    Outcome,
+    PermissionDenied,
+    run_command,
+)
 from platform_core.middleware import current_request_id
 from platform_core.models import AuditEvent, Hub
 
@@ -40,6 +47,28 @@ def _grant_hub(role: str, hub_code: str | None) -> Hub | None:
     raise Invalid(f"Choose the hub where this person works as {role.replace('_', ' ')}")
 
 
+def _grant_function(sql: str, params: list[Any]) -> int:
+    """Call a role-grant function of accounts/0006 inside the command's transaction. Its refusals become
+    the command errors: who may do it -> PermissionDenied (audited as denied by run_command), a duplicate or
+    an already revoked grant -> Conflict, anything else it refuses -> Invalid. Nothing is written on a
+    refusal."""
+    try:
+        with connection.cursor() as cur:
+            cur.execute(sql, params)
+            return int(cur.fetchone()[0])
+    except DatabaseError as exc:
+        cause = exc.__cause__
+        state = getattr(cause, "sqlstate", None)
+        text = getattr(getattr(cause, "diag", None), "message_primary", None) or str(exc)
+        if state == "42501":
+            raise PermissionDenied(text) from exc
+        if state == "23505":
+            raise Conflict(text) from exc
+        if state == "23514":
+            raise Invalid(text) from exc
+        raise
+
+
 def grant_role(
     actor: Any,
     *,
@@ -61,18 +90,30 @@ def grant_role(
         if user_id == actor.pk:
             raise Invalid("Separation of duties: you cannot grant a role to yourself")
         hub = _grant_hub(role, hub_code)
-        try:
-            target = User.objects.select_for_update().get(pk=user_id)
-        except User.DoesNotExist:
-            raise Invalid(f"No user {user_id}") from None
-        active = RoleGrant.objects.filter(user=target, role=role, revoked_at__isnull=True)
+        if not User.objects.filter(pk=user_id).exists():
+            raise Invalid(f"No user {user_id}")
+        active = RoleGrant.objects.filter(user_id=user_id, role=role, revoked_at__isnull=True)
         if active.filter(hub=hub).exists() if hub is not None else active.exists():
             where = f" at hub {hub.code}" if hub is not None else ""
             raise Conflict(f"User {user_id} already holds an active {role} grant{where}")
-        grant = RoleGrant.objects.create(user=target, role=role, valid_to=valid_to, granted_by=actor, hub=hub)
-        hub_id = RoleGrant.objects.filter(pk=grant.pk).values_list("hub_id", flat=True).get()
+        # v2 03A-3: the write itself, the re-check of every rule above under the locks, and the audit row are
+        # accounts_grant_role (accounts/0006): the runtime role cannot write accounts_rolegrant directly.
+        grant_id = _grant_function(
+            "SELECT accounts_grant_role(%s, %s, %s, %s, NULL, %s, %s)",
+            [
+                actor.pk,
+                user_id,
+                role,
+                hub.pk if hub is not None else None,
+                valid_to,
+                current_request_id.get(),
+            ],
+        )
+        hub_id = RoleGrant.objects.filter(pk=grant_id).values_list("hub_id", flat=True).get()
         code = Hub.objects.filter(pk=hub_id).values_list("code", flat=True).first() if hub_id else None
-        return Outcome("role_grant", str(grant.pk), {"user_id": user_id, "role": role, "hub": code})
+        return Outcome(
+            "role_grant", str(grant_id), {"user_id": user_id, "role": role, "hub": code}, audited=True
+        )
 
     return run_command(
         actor,
@@ -92,21 +133,26 @@ def revoke_role(
     def handler() -> Outcome:
         if not reason.strip():
             raise Invalid("A reason is required")
-        try:
-            grant = RoleGrant.objects.select_for_update().get(pk=grant_id)
-        except RoleGrant.DoesNotExist:
-            raise Invalid(f"No grant {grant_id}") from None
+        grant = RoleGrant.objects.filter(pk=grant_id).first()
+        if grant is None:
+            raise Invalid(f"No grant {grant_id}")
         if grant.revoked_at is not None:
             raise Conflict("Grant already revoked")
-        grant.revoked_at = timezone.now()
-        grant.revoked_by = actor
-        grant.save(update_fields=["revoked_at", "revoked_by"])
+        # v2 03A-3: accounts_revoke_grant (accounts/0006) locks the grant FOR UPDATE (an in-flight write
+        # holding it FOR SHARE finishes first), re-checks it, revokes it at database time and appends the
+        # audit row.
+        _grant_function(
+            "SELECT accounts_revoke_grant(%s, %s, %s, %s)",
+            [actor.pk, grant_id, reason, current_request_id.get()],
+        )
         code = (
             Hub.objects.filter(pk=grant.hub_id).values_list("code", flat=True).first()
             if grant.hub_id
             else None
         )
-        return Outcome("role_grant", str(grant.pk), {"revoked": True, "role": grant.role, "hub": code})
+        return Outcome(
+            "role_grant", str(grant.pk), {"revoked": True, "role": grant.role, "hub": code}, audited=True
+        )
 
     return run_command(
         actor,

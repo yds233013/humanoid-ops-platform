@@ -72,6 +72,9 @@ class Outcome:
     entity_type: str
     entity_id: str
     result: dict[str, Any] = field(default_factory=dict)
+    # v2 03A-3: True when the handler's SECURITY DEFINER function already appended the committed audit row
+    # (the role-grant functions of accounts/0006 audit every write themselves, so a direct call is audited).
+    audited: bool = False
 
 
 def _hash(payload: dict[str, Any]) -> str:
@@ -98,15 +101,12 @@ def holds_permission_locked(actor: User, permission: str, hub: HubRef = None) ->
     if not allowed or not actor.is_active:
         return False
     hub_id = hub_id_of(hub)
+    # v2 03A-3: the runtime role has SELECT only on accounts_rolegrant, and a row lock needs UPDATE
+    # privilege, so the same statement (active qualifying grants, by id, FOR SHARE) runs in
+    # accounts_lock_grants (accounts/0006, SECURITY DEFINER). The locks belong to this transaction.
     with connection.cursor() as cur:
-        cur.execute(
-            "SELECT id FROM accounts_rolegrant WHERE user_id = %s AND role = ANY(%s) AND revoked_at IS NULL "
-            "AND valid_from <= clock_timestamp() AND (valid_to IS NULL OR valid_to > clock_timestamp()) "
-            "AND (%s::bigint IS NULL OR hub_id IS NULL OR hub_id = %s::bigint) "
-            "ORDER BY id FOR SHARE",
-            [actor.pk, allowed, hub_id, hub_id],
-        )
-        return cur.fetchone() is not None
+        cur.execute("SELECT accounts_lock_grants(%s, %s::text[], %s::bigint)", [actor.pk, allowed, hub_id])
+        return bool(cur.fetchone()[0])
 
 
 def _denied(permission: str, hub_id: int | None) -> PermissionDenied:
@@ -199,16 +199,17 @@ def _attempt(
 
         outcome = handler()
         response = {"entity_type": outcome.entity_type, "entity_id": outcome.entity_id, **outcome.result}
-        AuditEvent.objects.create(
-            actor=actor,
-            command=name,
-            outcome=AuditEvent.OUTCOME_COMMITTED,
-            entity_type=outcome.entity_type,
-            entity_id=outcome.entity_id,
-            payload=payload,
-            result=outcome.result,
-            request_id=current_request_id.get(),
-        )
+        if not outcome.audited:
+            AuditEvent.objects.create(
+                actor=actor,
+                command=name,
+                outcome=AuditEvent.OUTCOME_COMMITTED,
+                entity_type=outcome.entity_type,
+                entity_id=outcome.entity_id,
+                payload=payload,
+                result=outcome.result,
+                request_id=current_request_id.get(),
+            )
         if claim is not None:
             claim.response = response
             claim.save(update_fields=["response"])

@@ -11,7 +11,7 @@ import os
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
-from accounts.models import RoleGrant
+from accounts.management.commands.seed_dev import seed_grant
 from fleet import services as fleet_services
 from fleet.management.commands.seed_fleet import ALL_PASS
 from planning import services as p
@@ -52,7 +52,7 @@ class Command(BaseCommand):
         if created:
             lead2.set_password(password)
             lead2.save()
-            RoleGrant.objects.create(user=lead2, role="engineering_lead")
+            seed_grant(lead2.pk, "engineering_lead")  # v2 03A-3: the owner-only seed function
 
         version = int(
             rx.create_readiness_policy(

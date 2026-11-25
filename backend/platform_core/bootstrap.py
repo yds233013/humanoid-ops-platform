@@ -6,7 +6,7 @@ user, the admin role grant, the audit row and the ``initialized`` flag are writt
 row lock on the workspace singleton, so two concurrent attempts produce exactly one admin and the loser is
 refused. Afterwards bootstrap is permanently disabled (the flag is in the database, not in the environment).
 
-Bootstrap records facts only: one user, one admin role grant, one audit row. It never creates an approval of
+Bootstrap records facts only: one user, one admin role grant, its audit rows. It never creates an approval of
 any kind (contract section 4).
 """
 
@@ -16,10 +16,9 @@ import os
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from accounts.models import RoleGrant
 from accounts.roles import ADMIN
 from platform_core.middleware import current_request_id
 from platform_core.models import AuditEvent, Workspace
@@ -80,7 +79,10 @@ def bootstrap_first_admin(
                 user = User.objects.create_user(username=username, password=password, email=email)
         except IntegrityError:
             raise BootstrapRefused("invalid", "That username is taken.") from None
-        RoleGrant.objects.create(user=user, role=ADMIN, granted_by=None)
+        # v2 03A-3: the runtime role cannot write accounts_rolegrant; accounts_bootstrap_admin (accounts/0006)
+        # gives the first admin grant only while no admin grant exists and the workspace is not initialized.
+        with connection.cursor() as cur:
+            cur.execute("SELECT accounts_bootstrap_admin(%s, %s)", [user.pk, current_request_id.get()])
         if workspace_name.strip():
             ws.name = workspace_name.strip()[:120]
         ws.initialized = True

@@ -265,6 +265,8 @@ def _capture(fn):
     def wrapper(execute, sql, params, many, context):
         if "pg_advisory_xact_lock_shared" in sql:
             seen.append("settings")
+        elif "accounts_lock_grants(" in sql:  # v2 03A-3: the grants' FOR SHARE (accounts/0006)
+            seen.append("accounts_rolegrant")
         else:
             m = LOCK_RE.search(sql)
             if m:

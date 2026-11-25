@@ -60,8 +60,8 @@ from django.contrib.auth.hashers import make_password
 from django.db import connection, transaction
 from django.utils import timezone
 
-from accounts.models import RoleGrant
 from accounts.roles import ADMIN, HUB_SCOPED_ROLES
+from accounts.services import grant_role
 from execution import escalation_deadlines as ed
 from execution import incidents as inc
 from execution import policy as ipol
@@ -480,19 +480,24 @@ class _Builder:
         # v2 03A-1: the admin's (regional) grant first, then the hub, then every other grant: hub-scoped
         # roles (hub technician, field operator) are granted AT the Oakland hub, the others are regional. No
         # record is created before the hub, so the database never has to create a default hub.
+        # v2 03A-3: grants go through the role-grant functions (accounts/0006), as in a real workspace: the
+        # admin's grant is the empty workspace's first-admin bootstrap, and the admin grants every other role.
         admin = self.u["priya.raman"]
-        RoleGrant.objects.create(user=admin, role=ADMIN)
         Workspace.ensure()
+        with connection.cursor() as cur:
+            cur.execute("SELECT accounts_bootstrap_admin(%s, %s)", [admin.pk, "demo-build"])
         update_workspace(admin, name=COMPANY, region=REGION, time_zone=TZ)
         Workspace.objects.filter(pk=1).update(demo=True, initialized=True, initialized_at=timezone.now())
         create_hub(admin, code="OAK", name="Oakland hub", area="West Oakland", time_zone=TZ)
-        oak = Hub.objects.get(code="OAK")
         for username, role, _code, _note in LOGINS:
             for r in [role, *EXTRA_ROLES.get(username, [])]:
                 if username == "priya.raman" and r == ADMIN:
                     continue
-                RoleGrant.objects.create(
-                    user=self.u[username], role=r, hub=oak if r in HUB_SCOPED_ROLES else None
+                grant_role(
+                    admin,
+                    user_id=self.u[username].pk,
+                    role=r,
+                    hub_code="OAK" if r in HUB_SCOPED_ROLES else None,
                 )
         self.lap("company, logins, hub")
 

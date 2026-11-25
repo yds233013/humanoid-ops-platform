@@ -480,13 +480,13 @@ def _wait_for_waiter(pid: int) -> bool:
 @pytest.mark.parametrize("first", ["write", "revoke"])
 def test_a_grant_revoked_during_a_guarded_write_is_ordered_both_ways(first):
     """The write (hub_receive_stock as ops_app) locks the technician's grant FOR SHARE after the item's row lock;
-    the revocation (the UPDATE revoke_role makes, as ops_app) locks it FOR UPDATE. Whoever comes second waits
+    the revocation (accounts_revoke_grant, as ops_app: 03A-3 removed the runtime role's UPDATE) locks it FOR
+    UPDATE. Whoever comes second waits
     (observed in pg_locks); a write that waited behind a committed revocation is refused."""
     w = _two_hubs(f"rv{first[0]}_")
     grant = RoleGrant.objects.get(user=w.tech, role="hub_technician")
     write_sql = "SELECT hub_receive_stock(%s, %s, 1, 'race', '')"
-    revoke_sql = ("UPDATE accounts_rolegrant SET revoked_at = clock_timestamp(), revoked_by_id = %s "
-                  "WHERE id = %s AND revoked_at IS NULL")  # fmt: skip
+    revoke_sql = "SELECT accounts_revoke_grant(%s, %s, 'race', '')"
     holder, waiter = _app_conn(autocommit=False), _app_conn()
     out: dict[str, Any] = {}
     before = StockMovement.objects.count()
@@ -495,8 +495,7 @@ def test_a_grant_revoked_during_a_guarded_write_is_ordered_both_ways(first):
             if first == "write":
                 cur.execute(write_sql, [w.tech.pk, w.rk_a])  # holds the item lock and the grant FOR SHARE
             else:
-                cur.execute("SELECT id FROM accounts_rolegrant WHERE id = %s FOR UPDATE", [grant.pk])
-                cur.execute(revoke_sql, [w.admin.pk, grant.pk])  # revoked, not committed yet
+                cur.execute(revoke_sql, [w.admin.pk, grant.pk])  # locked FOR UPDATE, revoked, uncommitted
 
         def go() -> None:
             try:
