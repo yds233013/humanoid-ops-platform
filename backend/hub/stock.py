@@ -18,6 +18,7 @@ READ MODELS (one statement each, whatever the number of items, movements or visi
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -158,6 +159,24 @@ def release(actor: Any, *, reservation_id: int, reason: str) -> None:
              [reservation_id, reason], {"reservation_id": reservation_id, "reason": reason})  # fmt: skip
 
 
+# ------------------------------------------------------------------ wording
+def singular(unit: str) -> str:
+    """The unit for a count of 1 (``boxes`` -> ``box``, ``kits`` -> ``kit``). Same rule as hub_stock_qty() in
+    SQL (hub/0009)."""
+    if re.search(r"(ch|sh|ss|x)es$", unit):
+        return unit[:-2]
+    if re.search(r"[^aeiou]ies$", unit):
+        return unit[:-3] + "y"
+    if re.search(r"[^s]s$", unit):
+        return unit[:-1]
+    return unit
+
+
+def count_text(n: int, unit: str) -> str:
+    """``1 box``, ``3 boxes``, ``0 boxes``."""
+    return f"{n} {singular(unit) if n == 1 else unit}"
+
+
 # ------------------------------------------------------------------ read models
 LEVELS_SQL = (
     r"""
@@ -199,6 +218,10 @@ class Level:
     @property
     def available(self) -> int:
         return self.on_hand - self.reserved
+
+    @property
+    def on_hand_text(self) -> str:
+        return count_text(self.on_hand, self.unit)
 
     @property
     def below_minimum(self) -> bool:
@@ -283,7 +306,8 @@ class Need:
 
     @property
     def reason(self) -> str:
-        return f"Kit short: {self.item_name} ({self.missing} of {self.per_visit} {self.unit} not available)"
+        need = count_text(self.per_visit, self.unit)
+        return f"Kit short: {self.item_name} ({self.missing} of {need} not available)"
 
 
 def visit_needs(at: datetime | None = None) -> list[Need]:

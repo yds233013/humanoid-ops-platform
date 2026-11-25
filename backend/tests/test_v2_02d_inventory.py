@@ -59,7 +59,14 @@ ENTRY = {
     "hub_reserve_stock",
     "hub_release_stock",
 }
-HELPERS = {"hub_stock_lock", "hub_stock_quantity_ok", "hub_stock_apply", "hub_stock_visit", "hub_stock_take"}
+HELPERS = {
+    "hub_stock_lock",
+    "hub_stock_quantity_ok",
+    "hub_stock_apply",
+    "hub_stock_visit",
+    "hub_stock_take",
+    "hub_stock_qty",  # 02D fix: "1 box" / "3 boxes" in refusals
+}
 
 
 # ------------------------------------------------------------------ world
@@ -396,11 +403,11 @@ def test_refusals_write_nothing_and_say_why_in_plain_words(w):
     before = _ledger()
     cases = [
         (lambda: st.issue(w.tech, item_code="RK", quantity=3), r"Only 2 kits of Restraint kit \(RK\) are on hand"),
-        (lambda: st.issue(w.tech, item_code="RK", quantity=2), r"Only 1 kits of Restraint kit \(RK\) are available"),
+        (lambda: st.issue(w.tech, item_code="RK", quantity=2), r"Only 1 kit of Restraint kit \(RK\) is available"),
         (lambda: st.adjust(w.tech, item_code="RK", delta=-3, reason="count"), "are on hand"),
         (lambda: st.adjust(w.tech, item_code="RK", delta=-2, reason="count"), "release a reservation first"),
         (lambda: st.reserve(w.tech, item_code="RK", visit_code=w.v2, quantity=2),
-         r"Only 1 kits of Restraint kit \(RK\) are available to reserve \(2 on hand, 1 already reserved"),
+         r"Only 1 kit of Restraint kit \(RK\) is available to reserve \(2 on hand, 1 already reserved"),
         (lambda: st.reserve(w.tech, item_code="RK", visit_code=w.v1, quantity=3), "available to reserve"),
         (lambda: st.return_stock(w.tech, item_code="GLOVE", quantity=1), "is a consumable and does not come back"),
         (lambda: st.consume(w.tech, item_code="RK", quantity=1), "is a reusable kit: issue it and record its return"),
@@ -754,7 +761,7 @@ def test_visits_that_cannot_get_their_kit_are_at_risk_in_departure_order(w):
     needs = {n.visit_code: n for n in st.visit_needs()}
     assert set(needs) == {early, late}  # w.v1 / w.v2 are two weeks out: outside the two-day horizon
     assert not needs[early].short and needs[late].short  # served in departure order from the 1 available
-    assert needs[late].reason == "Kit short: Restraint kit (1 of 1 kits not available)"
+    assert needs[late].reason == "Kit short: Restraint kit (1 of 1 kit not available)"
     st.reserve(w.tech, item_code="RK", visit_code=late, quantity=1)
     needs = {n.visit_code: n for n in st.visit_needs()}
     assert set(needs) == {early} and needs[early].short  # the kit is now held for the later visit
@@ -817,7 +824,7 @@ def test_the_stock_page_shows_levels_movements_and_forms_with_selects(w):
         block = main.split(f'action="/hub/stock/{form}/"', 1)[1].split("</form>", 1)[0]
         assert '<select name="item"' in block and '<input name="item"' not in block, form
         assert '<input name="visit"' not in block, form
-        if form in ("issue", "return", "consume", "reserve"):
+        if form in ("issue", "consume", "reserve"):  # return: visits with kits out (its own test)
             assert '<select name="visit"' in block and f'<option value="{w.v1}">' in block, form
     # a receipt through the page (one-time token), then a replay does nothing
     token = TOKEN_RE.search(html).group(1)
@@ -914,3 +921,112 @@ def test_hub_statement_count_is_identical_with_2_and_12_restocking_tasks(monkeyp
     assert WorkOrder.objects.filter(source_kind="stock_level").count() == 12
     assert two == twelve <= HUB_PAGE_BUDGET, (two, twelve)
     print(f"/hub/ statements: {two} with 2 and with 12 restocking tasks")
+
+
+# ------------------------------------------------------------------ 02D fix (J8 walk): D1 visits that are over, D2 units
+def _yesterday() -> Any:
+    return (timezone.now().astimezone(ZoneInfo(TZ)) - timedelta(days=1)).date()
+
+
+def _owner_issue(item: str, visit: str, q: int, actor: Any) -> None:
+    """Fixture only (schema owner, as the perf fixture): a kit that went out with a visit that is now over."""
+    StockMovement.objects.create(
+        item=StockItem.objects.get(code=item), kind="issue", quantity=q, on_hand_delta=-q, reserved_delta=0,
+        visit=Visit.objects.get(code=visit), actor=actor, occurred_at=timezone.now(),
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("order", ["reserve_first", "issue_first"])
+def test_issue_and_consume_refuse_a_visit_that_is_over_or_cancelled_exactly_like_reserve(w, order):
+    st.receive(w.tech, item_code="RK", quantity=5)
+    st.receive(w.tech, item_code="GLOVE", quantity=5)
+    over = new_visit(w, d=_yesterday(), h0=9, h1=10)
+    cancelled = _tomorrow_visit(w, 11)
+    w.p.cancel_visit(w.ops, visit_code=cancelled, reason="customer cancelled")
+    before = _ledger()
+    for visit, words in ((over, f"Visit {over} is already over"),
+                         (cancelled, "That visit does not exist or is cancelled")):  # fmt: skip
+        calls = [
+            lambda v=visit: st.reserve(w.tech, item_code="RK", visit_code=v, quantity=1),
+            lambda v=visit: st.issue(w.tech, item_code="RK", quantity=1, visit_code=v),
+            lambda v=visit: st.consume(w.tech, item_code="GLOVE", quantity=1, visit_code=v),
+        ]
+        for call in calls if order == "reserve_first" else list(reversed(calls)):
+            with pytest.raises(Conflict, match=words):
+                call()
+    assert _ledger() == before
+    # through the page: the same refusal in plain words, nothing changed
+    c = _client(w.tech)
+    token = TOKEN_RE.search(c.get("/hub/stock/").content.decode()).group(1)
+    r = c.post(
+        "/hub/stock/issue/", {"_form_token": token, "item": "RK", "quantity": "1", "visit": over}, follow=True
+    )
+    text = r.content.decode()
+    assert f"Visit {over} is already over. Nothing was changed." in text and _ledger() == before
+    # direct SQL as the runtime role goes through the same function: refused too
+    with connection.cursor() as cur, pytest.raises(Exception, match="already over"), transaction.atomic():
+        cur.execute(
+            "SELECT hub_issue_stock(%s, %s, 1, %s, '')",
+            [w.tech.pk, StockItem.objects.get(code="RK").pk, Visit.objects.get(code=over).pk],
+        )
+    # an upcoming visit still works, and issuing without a visit is unchanged
+    st.issue(w.tech, item_code="RK", quantity=1, visit_code=w.v1)
+    st.issue(w.tech, item_code="RK", quantity=1)
+
+
+def test_kits_out_with_a_finished_or_cancelled_visit_can_always_come_back(w):
+    st.receive(w.tech, item_code="RK", quantity=5)
+    upcoming = _tomorrow_visit(w, 11)
+    st.issue(w.tech, item_code="RK", quantity=2, visit_code=upcoming)
+    w.p.cancel_visit(w.ops, visit_code=upcoming, reason="customer cancelled")
+    over = new_visit(w, d=_yesterday(), h0=9, h1=10)
+    _owner_issue("RK", over, 1, w.tech)
+    st.return_stock(w.tech, item_code="RK", quantity=2, visit_code=upcoming)
+    st.return_stock(w.tech, item_code="RK", quantity=1, visit_code=over)
+    with pytest.raises(Conflict, match="Only 0 kits of Restraint kit \\(RK\\) are out with that visit"):
+        st.return_stock(w.tech, item_code="RK", quantity=1, visit_code=over)
+    assert _level("RK").on_hand == 5 and _level("RK").out == 0
+
+
+def test_visit_selects_offer_upcoming_visits_and_returns_offer_visits_with_kits_out(w):
+    st.receive(w.tech, item_code="RK", quantity=5)
+    st.receive(w.tech, item_code="GLOVE", quantity=5)
+    over = new_visit(w, d=_yesterday(), h0=9, h1=10)
+    upcoming = _tomorrow_visit(w, 11)
+    cancelled = _tomorrow_visit(w, 15)
+    w.p.cancel_visit(w.ops, visit_code=cancelled, reason="customer cancelled")
+    st.issue(w.tech, item_code="RK", quantity=1, visit_code=upcoming)
+    _owner_issue("RK", over, 1, w.tech)
+    st.issue(w.tech, item_code="RK", quantity=1, visit_code=w.v1)
+    st.return_stock(w.tech, item_code="RK", quantity=1, visit_code=w.v1)  # back: nothing out with w.v1
+    st.consume(w.tech, item_code="GLOVE", quantity=1, visit_code=w.v2)  # consumables never come back
+
+    html = _client(w.tech).get("/hub/stock/").content.decode()
+
+    def options(form: str) -> list[str]:
+        block = html.split(f'action="/hub/stock/{form}/"', 1)[1].split("</form>", 1)[0]
+        return re.findall(r'<option value="(V-\d+)"', block.split('name="visit"', 1)[1])
+
+    for form in ("reserve", "issue", "consume"):
+        got = options(form)
+        assert upcoming in got and w.v1 in got and w.v2 in got, (form, got)
+        assert over not in got and cancelled not in got, (form, got)
+    assert options("return") == [over, upcoming]  # kits out now, in visit order; finished visits included
+
+
+def test_counts_use_the_singular_unit_for_one(w):
+    assert [st.count_text(n, u) for n, u in ((1, "boxes"), (2, "boxes"), (0, "boxes"), (1, "kits"),
+                                             (1, "packs"), (1, "batteries"), (1, "pieces"), (1, "glass"))] == [
+        "1 box", "2 boxes", "0 boxes", "1 kit", "1 pack", "1 battery", "1 piece", "1 glass"]  # fmt: skip
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT hub_stock_qty(1, 'boxes'), hub_stock_qty(2, 'boxes'), hub_stock_qty(1, 'kits'),"
+            " hub_stock_qty(1, 'batteries'), hub_stock_qty(1, 'glass')"
+        )
+        assert cur.fetchone() == ("1 box", "2 boxes", "1 kit", "1 battery", "1 glass")  # same rule in SQL
+    st.receive(w.tech, item_code="GLOVE", quantity=1)
+    st.receive(w.tech, item_code="RK", quantity=3)
+    html = _client(w.tech).get("/hub/stock/").content.decode()
+    assert "<td>1 box</td>" in html and "<td>3 kits</td>" in html and "1 boxes" not in html
+    with pytest.raises(Conflict, match=r"Only 1 box of Nitrile gloves \(GLOVE\) is on hand"):
+        st.consume(w.tech, item_code="GLOVE", quantity=2)
