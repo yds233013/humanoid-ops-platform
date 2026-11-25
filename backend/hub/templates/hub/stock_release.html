@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Release reserved stock{% endblock %}
+{% block content %}
+{% page_header title="Release reserved stock" back_url="/hub/stock/" back_label="Stock" %}{{ r.quantity }} of {{ r.item.code }} {{ r.item.name }} reserved for visit {{ r.visit.code }}. Releasing makes them available again.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit="Release" danger=True cancel_url="/hub/stock/" %}</section>
+{% endblock %}

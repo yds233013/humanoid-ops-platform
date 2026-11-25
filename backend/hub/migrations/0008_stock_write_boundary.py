@@ -178,8 +178,7 @@ BEGIN
 END $$;
 """
 
-FUNCTIONS = (
-    r"""
+FUNCTIONS = r"""
 CREATE OR REPLACE FUNCTION hub_create_stock_item(p_actor bigint, p_code text, p_name text, p_kind text,
                                                  p_unit text, p_rid text) RETURNS bigint
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
@@ -333,10 +332,7 @@ BEGIN
          released_reason = btrim(p_reason), updated_at = clock_timestamp()
   WHERE id = p_reservation;
 END $fn$;
-"""
-    .replace("%(roles)s", ROLES)
-    .replace("%(who)s", WHO)
-)
+""".replace("%(roles)s", ROLES).replace("%(who)s", WHO)
 
 SIGNATURES = [
     "hub_create_stock_item(bigint, text, text, text, text, text)",

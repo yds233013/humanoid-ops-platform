@@ -57,7 +57,7 @@ WORKFLOW: dict[str, tuple[str, str | None, str]] = {
         "charging page",
     ),
     "maintenance_due": ("Do the maintenance", None, ""),
-    "kit_low": ("Restock the kit", None, ""),
+    "kit_low": ("Restock it and record what arrives as received on the Stock page", "hub.view", "stock page"),
     "other": ("Do the work described", None, ""),
 }
 

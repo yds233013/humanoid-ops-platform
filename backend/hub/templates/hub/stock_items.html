@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Stock items{% endblock %}
+{% block content %}
+{% page_header title="Stock items" back_url="/hub/stock/" back_label="Stock" %}The kinds of kits and consumables the hub keeps. Adding one records a fact with nothing in stock; quantities come only from recorded movements. Minimum levels are operating settings the deployment owner provisions.{% endpage_header %}
+<section class="card"><h2>Items</h2>{% if items %}<div class="tablewrap"><table><thead><tr><th>Code</th><th>Name</th><th>Kind</th><th>Counted in</th></tr></thead><tbody>
+{% for i in items %}<tr><td><b>{{ i.code }}</b></td><td>{{ i.name }}</td><td>{% if i.reusable %}Reusable{% else %}Consumable{% endif %}</td><td>{{ i.unit }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">No item yet.</p>{% endif %}</section>
+<section class="card"><h2>Add an item</h2>{% include "ui/form.html" with form=form submit="Add item" %}</section>
+{% endblock %}

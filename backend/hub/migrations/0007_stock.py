@@ -6,7 +6,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fleet", "0010_maintenance_sql"),
         ("hub", "0006_maintenance_tasks"),
@@ -274,15 +273,11 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="stockmovement",
-            index=models.Index(
-                fields=["item", "id"], name="hub_stock_m_item_id_76a63a_idx"
-            ),
+            index=models.Index(fields=["item", "id"], name="hub_stock_m_item_id_76a63a_idx"),
         ),
         migrations.AddIndex(
             model_name="stockmovement",
-            index=models.Index(
-                fields=["visit", "item"], name="hub_stock_m_visit_i_fb3591_idx"
-            ),
+            index=models.Index(fields=["visit", "item"], name="hub_stock_m_visit_i_fb3591_idx"),
         ),
         migrations.AddConstraint(
             model_name="stockmovement",

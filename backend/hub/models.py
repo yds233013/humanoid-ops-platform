@@ -262,9 +262,9 @@ MOVEMENT_KINDS = [
 
 
 class StockItem(models.Model):
-    """A kind of kit or consumable kept at the hub (one hub in Phase 02). Configuration, not stock: created ONLY
-    by hub_create_stock_item() (SECURITY DEFINER; ops_app has SELECT), so its kind can never change under the
-    ledger. There is NO quantity column: every quantity is derived from hub_stock_movement."""
+    """A kind of kit or consumable kept at the hub (one hub in Phase 02). Configuration, not stock: created
+    ONLY by hub_create_stock_item() (SECURITY DEFINER; ops_app has SELECT), so its kind can never change under
+    the ledger. There is NO quantity column: every quantity is derived from hub_stock_movement."""
 
     code = models.CharField(max_length=12, unique=True)
     name = models.CharField(max_length=80)
@@ -290,8 +290,8 @@ class StockItem(models.Model):
 
 
 class StockReservation(models.Model):
-    """Stock held for one visit. One ACTIVE reservation per (item, visit): reserving again sets its quantity, so
-    re-planning never duplicates it, and its id is stable. Written ONLY by hub_reserve_stock(),
+    """Stock held for one visit. One ACTIVE reservation per (item, visit): reserving again sets its quantity,
+    so re-planning never duplicates it, and its id is stable. Written ONLY by hub_reserve_stock(),
     hub_release_stock() and the issue / consume functions that draw it down (ops_app has SELECT)."""
 
     item = models.ForeignKey(StockItem, on_delete=models.PROTECT, related_name="reservations")
