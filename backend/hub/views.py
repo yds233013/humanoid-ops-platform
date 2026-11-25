@@ -57,7 +57,7 @@ WORKFLOW: dict[str, tuple[str, str | None, str]] = {
         "charging page",
     ),
     "maintenance_due": ("Do the maintenance", None, ""),
-    "kit_low": ("Restock the kit", None, ""),
+    "kit_low": ("Restock the kit", "hub.view", "stock page"),  # v2 02D: derived tasks link to the Stock page
     "other": ("Do the work described", None, ""),
 }
 

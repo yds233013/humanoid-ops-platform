@@ -161,6 +161,7 @@ def test_the_02a_role_matrix():
     assert {p for p, roles in PERMISSIONS.items() if "hub_technician" in roles} == {
         "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav", "hub.record_charging", "hub.reserve_charger",
         "fleet.record_maintenance",
+        "hub.stock_move", "hub.stock_adjust", "hub.stock_reserve",  # v2 02D (8.6 stock rows)
     }  # fmt: skip
     assert "hub_technician" in ALL_ROLES
 

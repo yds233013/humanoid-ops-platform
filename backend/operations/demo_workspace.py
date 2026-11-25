@@ -225,6 +225,9 @@ SETTINGS = {
     # v2 02C: the maintenance gate is ACTIVE in the demo (the build records the rules, the qualification and
     # the baselines before any visit is planned: the rollout order of docs/runbook_deploy_backup_rollback.md)
     "maintenance_gate_active": "true",
+    # v2 02D: demo stock thresholds (fictional; labelled on Settings > Operating settings like every setting)
+    "stock_minimums": "RK=2,RC=2,WIPE=10,GLOVE=4",
+    "stock_per_visit": "RK=1",
 }
 # Visit slots (local on-site start, minutes on site). Two per crew per day never overlap (crew shift: from the
 # inspection 50 min + travel before arrival to the unloading 20 min + travel after leaving).
@@ -881,6 +884,37 @@ class _Builder:
                 continue
         self.lap("charging")
 
+    # .............................................................. kit inventory (v2 02D)
+    def stock(self) -> None:
+        """Fictional kits and consumables, every quantity recorded TODAY through the stock ledger (no invented
+        history). Each visit takes one restraint kit (demo setting): one kit per visit of the next two days is
+        received and one is written off, so the last of those visits shows At risk "Kit short"; the first few
+        are reserved. Gloves end below their minimum, so the Hub queue gets a restocking task. None of it is
+        an equipment check."""
+        from hub import stock as st  # noqa: PLC0415
+
+        ops, lily = self.u["dana.ortiz"], self.u["lily.tran"]
+        for code, name, kind, unit in (
+            ("RK", "Restraint kit", "reusable", "kits"),
+            ("RC", "Recovery kit", "reusable", "kits"),
+            ("WIPE", "Cleaning wipes", "consumable", "packs"),
+            ("GLOVE", "Nitrile gloves", "consumable", "boxes"),
+        ):
+            st.create_item(ops, code=code, name=name, kind=kind, unit=unit)
+        upcoming = [n.visit_code for n in st.visit_needs() if n.item_code == "RK"]
+        st.receive(lily, item_code="RK", quantity=max(len(upcoming), 2), note="Demo stock count")
+        st.adjust(lily, item_code="RK", delta=-1, reason="Strap torn during the count; written off")
+        st.receive(lily, item_code="RC", quantity=4, note="Demo stock count")
+        st.receive(lily, item_code="WIPE", quantity=30, note="Demo stock count")
+        st.consume(lily, item_code="WIPE", quantity=4)
+        st.receive(lily, item_code="GLOVE", quantity=6, note="Demo stock count")
+        st.consume(lily, item_code="GLOVE", quantity=3)  # 3 left, minimum 4: a restocking task
+        for code in upcoming[: min(3, max(len(upcoming) - 1, 0))]:
+            st.reserve(lily, item_code="RK", visit_code=code, quantity=1)
+        if self.s.j4_visit:
+            st.reserve(lily, item_code="RC", visit_code=self.s.j4_visit, quantity=1)
+        self.lap("stock")
+
     def build(self) -> Summary:
         self.company()
         self.configurations()
@@ -890,6 +924,7 @@ class _Builder:
         self.visits(homes)
         self.hub_tasks()
         self.charging()
+        self.stock()
         return self.s
 
 

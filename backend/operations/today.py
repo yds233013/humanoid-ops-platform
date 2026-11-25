@@ -364,11 +364,31 @@ def _charge_overlay(t: Today, visits: list[Any], rows: list[VisitRow]) -> None:
             row.status, row.label, row.tone, row.note = "at_risk", "At risk", "warn", ""
 
 
+def _stock_overlay(t: Today, visits: list[Any], rows: list[VisitRow]) -> None:
+    """v2 02D (contract 11, 8.5): a visit that cannot get the stock it takes (stock_per_visit) from what is
+    available, served in departure order, is At risk with "Kit short: ...". One statement. Planning
+    information only: an approval stays as it is, a blocked visit stays blocked, and departure still needs the
+    equipment check."""
+    from hub import stock  # noqa: PLC0415
+
+    if not visits:
+        return
+    short = stock.visit_shortages(t.at)
+    for v, row in zip(visits, rows, strict=True):
+        needs = short.get(v.visit_id)
+        if not needs or row.status == "approved":
+            continue
+        row.why += [n.reason for n in needs]
+        if row.status in ("ready", "scheduled"):
+            row.status, row.label, row.tone, row.note = "at_risk", "At risk", "warn", ""
+
+
 def _read_visits(t: Today) -> None:
     tl = readmodels.timeline(t.at, window_min=window_minutes(t.at, t.local_date))
     approvals = _usable_approvals([v.visit_id for v in tl.visits], t.at)
     rows = [_visit_row(v, approvals.get(v.visit_id), t.local_date) for v in tl.visits]
     _charge_overlay(t, tl.visits, rows)
+    _stock_overlay(t, tl.visits, rows)
     cards: list[tuple[VisitRow, list[str], datetime]] = []
     for v, row in zip(tl.visits, rows, strict=True):
         flag = next((f for f in v.flags if f.code == "READINESS_INCOMPLETE_SOON"), None)

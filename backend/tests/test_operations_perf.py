@@ -451,6 +451,41 @@ def test_hub_page_p95_on_the_scale_fixture(request):
             for i, r in enumerate(Robot.objects.order_by("id")[::3])
         ]
     )
+    # v2 02D: stock on the scale fixture (fictional): 20 items, 10 receipts each, minimums for half of them (some
+    # below), one item counted per visit. Rows written as the schema owner, as fixtures do (the app writes them
+    # only through the hub_*_stock functions).
+    from hub.models import StockItem, StockMovement
+
+    items = StockItem.objects.bulk_create(
+        [
+            StockItem(
+                code=f"K{n}",
+                name=f"Kit {n}",
+                kind="reusable" if n % 2 else "consumable",
+                unit="kits",
+                created_by=perf_user,
+                created_at=now,
+            )  # fmt: skip
+            for n in range(20)
+        ]
+    )
+    StockMovement.objects.bulk_create(
+        [
+            StockMovement(
+                item=it,
+                kind="receive",
+                quantity=1 + n % 3,
+                on_hand_delta=1 + n % 3,
+                reserved_delta=0,
+                actor=perf_user,
+                occurred_at=now,
+            )  # fmt: skip
+            for it in items
+            for n in range(10)
+        ]
+    )
+    set_setting("stock_minimums", ",".join(f"K{n}={10 + 3 * (n % 3)}" for n in range(0, 20, 2)))
+    set_setting("stock_per_visit", "K1=1")
     c = Client()
     c.force_login(perf_user)
     assert c.get("/hub/").status_code == 200  # warm-up; creates the derived tasks once
@@ -477,7 +512,8 @@ def test_hub_page_p95_on_the_scale_fixture(request):
     print("\n/hub/ on the scale fixture:", json.dumps(res, indent=1))
     assert res["p95_ms"] <= HUB_MS, res
     # v2 02B: Today and the Charging page with the charge forecast on (Today keeps its readiness budget)
-    for path, budget in (("/ops/", READINESS_MS), ("/hub/charging/", HUB_MS)):
+    # v2 02D: the Stock page (2 s p95, the Hub ceiling)
+    for path, budget in (("/ops/", READINESS_MS), ("/hub/charging/", HUB_MS), ("/hub/stock/", HUB_MS)):
         assert c.get(path).status_code == 200  # warm-up
         times, stmts = [], set()
         for _ in range(RUNS):

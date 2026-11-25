@@ -19,6 +19,10 @@ Facts (all read from the authoritative records, nothing re-decided):
   version>:<last record id or none>``: stable while one maintenance cycle runs (due soon -> overdue keeps the
   task); a new record starts a new cycle and so a new fact, as a new inspection does for ``inspection_due``.
   A task never records maintenance.
+* ``stock_level`` -> ``kit_low`` (v2 02D): an item whose AVAILABLE stock (on hand - reserved, summed from
+  the ledger) is below its owner-provisioned minimum (``stock_minimums``; an item without one never derives a
+  task). Ref: ``<item>:<id of the movement that took it below the minimum, or start>``. Restocking clears the
+  mark; a task never moves stock.
 
 Rules:
 
@@ -41,6 +45,7 @@ from typing import Any
 
 from django.db import connection
 
+from hub.stock import MINIMUMS_CTE, PER_VISIT_CTE
 from operations.exceptions import PERIODIC_STATUS_CTES
 from platform_core.middleware import current_request_id
 
@@ -53,6 +58,33 @@ WITH mode AS MATERIALIZED (SELECT fleet_production_mode() AS production),
 look AS MATERIALIZED (
   SELECT CASE WHEN value ~ '^[0-9]{1,7}$' THEN value::int END AS minutes
   FROM fleet_deploymentsetting WHERE key = 'ops_periodic_due_lookahead_min'
+),
+stock_min AS MATERIALIZED ("""
+    + MINIMUMS_CTE
+    + r"""),
+stock_per AS MATERIALIZED ("""
+    + PER_VISIT_CTE
+    + r"""),
+stock_run AS MATERIALIZED (
+  SELECT m.item_id, m.id, m.on_hand_delta - m.reserved_delta AS d,
+         sum(m.on_hand_delta - m.reserved_delta) OVER (PARTITION BY m.item_id ORDER BY m.id) AS after_avail
+  FROM hub_stock_movement m
+  WHERE m.item_id IN (SELECT i.id FROM hub_stock_item i JOIN stock_min sm ON sm.code = i.code)
+),
+stock_low AS MATERIALIZED (
+  SELECT i.id, i.code, i.name, sm.n AS minimum,
+         coalesce((SELECT r.after_avail FROM stock_run r WHERE r.item_id = i.id
+                   ORDER BY r.id DESC LIMIT 1), 0) AS available,
+         (SELECT max(r.id) FROM stock_run r
+          WHERE r.item_id = i.id AND r.after_avail < sm.n AND r.after_avail - r.d >= sm.n) AS crossing,
+         (SELECT min(vr.on_site_start - make_interval(mins => coalesce(vr.travel_out_min, 0)))
+          FROM planning_visit v JOIN planning_visitrevision vr ON vr.id = v.current_revision_id
+          WHERE EXISTS (SELECT 1 FROM stock_per sp WHERE sp.code = i.code AND sp.n > 0)
+            AND v.status <> 'cancelled'
+            AND vr.on_site_start - make_interval(mins => coalesce(vr.travel_out_min, 0)) >= %(at)s
+            AND vr.on_site_start - make_interval(mins => coalesce(vr.travel_out_min, 0))
+                < %(at)s + interval '2 days') AS next_departure
+  FROM hub_stock_item i JOIN stock_min sm ON sm.code = i.code
 ),
 facts AS MATERIALIZED (
   SELECT 'periodic_inspection'::text AS kind, 'inspection_due'::text AS type,
@@ -117,6 +149,16 @@ facts AS MATERIALIZED (
                                     (SELECT production FROM mode), %(at)s) ms
   WHERE ms.state IN ('due_soon', 'overdue', 'unknown', 'inspection_missing')
     AND ms.requirement_code IS NOT NULL
+  UNION ALL
+  -- v2 02D: an item whose available stock is below its owner-provisioned minimum. Ref
+  -- <item>:<movement that took it below> ('start' when no movement crossed the current minimum): stable
+  -- while it stays low; restocking clears it; falling below again is a new fact. Due before the next visit
+  -- that takes the item (stock_per_visit), else no due time.
+  SELECT 'stock_level', 'kit_low', sl.code || ':' || coalesce(sl.crossing::text, 'start'), NULL::bigint,
+         NULL::bigint, 'Restock ' || sl.name || ' (' || sl.code || '): below its minimum of ' || sl.minimum,
+         sl.next_departure, '/hub/stock/#item-' || sl.code
+  FROM stock_low sl
+  WHERE sl.available < sl.minimum
 ),
 ins AS (
   INSERT INTO hub_workorder (type, title, robot_id, visit_id, due_at, owner_id, status, source_kind,

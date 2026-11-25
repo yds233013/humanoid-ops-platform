@@ -1,0 +1,64 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Stock{% endblock %}
+{% block extra_css %}
+.hubchips{gap:var(--s2)} .hubchips .chip{font-size:var(--fs-sm);padding:4px 12px}
+.stockforms{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--s3)}
+.stockforms form label{display:block;margin:0 0 var(--s2)} .stockforms input,.stockforms select{width:100%}
+{% endblock %}
+{% block content %}
+{% page_header title="Stock" back_url="/hub/" back_label="Hub work queue" %}Kits and consumables at the hub: what is on hand, what is reserved for visits and what is still available. Every number is added up from the recorded movements. Stock is never the departure equipment check: each departure still needs its own check.{% endpage_header %}
+<div class="row hubchips" data-counts="stock"><span class="chip {% if below %}chip-warn{% else %}chip-neutral{% endif %}" data-count="below"><b>{{ below }}</b> below minimum</span><span class="chip {% if short %}chip-warn{% else %}chip-neutral{% endif %}" data-count="short"><b>{{ short }}</b> visit needs that cannot be met</span><span class="chip chip-neutral" data-count="reservations"><b>{{ reservations|length }}</b> reservations</span></div>
+{% if items and not any_minimum %}<div class="notice warn" role="note" data-minimums-off="1">No minimum level is set for any item, so no restocking task is created. The deployment owner sets them (stock_minimums).</div>{% endif %}
+
+<section class="sec" data-section="items"><h2>Items</h2>
+{% if items %}<div class="tablewrap"><table><thead><tr><th>Item</th><th>Kind</th><th>On hand</th><th>Reserved</th><th>Available</th><th>Out with visits</th><th>Minimum</th></tr></thead><tbody>
+{% for i in items %}<tr id="item-{{ i.code }}" data-item="{{ i.code }}" data-on-hand="{{ i.on_hand }}" data-reserved="{{ i.reserved }}" data-available="{{ i.available }}"{% if i.below_minimum %} data-below="1"{% endif %}><td><b>{{ i.code }}</b> {{ i.name }}</td><td>{% if i.reusable %}Reusable{% else %}Consumable{% endif %}</td><td>{{ i.on_hand }} {{ i.unit }}</td><td>{{ i.reserved }}</td><td><b>{{ i.available }}</b></td><td>{% if i.reusable %}{{ i.out }}{% else %}<span class="muted">-</span>{% endif %}</td>
+<td>{% if i.minimum is None %}<span class="muted">No minimum set</span>{% else %}{{ i.minimum }}{% if i.below_minimum %} {% chip "warn" "Below minimum" %}{% endif %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{% include "ui/empty.html" with title="No stock item yet." text=" The ops lead or the workspace admin adds items." %}{% endif %}
+{% if can_manage %}<p><a href="/hub/stock/items/">Add an item</a></p>{% endif %}</section>
+
+<section class="sec" data-section="needs"><h2>Visits in the next two days that still need stock</h2>
+{% if not any_per_visit %}<p class="muted" data-per-visit-off="1">No item has a per-visit amount set (stock_per_visit), so visits are not checked for stock.</p>
+{% elif needs %}<div class="tablewrap"><table><thead><tr><th>Visit</th><th>Leaves</th><th>Item</th><th>Needs</th><th>Reserved or issued</th><th>State</th></tr></thead><tbody>
+{% for n in needs %}<tr data-need="{{ n.visit_code }}:{{ n.item_code }}"{% if n.short %} data-short="1"{% endif %}><td><a href="/planning/visits/{{ n.visit_code }}/">{{ n.visit_code }}</a></td><td>{{ n.departure_at|local_dt }}</td><td>{{ n.item_name }}</td><td>{{ n.per_visit }}</td><td>{{ n.covered }}</td>
+<td>{% if n.short %}{% chip "warn" "At risk: not enough available" %}{% else %}{% chip "neutral" "Not reserved yet" %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">Every visit in the next two days has what it needs reserved or issued.</p>{% endif %}</section>
+
+<section class="sec" data-section="reservations"><h2>Reserved for visits</h2>
+{% if reservations %}<div class="tablewrap"><table><thead><tr><th>Visit</th><th>Item</th><th>Quantity</th><th></th></tr></thead><tbody>
+{% for r in reservations %}<tr data-reservation="{{ r.pk }}"><td><a href="/planning/visits/{{ r.visit.code }}/">{{ r.visit.code }}</a>{% if r.visit.status == "cancelled" %} {% chip "warn" "Visit cancelled: release this" %}{% endif %}</td><td>{{ r.item.code }} {{ r.item.name }}</td><td>{{ r.quantity }}</td><td>{% if can_reserve %}<a href="/hub/stock/reservations/{{ r.pk }}/release/">Release</a>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">Nothing is reserved.</p>{% endif %}</section>
+
+{% if can_move or can_adjust or can_reserve %}<section class="sec" data-section="forms"><h2>Record</h2><div class="stockforms">
+{% if can_move %}<form method="post" action="/hub/stock/receive/" class="card">{% csrf_token %}{% form_token %}<h3>Receive</h3>
+<label>Item <select name="item" required>{% for i in items %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
+<label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
+<label>Note (optional) <input name="note" maxlength="200"></label><button class="primary">Record receipt</button></form>
+<form method="post" action="/hub/stock/issue/" class="card">{% csrf_token %}{% form_token %}<h3>Issue</h3>
+<label>Item <select name="item" required>{% for i in items %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
+<label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
+<label>For visit (optional) <select name="visit"><option value="">No visit</option>{% for v in visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label><button class="primary">Issue</button></form>
+{% if reusable %}<form method="post" action="/hub/stock/return/" class="card">{% csrf_token %}{% form_token %}<h3>Return a kit</h3>
+<label>Item <select name="item" required>{% for i in reusable %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }} ({{ i.out }} out)</option>{% endfor %}</select></label>
+<label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
+<label>From visit (optional) <select name="visit"><option value="">Any visit</option>{% for v in visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label><button class="primary">Record return</button></form>{% endif %}
+{% if consumable %}<form method="post" action="/hub/stock/consume/" class="card">{% csrf_token %}{% form_token %}<h3>Record use</h3>
+<label>Item <select name="item" required>{% for i in consumable %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
+<label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
+<label>For visit (optional) <select name="visit"><option value="">No visit</option>{% for v in visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label><button class="primary">Record use</button></form>{% endif %}{% endif %}
+{% if can_reserve %}<form method="post" action="/hub/stock/reserve/" class="card">{% csrf_token %}{% form_token %}<h3>Reserve for a visit</h3>
+<label>Item <select name="item" required>{% for i in items %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }} ({{ i.available }} available)</option>{% endfor %}</select></label>
+<label>Visit <select name="visit" required>{% for v in visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label>
+<label>Quantity for this visit <input type="number" name="quantity" min="1" max="100000" required></label><button class="primary">Reserve</button>
+<p class="muted">Reserving again for the same visit changes its quantity; it never adds a second reservation.</p></form>{% endif %}
+{% if can_adjust %}<form method="post" action="/hub/stock/adjust/" class="card">{% csrf_token %}{% form_token %}<h3>Adjust after a count</h3>
+<label>Item <select name="item" required>{% for i in items %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
+<label>Change (+ found, - missing or written off) <input type="number" name="delta" min="-100000" max="100000" required></label>
+<label>Reason (required, kept in the audit log) <input name="reason" maxlength="200" required></label><button class="primary">Record adjustment</button></form>{% endif %}
+</div></section>{% endif %}
+
+<section class="sec" data-section="movements"><h2>Recent movements</h2>
+{% if movements %}<div class="tablewrap"><table><thead><tr><th>When</th><th>Item</th><th>What</th><th>Quantity</th><th>Visit</th><th>By</th><th>Reason</th></tr></thead><tbody>
+{% for m in movements %}<tr data-movement="{{ m.pk }}"><td>{{ m.occurred_at|local_dt }}</td><td>{{ m.item.code }}</td><td>{{ m.get_kind_display }}</td><td>{% if m.kind == "adjust" and m.on_hand_delta < 0 %}-{% endif %}{{ m.quantity }}</td><td>{{ m.visit.code|default:"-" }}</td><td>{{ m.actor.username }}</td><td>{{ m.reason|default:"-" }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">No movement recorded yet.</p>{% endif %}</section>
+{% endblock %}
