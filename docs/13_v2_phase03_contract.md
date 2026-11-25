@@ -317,3 +317,111 @@ committed. A retry returns the same stored response. Also:
 - 03B, 03C, 03D and 03E: each needs its own closure review of the previous milestone first.
 - `main`, the `v2-phase02-release` tag and both deployed Northbay demos stay unchanged. All Phase 03 work stays on
   `v2/phase03` or its milestone branches.
+
+## 11. 03A interface (frozen by the lead before code, 2026-11-25)
+
+03A is built in two steps on milestone branches off `v2/phase03`, merged in order: **03A-1 ownership and authority**,
+then **03A-2 location and transfers**. Names below are binding. Bodies are the engineers'.
+
+### 11.1 Hub ownership (03A-1)
+
+- **New `hub` FK, NOT NULL after backfill, on these tables:**
+  - `fleet_robot.hub_id` (home hub)
+  - `planning_vehicle.hub_id`
+  - `planning_person.hub_id` (home hub)
+  - `planning_visit.hub_id` (dispatch hub)
+  - `hub_workorder.hub_id`
+  - `hub_chargingsession.hub_id`
+  - `hub_chargerreservation.hub_id`
+
+  `hub_charger.hub_id` and `hub_stockitem.hub_id` become NOT NULL. Stock item codes become unique per hub.
+- **Backfill:** every existing row goes to the existing hub. If a database has rows but no hub, the migration creates
+  one hub, `HUB-1` "Main hub".
+- **Default:** a DB default `platform_core_default_hub()` (SECURITY DEFINER, fixed search_path) applies when a row is
+  inserted without a hub:
+  - no hub exists: it creates `HUB-1`;
+  - exactly one hub exists: it returns that hub;
+  - two or more hubs exist: it **raises** "hub required".
+
+  So single-hub databases and the existing tests keep working, and a multi-hub database never guesses.
+- **Removed shortcuts:** "first hub" lookups (`hub/charging.py`, `hub/0008`) are removed in favour of the record's own
+  hub.
+- **Integrity:** a charger reservation, charging session or work order must use a charger or robot of the same hub.
+  A visit's robot and vehicle must be dispatchable from the visit's hub. Enforced by triggers.
+
+### 11.2 Hub-qualified grants (03A-1, correction B)
+
+- **Grant column:** `accounts_rolegrant.hub_id` is NULL for a regional grant and set for a hub grant.
+  - Hub-scoped roles (`hub_technician`, `field_operator`) **must** have a hub (check constraint).
+  - The other roles stay regional (NULL).
+  - The active-grant uniqueness becomes (user, role, coalesce(hub, 0)).
+- **Backfill:** existing hub-scoped grants get the existing hub.
+- **Audit:** grant and revoke stay audited commands. A person's home hub never confers a grant.
+- **SQL:** `has_active_role_at(uid bigint, role text, hub bigint) RETURNS boolean` is true for an active grant of that
+  role whose hub is `hub`, or is NULL (regional). `has_active_role(uid, role)` keeps its meaning: any hub.
+- **Python:**
+  - `accounts.permissions.has_permission(user, permission, hub=None)`. With a hub, it counts only grants that apply
+    at that hub.
+  - `run_command(..., hub=<Hub or id>)`. Each command whose target belongs to a hub resolves the target's hub from the
+    **record** (never from client input) and passes it.
+- **Guarded writes:** every SECURITY DEFINER write function on a hub-owned record (stock, charging, work orders, and
+  the 03A-2 transfer functions) checks `has_active_role_at(actor, role, <hub of the locked target row>)` after taking
+  the row lock.
+- **Reads:** pages show only the hubs the user has a grant for (regional = all), with a hub filter on Today, Hub,
+  Fleet and Dispatch.
+
+### 11.3 Per-hub settings (03A-1)
+
+- `fleet_deploymentsetting` gains a nullable `hub_id`. A hub row overrides the global row for that hub.
+- Only `stock_minimums` and `stock_per_visit` are per hub in 03A.
+- `provision_settings --hub CODE` writes a hub row. Safety settings, including `maintenance_gate_active`, stay global.
+
+### 11.4 Location (03A-2, correction A)
+
+- **Custody:** hub-end custody events record `hub_id`.
+- **Location function:** `fleet_robot_location(robot bigint) RETURNS TABLE(kind text, hub_id bigint, ref text,
+  verified boolean)`.
+  - Kinds: `hub`, `vehicle`, `site`, `transfer_in_transit`, `unaccounted`, `unknown`.
+  - A robot with no custody history is at `hub(home hub)`, verified: today's rule, now with a hub.
+- **Dispatch eligibility:** a robot is dispatchable for a visit only at `hub(H)`, verified, where H = the visit's hub.
+  This is enforced in the planning eligibility view and the departure custody guard.
+
+### 11.5 Transfers (03A-2, correction C)
+
+- **Table:** `fleet_hub_transfer` (append-only): asset kind (robot, vehicle), asset, from hub, to hub, state,
+  actor, reason, times.
+- **States:**
+  - `in_transit`, then `received`, at the destination or back at the source after an abandonment;
+  - `receipt_refused` (stays in transit, with a reason);
+  - `abandoned` (by the ops lead).
+- **Functions** (SECURITY DEFINER; EXECUTE granted to `ops_app` only):
+  - `fleet_transfer_start(actor, kind, asset, to_hub, reason, request_id)`: ops lead or a grant at the source.
+  - `fleet_transfer_receive(actor, transfer, request_id)`: a grant at the destination, or at the source after
+    abandonment.
+  - `fleet_transfer_refuse(actor, transfer, reason, request_id)`
+  - `fleet_transfer_abandon(actor, transfer, reason, request_id)`: ops lead.
+- **Robot start requires:** no open run, verified at `hub(source)`, no unused authorization and no future booking. A
+  blocking booking is listed in the refusal.
+- **On start:** the robot version is bumped, holds are untouched, and the location becomes `transfer_in_transit`.
+- **On receipt:** the robot's home hub changes to the destination and custody gets a verified hub event at the
+  destination. A receipt never clears a hold.
+- **Locks:** robot row lock, then the settings lock, the same order as planning and authorization.
+- **Vehicles:** the same functions. A vehicle needs no open trip and no future trip.
+- **Stock:** `hub_transfer_stock(actor, item, quantity, to_hub, request_id)` and `hub_receive_transfer(...)` write
+  `transfer_out` and `transfer_in` ledger movements. In transit, the quantity counts at neither hub.
+
+### 11.6 03A exit tests (contract sections 5 and 10.I)
+
+- Backfill on a copy of a Phase 02 database: no null hub, counts unchanged.
+- Default hub function in all three cases: none, one, many.
+- Cross-hub write refused through a page, a service and direct SQL as `ops_app`, with forged, NULL and empty actors.
+- A technician who changes their home hub gains nothing.
+- A grant revoked during a write, in both orders, with the waiter seen in `pg_locks`.
+- Location states. A robot in transit, at a site or unaccounted cannot be proposed at either hub.
+- Transfers:
+  - a transfer racing a booking and an authorization, both orders;
+  - two simultaneous receipts: exactly one wins;
+  - holds kept at every stage;
+  - an old authorization fails after a transfer;
+  - stock reconciliation through transfer out and in.
+- Every Phase 02 and earlier suite stays green.
