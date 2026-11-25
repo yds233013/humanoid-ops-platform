@@ -729,6 +729,8 @@ SQL_COVERAGE: dict[str, Any] = {
     "INSPECTOR_NOT_QUALIFIED": "is not a qualified readiness inspector",  # planning_inspection_signer_problem
     # v2 02C "Maintenance up to date" (readiness/0009): the calendar due time against the unloading end
     "MAINTENANCE_DUE_BEFORE_RETURN": "maintenance falls due at",
+    # v2 03A-2 (10.A): a robot verified at another hub than the visit's (execution_robot_departure_problem)
+    "PLANNING_ROBOT_AT_ANOTHER_HUB": "not at hub %s of this visit",
 }
 ALLOWED_GAPS = {"RECOVERY_ONCALL_NOT_ENGINEER"}
 

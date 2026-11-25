@@ -539,6 +539,7 @@ def test_no_decision_module_imports_or_reads_the_predictor_log():
         "operations/management/commands/build_demo_workspace.py",
         "operations/management/commands/log_predictor_signals.py",
         "operations/migrations/0008_predictor_log.py",
+        "operations/migrations/0009_location_eligibility.py",  # v2 03A-2: names 0008 as its dependency only
         "operations/models.py",
         "operations/predictors.py",
         "operations/templates/operations/health.html",

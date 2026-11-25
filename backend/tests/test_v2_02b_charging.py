@@ -408,6 +408,7 @@ def test_the_02b_role_matrix():
         "hub.view", "hub.view_all", "hub.work", "hub.claim", "hub.nav", "hub.record_charging", "hub.reserve_charger",
         "fleet.record_maintenance",  # v2 02C (8.6 "Record maintenance: if qualified")
         "hub.stock_move", "hub.stock_adjust", "hub.stock_reserve",  # v2 02D (8.6 stock rows)
+        "fleet.transfer",  # v2 03A-2: move a robot or vehicle between hubs (checked at the record's hub)
     }  # fmt: skip
 
 

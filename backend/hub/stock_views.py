@@ -135,9 +135,9 @@ def stock_page(request: HttpRequest) -> HttpResponse:
 def _transfer_context(items: list[st.Level], scope: Any) -> dict[str, Any]:
     """v2 03A-2: stock on its way between the viewer's hubs, and the "Send to another hub" choices (an item is
     named CODE@HUB: codes are unique per hub). Shown only when the workspace has several hubs."""
-    from platform_core.models import Hub
-
-    hubs = list(Hub.objects.order_by("code"))
+    hubs, moving = st.transfer_board(
+        scope.ids
+    )  # one statement: every hub (destinations) and what is on its way
     codes = {h.pk: h.code for h in hubs}
     return {
         "stock_hubs": hubs if len(hubs) > 1 else [],
@@ -148,7 +148,7 @@ def _transfer_context(items: list[st.Level], scope: Any) -> dict[str, Any]:
             )
             for i in items
         ],  # fmt: skip
-        "in_transit": st.in_transit(scope.ids) if len(hubs) > 1 else [],
+        "in_transit": moving,
     }
 
 

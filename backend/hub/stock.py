@@ -19,6 +19,7 @@ READ MODELS (one statement each, whatever the number of items, movements or visi
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -32,7 +33,7 @@ from planning.models import Visit
 from platform_core.commands import CommandError, Conflict, Invalid, NotAuthenticated, PermissionDenied
 from platform_core.hubscope import owner_hub
 from platform_core.middleware import current_request_id
-from platform_core.models import AuditEvent
+from platform_core.models import AuditEvent, Hub
 
 MOVE = "hub.stock_move"  # receive, issue, return, consume
 ADJUST = "hub.stock_adjust"
@@ -273,6 +274,30 @@ m.id)
        OR m.to_hub_id = ANY(%(hubs)s::bigint[]))
 ORDER BY m.id
 """
+
+
+def transfer_board(hub_ids: Any = None) -> tuple[list[Hub], list[InTransit]]:
+    """Every hub (the destinations a page offers) and the stock on its way from or to ``hub_ids``, in ONE
+    statement (the Stock page's statement count stays pinned)."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT (SELECT coalesce(json_agg(json_build_array(h.id, h.code, h.name) ORDER BY h.code), '[]')"
+            " FROM platform_core_hub h), (SELECT coalesce(json_agg(json_build_array("
+            "t.id, t.c, t.n, t.u, t.q, t.fh, t.fhc, t.th, t.thc, t.at) ORDER BY t.id), '[]')"
+            f" FROM ({IN_TRANSIT_SQL}) t(id, c, n, u, q, fh, fhc, th, thc, at))",
+            {"hubs": _hubs_param(hub_ids)},
+        )
+        hubs_json, rows_json = cur.fetchone()
+    hubs = [Hub(id=h[0], code=h[1], name=h[2]) for h in _json(hubs_json)]
+    rows = [
+        InTransit(r[0], r[1], r[2], r[3], int(r[4]), r[5], r[6], r[7], r[8], datetime.fromisoformat(r[9]))
+        for r in _json(rows_json)
+    ]  # fmt: skip
+    return hubs, rows
+
+
+def _json(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else value
 
 
 def in_transit(hub_ids: Any = None) -> list[InTransit]:

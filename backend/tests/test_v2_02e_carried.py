@@ -286,7 +286,8 @@ def test_record_while_a_session_is_open_keeps_hours_unknown_and_the_robot_blocke
         ex.raw_session(cur, w, "stop")
     row = status()[0]
     assert (row["state"], row["open_runs"]) == ("not_due", None) and float(row["hours_used"]) < 1
-    assert fs.evaluate_eligibility(Robot.objects.get(code="R-01")).eligible_for_planning
+    # v2 03A-2 (10.A): maintenance no longer blocks; the robot is still at the site, so that is the one reason left
+    assert fs.evaluate_eligibility(Robot.objects.get(code="R-01")).reasons == ["Not at a hub: at site S-1"]
 
 
 def test_record_before_the_required_inspection_keeps_the_robot_blocked(w, app_role_conn):
@@ -443,4 +444,5 @@ def test_stock_page_statement_count_is_constant_with_1_and_6_cancelled_visit_res
     html = c.get("/hub/stock/").content.decode()
     assert html.count("data-release-cancelled=") == 6 and 'data-cancelled-held="6"' in html
     assert html.count('action="/hub/stock/release-cancelled/"') == 1  # one form (one token) for every row
-    assert one_row == six <= 20, (one_row, six)
+    # v2 03A-2: +1 constant statement (hubs and stock on its way between hubs, hub.stock.transfer_board)
+    assert one_row == six <= 21, (one_row, six)
