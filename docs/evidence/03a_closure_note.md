@@ -7,11 +7,17 @@ Contract: `docs/13_v2_phase03_contract.md` sections 10 and 11 (frozen 03A interf
 
 | Item | Value |
 |---|---|
-| Code SHA | `d589d93` (later commits docs only) |
-| Built as | 03A-1 ownership and authority (merged `b35d380`), 03A-2 location and transfers (merged `881749a`), 03A-3 role-grant write boundary and read scope (merged `d589d93`) |
-| Migrations (additive, each reverse tested) | platform_core/0005; accounts/0005-0006; fleet/0012-0016; planning/0010-0011; hub/0010-0013; execution/0006-0008; operations/0009 |
-| Full CI | CI_LINE |
-| Perf | PERF_LINE |
+| Code SHA | `5eb4079` (application code at `e406c34`; later commits docs only) |
+| Built as | 03A-1 ownership and authority (merged `b35d380`), 03A-2 location and transfers (merged `881749a`), 03A-3 role-grant write boundary and read scope (merged `d589d93`), corrective work per EM ruling section 12 (merged `5c59450`, `59e1472`), CI fixes `bbc8cd2`, demo test clock fix `3ee9a68`, walk fix W1 `e406c34` |
+| Migrations (additive, each reverse tested) | platform_core/0005; accounts/0005-0007; fleet/0012-0017; planning/0010-0012; hub/0010-0014; execution/0006-0008; operations/0009-0010 |
+| Full CI | `3ee9a68`: 45700169370 success, 2142 passed, 0 failed; final `5eb4079`: 45707863690 success, 2142 passed, 0 failed |
+| Perf | `3ee9a68`: 45700167466, 45700181274, 45700200540, all success (table below) |
+
+Perf p95 (ms), three runs on `3ee9a68`, 2 s ceiling: `/hub/` with charging tasks 219 / 275 / 270; Today with
+charging 485 / 627 / 628; `/readiness/` scale 1,298 / 1,436 / 1,362 (02E was 959 / 1,341 / 1,280). Planning candidates on
+the unchanged 200-robot fixture: 47 eligible, 25 of them away on a same-hub run ("At risk"), 40 visits confirmed; the
+predicate benchmark (eligibility view, options list) is in the perf output. The options list for one visit is
+0.5-0.9 s locally and is the slowest new piece.
 
 ## Exit gates (contract 10.I and 11.6)
 
@@ -90,21 +96,24 @@ Contract: `docs/13_v2_phase03_contract.md` sections 10 and 11 (frozen 03A interf
 - **`test_v2_01c_setup_fleet`:** registering a robot before any hub creates HUB-1, so the checklist starts at
   "2 of 6".
 
-## Decisions for the EM
+## EM ruling applied (contract section 12)
 
-1. **Strict planning location rule.** Correction 10.A is implemented as written, so a robot that is in a vehicle or
-   at a site cannot be planned for a *later* visit until it is verified back at a hub. Before 03A it was refused only
-   at authorization. This is safer, but planning tomorrow's visit for a robot that is out today is now impossible.
-   - **Keep it**, or
-   - **allow future planning while the robot is away**, keeping the hub(H)-verified rule at authorization and
-     departure, and showing "away until back at hub" as At risk.
-2. **Receipt is the transfer row, not a custody event.** The custody chain has no hub-to-hub move (custody must
-   change place kind), so the received transfer row is the verified hub location that `fleet_robot_location`
-   reads. This departs from 11.5's "custody gets a verified hub event". Accept it, or add a custody kind?
-3. **Refuse at either end.** A receipt may be refused at the source or the destination; a third hub is refused.
-4. **Lock order.** Transfers lock the asset row, then the settings lock (shared). Planning and authorization take the
-   settings lock first. It cannot deadlock: shared holders never conflict, and the exclusive holder holds no rows.
-   Accept, or align?
+- Future planning has its own location predicate (`fleet/0017`, `planning/0012`, `operations/0010`), the same in
+  Python and SQL. A robot out on an open run of the same hub can be booked for a later, non-overlapping visit, shown
+  "At risk: robot away until verified back at hub". An overdue or unknown return is refused. Authorization and
+  departure keep the strict verified-hub rule. Tests: `tests/test_v2_03a_planning.py` (10).
+- A received transfer row is the verified location, ordered against later custody. A newer custody event wins, and a
+  refused receipt never makes the asset available. Both are tested.
+- The lock graph is documented in `docs/evidence/03a_lock_graph.md`. Transfer vs settings writer and transfer vs
+  grant revocation were tested in both orders, with the waiter seen in `pg_locks`.
+- SECURITY DEFINER catalog audit (`tests/test_v2_03a_definer_audit.py`):
+  - all 33 functions have a fixed search_path, are owned by `ops_owner` and grant no EXECUTE to PUBLIC;
+  - every new function must be classified before the test passes;
+  - the actor checks of 27 functions were called as `ops_app` with NULL, 0, missing, role-less and founder actors,
+    and all were refused;
+  - one trigger function that PUBLIC could execute was found and closed (`accounts/0007`);
+  - a charger's hub can no longer change (`hub/0014`).
+- Browser walkthrough of hub permissions and transfers: `docs/evidence/03a_browser_walkthrough.md`.
 
 ## Open items and limits
 
@@ -119,6 +128,8 @@ Contract: `docs/13_v2_phase03_contract.md` sections 10 and 11 (frozen 03A interf
   guarded function.
 - An `ops_app` transaction holding grant locks can delay a revoke. An idle-in-transaction timeout would bound it;
   it is not set.
-- No browser walk in 03A: there is no new journey yet. Pages were tested through the Django test client. The
-  three-hub demo and the journeys come in 03E.
+- Creating a robot, vehicle or charger directly as `ops_app` at any hub is still possible (creation is checked in
+  Python only). Moving one is closed.
+- Refusal messages name times in UTC ("until 2026-12-08 03:35 UTC"), and the permission refusal does not name
+  the hub.
 - Usability with independent people: UNVERIFIED.
