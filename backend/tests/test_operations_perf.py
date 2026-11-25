@@ -547,6 +547,50 @@ def _hub_samples(c: Any, runs: int) -> tuple[list[float], set[int]]:
     return samples, statements
 
 
+def _planning_predicate_bench(visit_code: str) -> dict[str, Any]:
+    """v2 03A-2 section 12: p95 of the revised planning predicate on the scale fixture: the eligibility view (every
+    robot, with fleet_planning_location once per robot), one robot's visit-specific answer
+    (fleet_planning_location_problem) and the options list of one visit (view + location + busy windows)."""
+    from planning import options as popt
+    from planning.models import Visit
+
+    visit = Visit.objects.select_related("site", "current_revision").get(code=visit_code)
+    rev = visit.current_revision
+    assert rev is not None
+
+    def timed(fn: Any) -> list[float]:
+        fn()  # warm-up
+        out = []
+        for _ in range(RUNS):
+            t0 = time.perf_counter()
+            fn()
+            out.append((time.perf_counter() - t0) * 1000)
+        return out
+
+    def view() -> None:
+        with connection.cursor() as cur:
+            cur.execute("SELECT count(*) FILTER (WHERE eligible) FROM operations_robot_eligibility")
+            cur.fetchone()
+
+    def one() -> None:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT fleet_planning_location_problem(%s, %s, %s, %s)",
+                [rev.robot_id, visit.hub_id, rev.on_site_start, rev.on_site_end],
+            )
+            cur.fetchone()
+
+    out = {}
+    for name, fn in (
+        ("eligibility_view", view),
+        ("one_robot_visit_answer", one),
+        ("options", lambda: popt.plan_options(visit)),
+    ):
+        samples = timed(fn)
+        out[name] = {"p95_ms": round(p95(samples), 1), "median_ms": round(sorted(samples)[RUNS // 2], 1)}
+    return out
+
+
 @pytest.mark.perf
 @pytest.mark.django_db(transaction=True)
 def test_hub_page_p95_with_charging_tasks_on_the_scale_fixture(request, monkeypatch):
@@ -573,10 +617,35 @@ def test_hub_page_p95_with_charging_tasks_on_the_scale_fixture(request, monkeypa
     perf_user = make_user("perf_hub_charge_ops", "ops_lead")
     for n in range(1, 5):
         hc.create_charger(w.ops, code=f"C-{n}", name=f"Bay {n}")
+    # v2 03A-2 section 12: who the planner may consider. The fixture is left as built (robots on open runs stay
+    # out: they are plannable outside their runs' reserved windows, At risk); nothing is moved to the hub.
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FILTER (WHERE e.eligible), count(*) FILTER (WHERE e.eligible AND l.kind <> 'hub'),"
+            " count(*) FILTER (WHERE l.kind <> 'hub'), count(*)"
+            " FROM operations_robot_eligibility e CROSS JOIN LATERAL fleet_planning_location(e.robot_id) l"
+            " WHERE e.lifecycle <> 'retired'"
+        )
+        eligible, eligible_away, away, robots_total = cur.fetchone()
+        cur.execute(
+            "SELECT coalesce(split_part(l.planning_problem, ':', 1), 'none'), count(*)"
+            " FROM fleet_robot r CROSS JOIN LATERAL fleet_planning_location(r.id) l"
+            " WHERE l.kind <> 'hub' GROUP BY 1 ORDER BY 1"
+        )
+        away_reasons = {k: n for k, n in cur.fetchall()}
+    candidates = {
+        "robots": robots_total,
+        "eligible_candidates": eligible,
+        "eligible_away_at_risk": eligible_away,
+        "away_on_open_runs": away,
+        "away_location_reasons": away_reasons,  # "none" = plannable outside the run's window
+    }
+    print("\nplanning candidates on the scale fixture:", json.dumps(candidates))
     # confirmed visits in the next two days on distinct scale robots (their fixture visits start on DAY + 1)
     crews = ow.SCALE_CREWS
     base = timezone.now().replace(minute=0, second=0, microsecond=0)
     confirmed: list[str] = []
+    confirmed_visits: list[str] = []
     skipped: dict[str, str] = {}
     slots = [0] * crews  # each crew takes visits 7 hours apart: 20, 27, 34, 41 hours from now
     for n, robot in enumerate(w.robot_codes):
@@ -599,7 +668,10 @@ def test_hub_page_p95_with_charging_tasks_on_the_scale_fixture(request, monkeypa
         w.p.confirm_visit(w.ops, visit_code=code)
         slots[crew] += 1
         confirmed.append(robot)
-    assert len(confirmed) == CHARGE_VISITS, (len(confirmed), skipped)
+        confirmed_visits.append(code)
+    assert len(confirmed) == CHARGE_VISITS, (len(confirmed), candidates, skipped)
+    bench = _planning_predicate_bench(confirmed_visits[0])
+    print("planning predicate benchmark:", json.dumps(bench))
     c = Client()
     c.force_login(perf_user)
 
@@ -624,6 +696,8 @@ def test_hub_page_p95_with_charging_tasks_on_the_scale_fixture(request, monkeypa
         "charging_tasks": charging_tasks(),
         "confirmed_visits": len(confirmed),
         "robots_skipped": len(skipped),
+        "planning_candidates": candidates,
+        "planning_predicate": bench,
         "few": {
             "charging_tasks": few_tasks,
             "statements": sorted(few_statements),
