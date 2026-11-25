@@ -731,6 +731,10 @@ SQL_COVERAGE: dict[str, Any] = {
     "MAINTENANCE_DUE_BEFORE_RETURN": "maintenance falls due at",
     # v2 03A-2 (10.A): a robot verified at another hub than the visit's (execution_robot_departure_problem)
     "PLANNING_ROBOT_AT_ANOTHER_HUB": "not at hub %s of this visit",
+    # v2 03A-2 section 12: away on an open run (overlapping / another hub's run, or At risk): authorization and
+    # departure are refused by the strict physical predicate (execution_robot_departure_problem)
+    "PLANNING_ROBOT_AWAY_OVERLAP": "is not at hub (custody: ",
+    "PLANNING_ROBOT_AWAY": "is not at hub (custody: ",
 }
 ALLOWED_GAPS = {"RECOVERY_ONCALL_NOT_ENGINEER"}
 
