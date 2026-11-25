@@ -887,9 +887,10 @@ class _Builder:
     # .............................................................. kit inventory (v2 02D)
     def stock(self) -> None:
         """Fictional kits and consumables, every quantity recorded TODAY through the stock ledger (no invented
-        history). Each visit takes one restraint kit (demo setting): enough are received for every visit of the
-        next two days but the last, so that visit shows At risk "Kit short"; the first few are reserved. Gloves
-        end below their minimum, so the Hub queue gets a restocking task. None of it is an equipment check."""
+        history). Each visit takes one restraint kit (demo setting): one kit per visit of the next two days is
+        received and one is written off, so the last of those visits shows At risk "Kit short"; the first few
+        are reserved. Gloves end below their minimum, so the Hub queue gets a restocking task. None of it is
+        an equipment check."""
         from hub import stock as st  # noqa: PLC0415
 
         ops, lily = self.u["dana.ortiz"], self.u["lily.tran"]

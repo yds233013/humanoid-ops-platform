@@ -231,7 +231,9 @@ def test_ops_app_cannot_write_the_ledger_or_call_a_helper_or_forge_an_actor():
                 ("SELECT hub_release_stock(%s, %s, 'x', '')", [forger, rid]),
             ]
             if role != "admin":
-                calls.append(("SELECT hub_create_stock_item(%s, 'NEW', 'n', 'reusable', 'kits', '')", [forger]))
+                calls.append(
+                    ("SELECT hub_create_stock_item(%s, 'NEW', 'n', 'reusable', 'kits', '')", [forger])
+                )
             for sql, params in calls:
                 with conn.cursor() as cur, pytest.raises(psycopg.errors.InsufficientPrivilege):
                     cur.execute(sql, params)
@@ -298,12 +300,17 @@ def test_the_ledger_is_append_only_even_for_the_owner(w):
                 "DELETE FROM hub_stock_reservation", "DELETE FROM hub_stock_item"):  # fmt: skip
         with pytest.raises(Exception, match="append-only"), transaction.atomic(), connection.cursor() as cur:
             cur.execute(sql)
-    with connection.cursor() as cur:  # TRUNCATE (not testable inside the test transaction): the triggers exist
+    # TRUNCATE (not testable inside the test transaction): the triggers exist and are enabled
+    with connection.cursor() as cur:
         cur.execute(
             "SELECT c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid"
             " WHERE t.tgname LIKE 'hub_stock_%%_no_truncate' AND t.tgenabled = 'O' ORDER BY 1"
         )
-        assert [r[0] for r in cur.fetchall()] == ["hub_stock_item", "hub_stock_movement", "hub_stock_reservation"]
+        assert [r[0] for r in cur.fetchall()] == [
+            "hub_stock_item",
+            "hub_stock_movement",
+            "hub_stock_reservation",
+        ]
     # the per-kind effect check: even the owner cannot insert a movement whose effect contradicts its kind
     rk = StockItem.objects.get(code="RK").pk
     for kind, q, d_on, d_res, reason in (("receive", 2, 5, 0, ""), ("adjust", 2, -2, 0, " "),
@@ -612,7 +619,9 @@ def _safety(visit_codes: list[str]) -> dict[str, Any]:
         "authorizations": list(DepartureAuthorization.objects.order_by("id").values_list("id", "expires_at")),
         "holds": list(Hold.objects.order_by("id").values_list("id", "released_at")),
         "custody": CustodyEvent.objects.count(),
-        "eligibility": {r.code: fs.evaluate_eligibility(r).eligible_for_planning for r in Robot.objects.all()},
+        "eligibility": {
+            r.code: fs.evaluate_eligibility(r).eligible_for_planning for r in Robot.objects.all()
+        },
         "readiness": {c: readiness(c) for c in visit_codes},
     }
 
@@ -625,7 +634,8 @@ def test_stock_never_stands_in_for_the_departure_equipment_check():
     w.p.register_person(w.ops, username=w.tech.username, code="P-8")
     st.create_item(w.ops, code="RK", name="Restraint kit", kind="reusable", unit="kits")
     st.create_item(w.ops, code="WIPE", name="Wipes", kind="consumable", unit="packs")
-    bare = w.new_confirmed_visit(robot="R-02", h0=14, h1=15)  # no evidence at all: its equipment check stays missing
+    # no evidence at all: its equipment check stays missing
+    bare = w.new_confirmed_visit(robot="R-02", h0=14, h1=15)
     fs.place_hold(w.ops, scope="robot", target="R-03", source_type="maintenance", reason="noisy wrist")
     set_setting("stock_per_visit", "RK=1")
     set_setting("stock_minimums", "RK=5")
@@ -690,7 +700,10 @@ def test_below_minimum_derives_one_restocking_task_that_clears_when_restocked(w)
     (t,) = WorkOrder.objects.filter(source_kind="stock_level")
     crossing = StockMovement.objects.filter(kind="consume").get().pk
     assert (t.type, t.source_ref, t.status) == ("kit_low", f"GLOVE:{crossing}", "open")
-    assert t.link_url == "/hub/stock/#item-GLOVE" and t.title == "Restock Nitrile gloves (GLOVE): below its minimum of 3"
+    assert (
+        t.link_url == "/hub/stock/#item-GLOVE"
+        and t.title == "Restock Nitrile gloves (GLOVE): below its minimum of 3"
+    )
     page = _client(w.tech).get("/hub/").content.decode()
     assert "Open the stock page" in page and "Restock Nitrile gloves" in page
     st.receive(w.tech, item_code="GLOVE", quantity=5)
@@ -818,7 +831,9 @@ def test_the_stock_page_shows_levels_movements_and_forms_with_selects(w):
     text = r.content.decode()
     assert "Only 5 kits of Restraint kit (RK) are on hand" in text and "Nothing was changed." in text
     token = TOKEN_RE.search(c.get("/hub/stock/").content.decode()).group(1)
-    r = c.post("/hub/stock/adjust/", {"_form_token": token, "item": "RK", "delta": "-1", "reason": ""}, follow=True)
+    r = c.post(
+        "/hub/stock/adjust/", {"_form_token": token, "item": "RK", "delta": "-1", "reason": ""}, follow=True
+    )
     assert "Nothing was changed." in r.content.decode() and _level("RK").on_hand == 5
     # release page for a reservation, then the item page for the ops lead
     rid = StockReservation.objects.get().pk
