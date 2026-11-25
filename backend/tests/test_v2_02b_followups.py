@@ -42,6 +42,7 @@ HELPERS = {
     "hub_actor_has_at",
     "hub_same_hub_guard",
     "hub_owner_change_guard",
+    "hub_charger_hub_fixed",  # 03A closure (hub/0014): the trigger refusing any charger hub change
 }
 ROLES = ("public", "ops_app", "ops_owner")
 
