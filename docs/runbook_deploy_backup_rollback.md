@@ -391,6 +391,17 @@ baseline records -> `provision_settings --maintenance-gate-active true`).
 **Demo:** the Northbay demo takes the Phase 02 code only after the Phase 02 release approval. Deploy it like any
 release, then run the demo cron once ("Run now") so the rebuild includes the Phase 02 facts (8b).
 
+## 8e. Public demo: Phase 02 (2026-11-25)
+
+- Railway environment `phase02rc` (duplicated from `northbay`, then every app secret regenerated and each service's
+  `ADMIN_DATABASE_URL` checked against its own Postgres): web, Postgres, cron `demo-refresh` (12:00 UTC).
+  URL: https://web-phase02rc.up.railway.app . Code: tag `v2-phase02-release` (48f3298; application code c03fa53).
+  `DEMO_DATABASE_FINGERPRINT` = `humanoid_ops:7712060547390603323` on web and demo-refresh.
+- The Phase 01 demo (`northbay`, https://web-northbay.up.railway.app) and its database, cron and secrets are kept
+  unchanged as the fallback.
+- **Rollback of the cutover:** point the published demo link back at the Phase 01 URL. Do not change or restore the
+  Phase 02 database. Release evidence: `docs/evidence/02e_release_rehearsal.md`.
+
 ## 9. Rehearsal log
 
 | Date | What | Result |

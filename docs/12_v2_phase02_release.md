@@ -230,9 +230,9 @@ about any real robot.
 
 ## 8. Release evidence
 
-Candidate (code) SHA `c03fa53` on `v2/phase02`; closure note `docs/evidence/02e_closure_note.md`.
+Released 2026-11-25 (EM approval): tag `v2-phase02-release` = `48f3298` (application code `c03fa53`, later commits docs only). Public demo https://web-phase02rc.up.railway.app ; Phase 01 demo https://web-northbay.up.railway.app kept as the fallback. Closure note `docs/evidence/02e_closure_note.md`; release rehearsal `docs/evidence/02e_release_rehearsal.md`. Synthetic data only; no real-world robot validation.
 
 - Full CI on `c03fa53`: run 45592470559, success, 2044 passed, 15 skipped.
 - Three perf runs on `c03fa53`: 45592473454, 45592487625, 45592503381, all success (numbers in the closure note).
 - Browser walk J8, J2, J3, J4 at 1024 and 768 px: `docs/evidence/02e_acceptance_walkthrough.md`.
-- NOT DONE: Phase 02 to Phase 01 rollback rehearsal on staging (section 6). Do it on the isolated deploy before any link cutover.
+- Phase 02 to Phase 01 to Phase 02 rollback rehearsed on the isolated deploy `phase02rc`: passed (`docs/evidence/02e_release_rehearsal.md`).
