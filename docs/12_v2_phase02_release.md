@@ -206,6 +206,7 @@ codes depend on the build date, so read the build output: it names the J4 visit 
 | Kit short and restock | Today: V-0034 (tomorrow 14:00, NB-038) is "At risk: Kit short" and nothing else (the build output names it); Hub: restock tasks for restraint kits and gloves, and a hand-made one |
 | Work orders to assign and complete | Hub: hand-made and derived tasks, open, assigned and in progress |
 | Held robots | NB-019 (maintenance hold, still booked), NB-012 (failed inspection), NB-007 (incident) |
+| J3 open requests | V-0081 (H-120), V-0082, V-0083 at 18:30 on days +5 to +7, when every crew is unloaded: Suggest proposes a free robot, crew and van, and saving the plan is "Planning feasible" (V-0080 stays blocked on purpose: missing consent) |
 | Health and predictor log | `/ops/health/`: recorded availability, 3 holds, 1 incident, 2 logged departures |
 
 **Practice runs (EM ruling, contract 11 section 8.9).** The demo has exactly two short practice visits at 00:30 local

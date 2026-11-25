@@ -308,3 +308,21 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     finally:
         del os.environ[demo.FINGERPRINT_ENV]
     assert _states() == states
+
+    # ---- J3 (walk D6): Suggest proposes a full plan for the open request, and saving it is feasible
+    from planning import services as ps
+    from planning.options import plan_options, suggest
+
+    j3 = Visit.objects.get(status="requested", site__code="H-120")
+    pick = suggest(j3, plan_options(j3))
+    assert pick.found and None not in (pick.robot, pick.lead, pick.second, pick.vehicle), pick.why_not
+    assert pick.robot is not None and pick.robot.code != overdue
+    for other in Visit.objects.filter(status="requested", site__code__in=("H-133", "H-138")):
+        assert suggest(other, plan_options(other)).found, other.code
+    saved = ps.plan_visit(
+        User.objects.get(username="dana.ortiz"), visit_code=j3.code, robot_code=pick.robot.code,
+        lead_code=pick.lead.code, second_code=pick.second.code, vehicle_code=pick.vehicle.code,
+    )  # fmt: skip
+    assert saved["feasibility"] == "feasible", saved
+    j3.refresh_from_db()
+    assert j3.status == "planned" and j3.current_revision.get_feasibility_display() == "Planning feasible"
