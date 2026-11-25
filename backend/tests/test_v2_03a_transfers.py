@@ -264,8 +264,10 @@ def test_hub_end_custody_events_get_the_runs_hub_whatever_the_caller_sends(app_r
 
 # ================================================================== 10.A: never dispatchable outside hub(H)
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize("state", ["in_transit", "at_site", "unaccounted"])
+@pytest.mark.parametrize("state", ["in_transit", "unaccounted"])
 def test_a_robot_not_at_a_verified_hub_is_never_eligible_or_proposed_at_either_hub(state, app_role_conn):
+    """In transfer or unaccounted: refused for planning at either hub (contract 12). A robot at a site on an open
+    run of the visit's hub is plannable outside the run's window: tests/test_v2_03a_planning.py."""
     w = _xworld(f"ne{state[:2]}_")
     if state == "in_transit":
         robot = _robot("R-02")
@@ -886,3 +888,85 @@ def test_departure_recording_needs_a_field_role_at_the_visits_hub():
     assert not ExecutionRun.objects.filter(visit__code=w.visit).exists()
     rc.record_departure(w.field, authorization_code=auth)
     assert ExecutionRun.objects.filter(visit__code=w.visit).exists()
+
+
+# ================================================================== section 12: lock graph, both orders
+START_SQL = "SELECT fleet_transfer_start(%s, 'robot', %s, %s, 'SYN: lock graph', '')"
+SETTING_SQL = "UPDATE fleet_deploymentsetting SET value = value WHERE key = 'pre_visit_inspection_min'"
+REVOKE_SQL = "SELECT accounts_revoke_grant(%s, %s, 'SYN: left', '')"
+
+
+def _race(
+    holder_sql: tuple[str, list[Any]], holder_conn: Any, waiter_sql: tuple[str, list[Any]], waiter: Any = None
+) -> Any:
+    """``holder_sql`` runs in an open transaction on ``holder_conn``; ``waiter_sql`` runs in another connection
+    (ops_app unless ``waiter`` is given) and must be seen WAITING in pg_locks; then the holder commits. Returns the
+    waiter's outcome."""
+    waiter = waiter or _app_conn()
+    out: dict[str, Any] = {}
+    try:
+        with holder_conn.cursor() as cur:
+            cur.execute(*holder_sql)
+
+        def go() -> None:
+            try:
+                with waiter.cursor() as cur:
+                    cur.execute(*waiter_sql)
+                out["r"] = "committed"
+            except psycopg.Error as exc:
+                out["r"] = exc
+
+        t = threading.Thread(target=go)
+        t.start()
+        assert _waits(waiter.info.backend_pid), "the second transaction never waited"
+        assert "r" not in out
+        holder_conn.commit()
+        t.join(15)
+        assert not t.is_alive()
+    finally:
+        holder_conn.close()
+        waiter.close()
+    return out["r"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("first", ["transfer", "settings"])
+def test_a_transfer_and_an_exclusive_settings_writer_are_ordered_both_ways(first):
+    """The settings writer (provision_settings: a DML statement on fleet_deploymentsetting, whose statement trigger
+    takes the settings advisory lock EXCLUSIVE) and fleet_transfer_start (robot FOR UPDATE, then the same lock
+    SHARED). Whoever is second waits (pg_locks) and then completes: the writer holds no guard row, so no cycle."""
+    w = _world(f"ls{first[0]}_")
+    r2 = _robot("R-02")
+    start = (START_SQL, [w.tech_a.pk, r2.pk, w.hub_b.pk])
+    if first == "transfer":
+        # the settings writer is the schema owner (ops_app has SELECT only on the settings table)
+        result = _race(start, _app_conn(autocommit=False), (SETTING_SQL, []), waiter=_owner_conn())
+    else:
+        owner = _owner_conn(autocommit=False)
+        result = _race((SETTING_SQL, []), owner, start)
+    assert result == "committed", result
+    assert HubTransfer.objects.filter(robot=r2, seq=1).count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("first", ["transfer", "revocation"])
+def test_a_transfer_and_a_grant_revocation_are_ordered_both_ways(first):
+    """fleet_transfer_start checks the technician's grant with hub_actor_has_at (grants FOR SHARE, after the robot
+    row); accounts_revoke_grant locks the grant FOR UPDATE. Both run as ops_app. Transfer first: the revocation
+    waits, then commits (the transfer was authorized before it). Revocation first: the transfer waits, then is
+    refused and writes nothing."""
+    w = _world(f"lr{first[0]}_")
+    r2 = _robot("R-02")
+    grant = RoleGrant.objects.get(user=w.tech_a, role="hub_technician", revoked_at__isnull=True)
+    start = (START_SQL, [w.tech_a.pk, r2.pk, w.hub_b.pk])
+    revoke = (REVOKE_SQL, [w.admin.pk, grant.pk])
+    if first == "transfer":
+        result = _race(start, _app_conn(autocommit=False), revoke)
+        assert result == "committed", result
+        assert HubTransfer.objects.filter(robot=r2, seq=1).count() == 1
+    else:
+        result = _race(revoke, _app_conn(autocommit=False), start)
+        assert isinstance(result, psycopg.errors.InsufficientPrivilege), result
+        assert not HubTransfer.objects.filter(robot=r2).exists()
+    grant.refresh_from_db()
+    assert grant.revoked_at is not None
