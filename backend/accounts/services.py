@@ -10,12 +10,34 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models import PasswordState, RoleGrant
-from accounts.roles import ALL_ROLES
+from accounts.roles import ALL_ROLES, HUB_SCOPED_ROLES
 from platform_core.commands import Conflict, Invalid, NotAuthenticated, Outcome, run_command
 from platform_core.middleware import current_request_id
-from platform_core.models import AuditEvent
+from platform_core.models import AuditEvent, Hub
 
 User = get_user_model()
+
+
+def _grant_hub(role: str, hub_code: str | None) -> Hub | None:
+    """v2 03A-1 (contract 11.2): the hub of a new grant. A hub-scoped role names its hub (the only hub when
+    the
+    workspace has one and none is given); a regional role never has one. Never the person's home hub."""
+    code = (hub_code or "").strip().upper()
+    if role not in HUB_SCOPED_ROLES:
+        if code:
+            raise Invalid(f"The {role.replace('_', ' ')} role applies to every hub; do not choose a hub")
+        return None
+    if code:
+        hub = Hub.objects.filter(code=code).first()
+        if hub is None:
+            raise Invalid(f"No hub {code}")
+        return hub
+    hubs = list(Hub.objects.order_by("id")[:2])
+    if len(hubs) == 1:
+        return hubs[0]
+    if not hubs:
+        return None  # the database creates the first hub (platform_core_default_hub)
+    raise Invalid(f"Choose the hub where this person works as {role.replace('_', ' ')}")
 
 
 def grant_role(
@@ -24,23 +46,33 @@ def grant_role(
     user_id: int,
     role: str,
     valid_to: datetime | None = None,
+    hub_code: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
+    """Grant a role. Hub-scoped roles (hub technician, field operator) are held AT one hub (``hub_code``);
+    the other roles are regional. Audited by run_command, with the hub in the payload and the result."""
     payload = {"user_id": user_id, "role": role, "valid_to": valid_to.isoformat() if valid_to else None}
+    if hub_code:
+        payload["hub"] = hub_code.strip().upper()
 
     def handler() -> Outcome:
         if role not in ALL_ROLES:
             raise Invalid(f"Unknown role {role}")
         if user_id == actor.pk:
             raise Invalid("Separation of duties: you cannot grant a role to yourself")
+        hub = _grant_hub(role, hub_code)
         try:
             target = User.objects.select_for_update().get(pk=user_id)
         except User.DoesNotExist:
             raise Invalid(f"No user {user_id}") from None
-        if RoleGrant.objects.filter(user=target, role=role, revoked_at__isnull=True).exists():
-            raise Conflict(f"User {user_id} already holds an active {role} grant")
-        grant = RoleGrant.objects.create(user=target, role=role, valid_to=valid_to, granted_by=actor)
-        return Outcome("role_grant", str(grant.pk), {"user_id": user_id, "role": role})
+        active = RoleGrant.objects.filter(user=target, role=role, revoked_at__isnull=True)
+        if active.filter(hub=hub).exists() if hub is not None else active.exists():
+            where = f" at hub {hub.code}" if hub is not None else ""
+            raise Conflict(f"User {user_id} already holds an active {role} grant{where}")
+        grant = RoleGrant.objects.create(user=target, role=role, valid_to=valid_to, granted_by=actor, hub=hub)
+        hub_id = RoleGrant.objects.filter(pk=grant.pk).values_list("hub_id", flat=True).get()
+        code = Hub.objects.filter(pk=hub_id).values_list("code", flat=True).first() if hub_id else None
+        return Outcome("role_grant", str(grant.pk), {"user_id": user_id, "role": role, "hub": code})
 
     return run_command(
         actor,
@@ -69,7 +101,12 @@ def revoke_role(
         grant.revoked_at = timezone.now()
         grant.revoked_by = actor
         grant.save(update_fields=["revoked_at", "revoked_by"])
-        return Outcome("role_grant", str(grant.pk), {"revoked": True})
+        code = (
+            Hub.objects.filter(pk=grant.hub_id).values_list("code", flat=True).first()
+            if grant.hub_id
+            else None
+        )
+        return Outcome("role_grant", str(grant.pk), {"revoked": True, "role": grant.role, "hub": code})
 
     return run_command(
         actor,

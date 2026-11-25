@@ -58,6 +58,7 @@ class GrantRoleIn(serializers.Serializer):
     user_id = serializers.IntegerField()
     role = serializers.CharField()
     valid_to = serializers.CharField(required=False, allow_null=True)
+    hub = serializers.CharField(required=False, allow_blank=True, allow_null=True)  # v2 03A-1: hub code
 
 
 @api_view(["POST"])
@@ -70,6 +71,7 @@ def grant_role_view(request: Request) -> Response:
         user_id=data.validated_data["user_id"],
         role=data.validated_data["role"],
         valid_to=parse_datetime(raw) if raw else None,
+        hub_code=data.validated_data.get("hub") or None,
         idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return Response(result, status=200 if result["replayed"] else 201)

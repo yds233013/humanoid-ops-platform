@@ -6,6 +6,9 @@ Order inside every command (one database transaction, retried on deadlock / lock
   3. permission is checked INSIDE the transaction, locking the actor's qualifying role-grant rows
      FOR SHARE. revoke_role locks the grant FOR UPDATE, so a revocation and a privileged command are
      totally ordered: a command that runs after the revocation commits is denied.
+     v2 03A-1 (contract 11.2): a command whose target belongs to a hub passes ``hub=`` (the hub read from the
+     TARGET RECORD, never from client input; a callable is resolved inside the transaction). Only grants that
+     apply at that hub qualify: regional grants (hub NULL) and grants of that hub.
   4. handler (takes its own guard locks via platform_core.locks, in the global order)
   5. audit row, stored response, commit
 Any exception rolls back everything. A denial (step 3, or a PermissionDenied raised by the handler)
@@ -75,19 +78,44 @@ def _hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def holds_permission_locked(actor: User, permission: str) -> bool:
-    """Permission check that takes FOR SHARE locks on the qualifying grants. Call inside a transaction."""
+HubRef = Any  # a Hub, a hub id, a callable returning one of those (resolved in the transaction), or None
+
+
+def hub_id_of(hub: HubRef) -> int | None:
+    if callable(hub) and not hasattr(hub, "pk"):
+        hub = hub()
+    if hub is None:
+        return None
+    value: Any = getattr(hub, "pk", hub)
+    return int(value)
+
+
+def holds_permission_locked(actor: User, permission: str, hub: HubRef = None) -> bool:
+    """Permission check that takes FOR SHARE locks on the qualifying grants. Call inside a transaction.
+
+    With ``hub``, only grants that apply at that hub qualify (regional, or of that hub)."""
     allowed = sorted(PERMISSIONS.get(permission, set()))
     if not allowed or not actor.is_active:
         return False
+    hub_id = hub_id_of(hub)
     with connection.cursor() as cur:
         cur.execute(
             "SELECT id FROM accounts_rolegrant WHERE user_id = %s AND role = ANY(%s) AND revoked_at IS NULL "
             "AND valid_from <= clock_timestamp() AND (valid_to IS NULL OR valid_to > clock_timestamp()) "
+            "AND (%s::bigint IS NULL OR hub_id IS NULL OR hub_id = %s::bigint) "
             "ORDER BY id FOR SHARE",
-            [actor.pk, allowed],
+            [actor.pk, allowed, hub_id, hub_id],
         )
         return cur.fetchone() is not None
+
+
+def _denied(permission: str, hub_id: int | None) -> PermissionDenied:
+    if hub_id is None:
+        return PermissionDenied(f"Not allowed: {permission}")
+    from platform_core.models import Hub
+
+    code = Hub.objects.filter(pk=hub_id).values_list("code", flat=True).first() or str(hub_id)
+    return PermissionDenied(f"Not allowed: {permission} at hub {code}")
 
 
 def _sqlstate(exc: BaseException) -> str | None:
@@ -103,6 +131,7 @@ def run_command(
     payload: dict[str, Any],
     handler: Callable[[], Outcome],
     idempotency_key: str | None = None,
+    hub: HubRef = None,
 ) -> dict[str, Any]:
     if actor is None or not actor.is_authenticated:
         raise NotAuthenticated("Authentication required")
@@ -110,7 +139,7 @@ def run_command(
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            return _attempt(actor, name, permission, payload, handler, idempotency_key)
+            return _attempt(actor, name, permission, payload, handler, idempotency_key, hub)
         except RetryTransaction:
             if attempt < MAX_ATTEMPTS:
                 continue
@@ -143,9 +172,11 @@ def _attempt(
     payload: dict[str, Any],
     handler: Callable[[], Outcome],
     idempotency_key: str | None,
+    hub: HubRef = None,
 ) -> dict[str, Any]:
     payload_hash = _hash(payload)
     with transaction.atomic():
+        hub_id = hub_id_of(hub)
         claim = None
         if idempotency_key:
             try:
@@ -157,13 +188,13 @@ def _attempt(
                 prior = IdempotencyKey.objects.get(actor=actor, key=idempotency_key)
                 if prior.command != name or prior.payload_hash != payload_hash:
                     raise Conflict("Idempotency key reused for a different request") from None
-                # A replay is still a request: the caller must hold the permission NOW.
-                if not holds_permission_locked(actor, permission):
-                    raise PermissionDenied(f"Not allowed: {permission}") from None
+                # A replay is still a request: the caller must hold the permission NOW (at the hub).
+                if not holds_permission_locked(actor, permission, hub_id):
+                    raise _denied(permission, hub_id) from None
                 return {**prior.response, "replayed": True}
 
-        if not holds_permission_locked(actor, permission):
-            raise PermissionDenied(f"Not allowed: {permission}")
+        if not holds_permission_locked(actor, permission, hub_id):
+            raise _denied(permission, hub_id)
         checkpoint(f"authorized:{name}")
 
         outcome = handler()

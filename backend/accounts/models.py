@@ -4,11 +4,20 @@ from django.db.models import Q
 from django.db.models.functions import Now
 from django.utils import timezone
 
-from accounts.roles import ALL_ROLES
+from accounts.roles import ALL_ROLES, HUB_SCOPED_ROLES
 
 
 class RoleGrant(models.Model):
-    """A role held by a user for a period. Revoking sets revoked_at; rows are never deleted."""
+    """A role held by a user for a period. Revoking sets revoked_at; rows are never deleted.
+
+    v2 03A-1 (contract 11.2, correction B): ``hub`` is NULL for a regional grant and names the hub for a
+    hub-qualified one. Hub-scoped roles (HUB_SCOPED_ROLES) must name a hub, every other role must not (check
+    constraint). When a hub-scoped grant is inserted without a hub, the database fills in the only hub
+    (trigger
+    accounts_rolegrant_default_hub, platform_core_default_hub(): refused as "hub required" when there are
+    several), so a single-hub workspace keeps working unchanged. At most one ACTIVE grant per (user, role,
+    hub).
+    """
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="role_grants")
     role = models.CharField(max_length=40, choices=[(r, r) for r in ALL_ROLES])
@@ -24,11 +33,20 @@ class RoleGrant(models.Model):
     revoked_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )
+    hub = models.ForeignKey(
+        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(
-                fields=["user", "role"], condition=Q(revoked_at__isnull=True), name="uniq_active_role_grant"
+            # v2 03A-1: at most one ACTIVE grant per (user, role, coalesce(hub, 0)). An expression index
+            # created
+            # in SQL by accounts/0005 (uniq_active_role_grant), not declared here: Django cannot compare an
+            # expression constraint over a ForeignKey without re-detecting it on every makemigrations.
+            models.CheckConstraint(
+                condition=(Q(role__in=list(HUB_SCOPED_ROLES)) & Q(hub__isnull=False))
+                | (~Q(role__in=list(HUB_SCOPED_ROLES)) & Q(hub__isnull=True)),
+                name="role_grant_hub_scope",
             ),
             models.CheckConstraint(
                 condition=Q(valid_to__isnull=True) | Q(valid_to__gt=models.F("valid_from")),
@@ -37,7 +55,7 @@ class RoleGrant(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.user_id}:{self.role}"
+        return f"{self.user_id}:{self.role}" + (f"@{self.hub_id}" if self.hub_id else "")
 
     def is_active(self, at: object = None) -> bool:
         now = at or timezone.now()
