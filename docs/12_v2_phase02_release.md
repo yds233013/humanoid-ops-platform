@@ -230,10 +230,9 @@ about any real robot.
 
 ## 8. Release evidence
 
-To be filled at release by the lead:
+Candidate (code) SHA `c03fa53` on `v2/phase02`; closure note `docs/evidence/02e_closure_note.md`.
 
-- TODO: final SHA of `v2/phase02` after the 02E merges.
-- TODO: full CI run on that SHA.
-- TODO: three perf runs on that SHA.
-- TODO: J8 browser walk at desktop and tablet width; J2, J3 and J4 re-run (closure note `docs/evidence/02e_*`).
-- TODO: Phase 02 to Phase 01 rollback rehearsal on staging (section 6).
+- Full CI on `c03fa53`: run 45592470559, success, 2044 passed, 15 skipped.
+- Three perf runs on `c03fa53`: 45592473454, 45592487625, 45592503381, all success (numbers in the closure note).
+- Browser walk J8, J2, J3, J4 at 1024 and 768 px: `docs/evidence/02e_acceptance_walkthrough.md`.
+- NOT DONE: Phase 02 to Phase 01 rollback rehearsal on staging (section 6). Do it on the isolated deploy before any link cutover.
