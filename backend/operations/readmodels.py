@@ -505,7 +505,8 @@ mnt AS MATERIALIZED (
   WHERE s.blocking
   GROUP BY s.robot_id
 )
-SELECT v.id AS visit_id, v.code AS visit_code, rv.on_site_start, rv.on_site_end, rb.code AS robot_code,
+SELECT v.id AS visit_id, v.code AS visit_code, v.hub_id, rv.on_site_start, rv.on_site_end,
+       rb.code AS robot_code,
        coalesce((SELECT mnt.reasons FROM mnt WHERE mnt.robot_id = rv.robot_id), '{}') AS maintenance_reasons,
        ARRAY(SELECT h.code::text FROM fleet_hold h
              WHERE h.blocking AND h.released_at IS NULL
@@ -600,7 +601,7 @@ def _run_flags(r: dict[str, Any], at: datetime, th: dict[str, int | None]) -> li
     return flags
 
 
-def timeline(at: datetime, *, window_min: int) -> Timeline:
+def timeline(at: datetime, *, window_min: int, hub_ids: set[int] | None = None) -> Timeline:
     """Upcoming confirmed visits whose on-site start is before ``at + window_min`` (and whose on-site end is
     after ``at``), ordered by (on-site start, visit id), plus every open run ordered by (departure, run code),
     each flagged with the section 3 codes that apply to it.
@@ -611,7 +612,11 @@ def timeline(at: datetime, *, window_min: int) -> Timeline:
     "Not evaluated". When the window is shorter than the lookahead this is NOT the inbox's selection (the
     inbox draws from every qualifying visit in the lookahead), so coverage is window-scoped and labelled so
     on the page/API (``readiness_coverage_scope``). It is complete only when every qualifying visit of the
-    window was evaluated (never when the lookahead threshold is unconfigured)."""
+    window was evaluated (never when the lookahead threshold is unconfigured).
+
+    v2 03A-3: ``hub_ids`` (None = every hub) keeps only the visits dispatched from those hubs BEFORE the cap,
+    so a hub-scoped viewer's evaluated visits and coverage describe their own hubs. Runs are not filtered here
+    (the caller scopes them). Same statements."""
     if isinstance(window_min, bool) or not isinstance(window_min, int) or window_min <= 0:
         raise ValueError("window_min must be a positive integer number of minutes")
     from planning.models import Visit
@@ -628,6 +633,8 @@ def timeline(at: datetime, *, window_min: int) -> Timeline:
     with connection.cursor() as cur:
         cur.execute(TIMELINE_VISITS_SQL, {"at": at, "window_end": window_end})
         visit_rows = _rows(cur)
+        if hub_ids is not None:
+            visit_rows = [r for r in visit_rows if r["hub_id"] in hub_ids]
         cur.execute(TIMELINE_RUNS_SQL)
         run_rows = _rows(cur)
 
