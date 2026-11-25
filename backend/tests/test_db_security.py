@@ -63,7 +63,10 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             # Phase 02C (contract 8.8): maintenance rules, their approvals and withdrawals, and maintenance
             # records are written only through SECURITY DEFINER functions (fleet/0010). Asserted below.
             "'fleet_maintenancerule', 'fleet_maintenanceruleapproval', 'fleet_maintenancerulewithdrawal', "
-            "'fleet_maintenancerecord') "
+            "'fleet_maintenancerecord', "
+            # Phase 02D: the predictor log is written only by the owner-only operations_log_predictor_signals()
+            # (operations/0008); the runtime role has SELECT only. Asserted below.
+            "'operations_predictor_observation') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
@@ -75,6 +78,7 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "fleet_maintenanceruleapproval",
             "fleet_maintenancerulewithdrawal",
             "fleet_maintenancerecord",
+            "operations_predictor_observation",
         ):
             cur.execute(
                 "SELECT has_table_privilege(current_user, %s, 'SELECT'), "

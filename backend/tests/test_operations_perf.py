@@ -30,6 +30,7 @@ import pytest
 from django.db import connection
 
 from operations import exceptions as ox
+from operations import health as oh
 from operations import metrics as om
 from operations import readmodels as rm
 from tests import operations_world as ow
@@ -51,6 +52,8 @@ THRESHOLDS = {
     ox.CLOSEOUT_TIMEZONE_KEY: "America/Los_Angeles",
 }
 WITH_READINESS = {"timeline", "inbox_with_readiness"}
+# v2 02D: fleet health has the 2 s p95 ceiling (contract 11, 8.7)
+TWO_SECOND = WITH_READINESS | {"fleet_health"}
 
 
 def _perf_selected(config: Any) -> bool:
@@ -126,6 +129,8 @@ def build() -> tuple[Any, Any, dict[str, Any]]:
         "incident_queue": lambda: rm.incident_queue(at),
         "timeline": lambda: rm.timeline(at, window_min=WINDOW),
         "metrics": lambda: om.metrics(at - timedelta(days=1), at + timedelta(days=60), at),
+        # v2 02D: fleet health over the default 28-day window ending at `at` (one statement)
+        "fleet_health": lambda: oh.fleet_health(at - timedelta(days=28), at, at),
     }
     if hasattr(ox, "count_operational_exceptions"):  # the metrics count path
         cases["open_exceptions_count"] = lambda: ox.count_operational_exceptions(at)
@@ -171,6 +176,7 @@ def check_statements(res: dict[str, dict[str, Any]]) -> None:
         res["fleet_overview"]["evaluator_statements"] == res["incident_queue"]["evaluator_statements"] == []
     )
     assert res["metrics"]["evaluator_statements"] == []  # EM: metrics never runs the evaluator
+    assert res["fleet_health"]["statements"] == 1 and res["fleet_health"]["evaluator_statements"] == []
     es = res["timeline"]["evaluator_statements"]
     assert len(es) == 10, es  # the cap is hit on the scale fixture
     assert max(es) <= E_PIN, f"evaluator statements per visit grew past the pinned E = {E_PIN}: {es}"
@@ -282,9 +288,7 @@ def test_scale_p95(request, monkeypatch):
     elif "inbox_without_readiness" not in cases:
         print("open_exceptions(include_readiness=False) not available yet - that p95 case skipped")
     over = {
-        k: v["p95_ms"]
-        for k, v in s.items()
-        if v["p95_ms"] > (READINESS_MS if k in WITH_READINESS else FAST_MS)
+        k: v["p95_ms"] for k, v in s.items() if v["p95_ms"] > (READINESS_MS if k in TWO_SECOND else FAST_MS)
     }
     assert not over, f"p95 over budget (ms): {over}; full: {s}"
 
@@ -312,6 +316,8 @@ HTTP_CASES = {
     # Slice 7 X-10 (contract 07a section 14): the close-out page, contract 05 A1 budget (no evaluator)
     "/api/ops/closeout": FAST_MS,
     "/ops/closeout/": FAST_MS,
+    # v2 02D: fleet health + the predictor log (contract 11, 8.7: 2 s p95 ceiling, 400 ms target)
+    "/ops/health/": READINESS_MS,
 }
 
 

@@ -1,0 +1,79 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Fleet health{% endblock %}
+{% block content %}
+{% include "operations/_chrome.html" %}
+{% page_header title="Fleet health" %}Uptime share, holds, incidents and repeat failures per robot, from recorded events.{% endpage_header %}
+<div class="banner demo" data-synthetic-banner="1"><b>SYNTHETIC DEMO</b> - fictional robots and events. These are observational figures from recorded events, not a departure decision and not a prediction.</div>
+<form method="get" class="row" data-health-window="1">
+  <label>Window <select name="days">{% for d in days_choices %}<option value="{{ d }}"{% if days_selected == d|stringformat:"d" %} selected{% endif %}>Last {{ d }} days</option>{% endfor %}</select></label>
+  <button class="primary" type="submit">Show</button>
+</form>
+<p data-window="1">Window <b>{{ start_text|localize_utc_text }}</b> to <b>{{ end_text|localize_utc_text }}</b> (start inclusive, end exclusive){% if health.end_clipped %}; the end was moved back to the as-of time: later time is never counted{% endif %}.</p>
+<p class="muted">{{ health.note }} Each figure shows its numerator, denominator and window; a zero denominator shows N/A.</p>
+
+<h2>Fleet totals</h2>
+<div class="tablewrap"><table data-fleet-totals="1">
+<thead><tr><th>Measure</th><th>Value</th><th>Numerator</th><th>Denominator</th><th>What this does not establish</th></tr></thead>
+<tbody>
+<tr data-metric="uptime_share">
+  <td><b>Uptime share</b><div class="muted">in-service hours not under a blocking hold / in-service hours</div></td>
+  <td data-value="{{ health.uptime.display }}">{{ health.uptime.display }}</td>
+  <td>{{ health.uptime.numerator_h }} h</td>
+  <td>{{ health.uptime.denominator_h }} h<div class="muted">{{ health.denominator_text }}</div></td>
+  <td class="muted">{{ health.does_not_establish.uptime }}</td>
+</tr>
+<tr data-metric="holds">
+  <td><b>Holds active in the window</b></td>
+  <td data-value="{{ health.holds_total }}">{{ health.holds_total }}</td>
+  <td>{% for k, n in health.holds_by_source.items %}<span class="badge neutral">{{ k }}: {{ n }}</span> {% empty %}<span class="muted">none</span>{% endfor %}<div class="muted">{{ health.holds_open }} still open at the as-of time, {{ health.holds_released }} released</div></td>
+  <td><span class="muted">(count)</span></td>
+  <td class="muted">{{ health.does_not_establish.holds }}</td>
+</tr>
+<tr data-metric="incidents">
+  <td><b>Incidents in the window</b></td>
+  <td data-value="{{ health.incidents_total }}">{{ health.incidents_total }}</td>
+  <td>{% for k, n in health.incidents_by_type.items %}<span class="badge neutral">{{ k }}: {{ n }}</span> {% empty %}<span class="muted">none</span>{% endfor %}<div class="muted">severity: {% for k, n in health.incidents_by_severity.items %}{{ k }} {{ n }}{% if not forloop.last %}, {% endif %}{% empty %}none{% endfor %}</div></td>
+  <td><span class="muted">(count)</span></td>
+  <td class="muted">{{ health.does_not_establish.incidents }}</td>
+</tr>
+<tr data-metric="repeat_failures">
+  <td><b>Robots with a repeat failure</b><div class="muted">2 or more incidents of the same event type in the window</div></td>
+  <td data-value="{{ health.repeat_failure_robots }}">{{ health.repeat_failure_robots }}</td>
+  <td>{% for code, t, n in health.repeat_failures %}<span class="badge attn">{{ code }} {{ t }} x{{ n }}</span> {% empty %}<span class="muted">none</span>{% endfor %}</td>
+  <td><span class="muted">(count)</span></td>
+  <td class="muted">{{ health.does_not_establish.repeat }}</td>
+</tr>
+</tbody></table></div>
+{% if health.no_history %}<p class="notice warn" data-no-history="1">In service with no recorded lifecycle event, so no in-service time can be reconstructed (uptime N/A, not assumed): {{ health.no_history|join:", " }}.</p>{% endif %}
+
+<h2>Per robot</h2>
+<div class="tablewrap"><table data-robots="1">
+<thead><tr><th>Robot</th><th>Uptime share</th><th>Not held / in service</th><th>Holds by source</th><th>Incidents by type</th><th>Repeat failures</th></tr></thead>
+<tbody>
+{% for r in health.robots %}<tr data-robot="{{ r.code }}">
+  <td><a href="/fleet/{{ r.code }}/"><b>{{ r.code }}</b></a><div class="muted">{{ r.lifecycle }} now</div></td>
+  <td data-value="{{ r.uptime.display }}">{{ r.uptime.display }}{% if not r.history_recorded %}<div class="muted">no recorded lifecycle history</div>{% endif %}</td>
+  <td>{{ r.uptime.numerator_h }} h / {{ r.uptime.denominator_h }} h</td>
+  <td>{% for k, n in r.holds_by_source.items %}<span class="badge neutral">{{ k }}: {{ n }}</span> {% empty %}<span class="muted">none</span>{% endfor %}{% if r.holds_open %}<div class="muted">{{ r.holds_open }} open</div>{% endif %}</td>
+  <td>{% for k, n in r.incidents_by_type.items %}<span class="badge neutral">{{ k }}: {{ n }}</span> {% empty %}<span class="muted">none</span>{% endfor %}</td>
+  <td>{% for k, n in r.repeat_failures.items %}<span class="badge attn">{{ k }} x{{ n }}</span> {% empty %}<span class="muted">none</span>{% endfor %}</td>
+</tr>{% empty %}<tr><td colspan="6" class="muted">No robot was in service, held or reported in this window.</td></tr>{% endfor %}
+</tbody></table></div>
+
+<h2>Predictor log</h2>
+<p class="notice" data-predictor-note="1"><b>{{ predictor_log.note }}</b></p>
+<p class="muted">Showing {{ predictor_log.rows|length }} of {{ predictor_log.total }} logged departure(s), newest first.</p>
+<div class="tablewrap"><table data-predictor-log="1">
+<thead><tr><th>Departure</th><th>Robot</th><th>Battery at start</th><th>Open holds</th><th>Open incidents</th><th>Maintenance overdue</th><th>Logged</th></tr></thead>
+<tbody>
+{% for o in predictor_log.rows %}<tr data-observation="{{ o.id }}">
+  <td>{{ o.departed_at|local_dt }}<div class="muted">{{ o.visit }}</div></td>
+  <td>{{ o.robot }}</td>
+  <td>{% if o.battery_state == "known" %}{{ o.battery_soc_pct }}%<div class="muted">{{ o.battery_source }}, observed {{ o.battery_observed_at|local_dt }}</div>{% else %}Unknown<div class="muted">no reading before departure</div>{% endif %}</td>
+  <td>{{ o.open_holds }}</td>
+  <td>{{ o.open_incidents }}</td>
+  <td>{% if o.maintenance_overdue %}Yes{% else %}No{% endif %}</td>
+  <td>{{ o.observed_at|local_dt }}</td>
+</tr>{% empty %}<tr><td colspan="7" class="muted">Nothing logged yet.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}
