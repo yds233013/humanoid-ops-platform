@@ -48,8 +48,8 @@ from typing import Any
 
 from django.db import connection
 
-from fleet.location import Location
 from fleet import services as fleet_services
+from fleet.location import Location
 from fleet.models import ConfigurationManifest, Inspection, ManifestPattern, Robot
 from planning.models import Person, Reservation, Resource, Visit, VisitRevision
 from planning.services import Plan, inspection_signer_problem, live_feasibility
@@ -236,7 +236,8 @@ def _periodic_status(
 
     v2 02C: the same statement also reads the maintenance status (fleet_maintenance_block_reasons and, while
     the gate is active, the earliest calendar due time of fleet_maintenance_status), so the evaluator's
-    statement count does not grow with the new gate. v2 03A-2: and the robot's location (fleet_robot_location)."""
+    statement count does not grow with the new gate. v2 03A-2: and the robot's location
+    (fleet_robot_location)."""
     with connection.cursor() as cur:
         cur.execute(
             "SELECT s.state, s.due_at, s.inspection_id, s.rule_id,"
