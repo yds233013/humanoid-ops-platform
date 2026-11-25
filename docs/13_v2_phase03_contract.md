@@ -1,6 +1,6 @@
 # Fleet Operations Platform v2: Phase 03 contract (multiple hubs, regional dispatch, offline field use)
 
-Status: **draft for EM review**, 2026-11-25. This draft authorizes nothing by itself. Phase 02 closed and was released
+Status: **conditionally approved by the EM 2026-11-25 (section 10 binding); 03A authorized after the amendments**. Phase 02 closed and was released
 for the fictional demo at tag `v2-phase02-release` (`48f3298`, application code `c03fa53`).
 
 **Goal:** a regional ops lead can run three hubs from one place, and a crew can keep recording a visit when the phone
@@ -191,3 +191,129 @@ departure is recorded there (database gate). Robots already out continue to be r
    because it is a safety stop.
 8. **Demo:** three fictional hubs of 50, 30 and 20 robots (100 in total), each with its own crews and stock, rebuilt
    daily as today.
+
+## 10. EM review 2026-11-25: conditionally approved at `92d0db5`, binding corrections
+
+All eight decisions in section 9 are approved as proposed. Travel times fail closed (H). The existing incident reporting
+stays. Scope is one company with three hubs, not multiple tenants. Phase 03 adds no new authority for field devices and
+weakens no existing authorization, custody, maintenance or hold gate. These corrections are binding. Where they differ
+from sections 3 to 8, they win.
+
+### 10.A Home hub, current location and dispatch eligibility are three separate things
+
+- **Home hub:** administrative ownership. It changes only through an authorized, audited reassignment.
+- **Current location:** a typed state derived from custody and transfers. The states are:
+  - `hub(H)`
+  - `vehicle(V)`
+  - `site(S)`
+  - `transfer_in_transit(H1, H2)`
+  - `unaccounted`
+  - `unknown`
+
+  A robot at a site or in a vehicle is never given a made-up current hub from its home hub.
+- **Dispatch eligibility:** decided on the server from the current location, the home hub and the existing safety and
+  availability rules. Only `hub(H)`, verified, can make a robot physically available at hub H. A robot in transit,
+  at a site, unaccounted or unknown is not dispatchable at either hub.
+
+### 10.B Hub authority at the database boundary
+
+- **Grants:** hub scope comes from explicit, audited, revocable **hub-qualified role grants** (person, role, hub).
+  A home hub is not proof of authority. The ops lead acts regionally through a regional grant. A hub technician needs
+  an active grant for the affected hub.
+- **Checks in every guarded write:** each guarded database operation checks the actor, the grant, the hub and the
+  target record together, under transaction-safe locking. This covers `run_command` permission checks and the Phase 02
+  stock SECURITY DEFINER functions, which gain the hub dimension.
+- **Negative tests:** an authenticated technician
+  - supplies another hub's record id;
+  - forges an actor id;
+  - changes their own home hub (gains nothing);
+  - loses their grant while a write is in progress (both orders, with the waiter seen in `pg_locks`).
+
+### 10.C Transfer state machine
+
+- **States:** `at_source → in_transit → received_at_destination`, plus two terminal states:
+  - `abandoned`: an audited decision by the ops lead; the robot returns to `at_source` by an explicit receipt;
+  - `receipt_refused`: it stays `in_transit` with a reason until resolved.
+- **Incidents in transit:** an incident in transit places the hold as today. The transfer stays in transit, and the
+  receipt still needs a verified custody step.
+- **Concurrent receipts:** of two simultaneous receipts, exactly one wins.
+- **Locking:** robot and vehicle transfers take locks in the same order as planning, authorization and custody.
+  A transfer cannot start while the robot has a booking or authorization that the transfer would invalidate without
+  saying so; such bookings are shown as blocked.
+- **Holds:** an existing hold survives every stage. A receipt never clears a hold.
+- **Stock:** a transfer is a ledger movement out at the source and in at the destination. While in transit, the stock
+  counts at neither hub as available. Reconciliation holds at every stage.
+
+### 10.D Safety reports are never stuck behind a sequence gap
+
+- **Separate channel:** class B incidents, interruptions and stop requests use a safety-report channel. It keeps
+  idempotency, audit and causality (each report names the last confirmed sequence it saw). The server applies a
+  protective hold without waiting for ordinary sequence gaps.
+- **Stop when the session state does not allow it:** a queued stop still obeys the execution state machine. If the
+  stop cannot be applied as recorded, the server keeps or creates a protective safety state (a hold and an
+  interruption). It never claims the session stopped.
+- **Required test:** sequence 2 is missing and sequence 3 reports an incident. On reconnect the hold is placed
+  without waiting for 2.
+
+### 10.E At-most-once application, not exactly-once delivery
+
+The network cannot deliver exactly once. **I-4 is replaced by:** each idempotency key is applied at most once, and
+committed. A retry returns the same stored response. Also:
+
+- Same key, different command or payload: conflict, nothing runs.
+- Same run and sequence, different key: conflict, nothing runs.
+- Two simultaneous sync requests claiming the same sequence: one transactional outcome.
+- A failed or rejected command keeps a durable final result with its reason.
+- An explicit abandonment is an audited resolution that an old, delayed batch can never overwrite.
+- The key claim, the sequence claim and the domain command commit in **one transaction**. A crash cannot commit the
+  operation without its receipt, or the receipt without the operation.
+
+### 10.F Offline client trust and storage
+
+- **Cached data:** only previously authorized, minimal run data is cached. Never credentials, session cookies or
+  unnecessary personal information.
+- **Queue ownership:** a queue belongs to one user, one run and one device identity. Another account on the same
+  device cannot inherit it.
+- **Session expiry or remote revocation:** blocks sync until the user signs in again and is authorized again.
+- **Updates and restarts:** a service-worker update or a browser restart never silently drops unsent steps.
+- **Deleting the queue:** deleting a queue or signing out needs a clear warning and, where possible, an auditable
+  reconciliation path.
+- **What the ops lead sees:** the server cannot know the live number of unsent steps, so the ops lead's view says
+  "last reported unsent count" with its time.
+
+### 10.G Regional pause semantics
+
+- **Which pause applies:** the affected hub and zone come from the authoritative visit, destination and departure
+  context, never from a client-supplied hub id.
+- **Database checks:** new authorizations and departures check active hub and zone pauses at the database boundary.
+- **Lock order:** pause activation, authorization and departure use one common lock order. Neither can get past an
+  uncommitted pause.
+- **What a pause does not do:**
+  - it never erases recorded departures;
+  - robots already out keep reporting incidents, custody and protective actions.
+- **No bypass:** a cross-hub reassignment cannot get around a paused hub or zone.
+- **Tests:** both sides of the race, with the blocked transaction observed waiting.
+
+### 10.H Missing travel times are explicit
+
+- **Existing visits:** existing Phase 02 single-hub visits keep their recorded travel time through the migration.
+- **New dispatch:** for new cross-hub dispatch, a missing zone pair gives "Travel time unknown". It never gives an
+  invented estimate, and never the old per-visit fallback.
+- **Auditability:** travel values are versioned. Dispatch can say which approved matrix value produced a suggestion.
+  Demo values stay labelled synthetic.
+
+### 10.I Added 03A exit gates
+
+1. Every ownership migration backfills existing Phase 02 data correctly. No record that needs a hub is left with none.
+2. Cross-hub visibility and writes are tested through ordinary pages, services and direct SQL. A hub technician cannot
+   gain regional access by changing their home hub.
+3. A robot's transfer state is distinguishable from custody at a known hub. A transfer cannot create a second
+   dispatchable location.
+4. Robot, vehicle and stock transfers keep their safety, custody and inventory invariants in both concurrency orders.
+
+### 10.J Authorization status
+
+- 03A (hub ownership, custody and transfers): authorized once these amendments are committed.
+- 03B, 03C, 03D and 03E: each needs its own closure review of the previous milestone first.
+- `main`, the `v2-phase02-release` tag and both deployed Northbay demos stay unchanged. All Phase 03 work stays on
+  `v2/phase03` or its milestone branches.
