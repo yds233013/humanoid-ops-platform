@@ -23,6 +23,11 @@ Proven here:
   describe their own hubs, and no evaluator runs for another hub's visits.
 * Week and view links of the scoped pages keep ?hub=.
 
+Identity: every guarded call runs as ops_app, through a raw ops_app connection or through Django's own
+connection switched to ops_app (as_runtime_role) for the service path. Fixture setup and the owner-only steps
+(resetting the workspace flag, revoking by UPDATE to set up a state) run as the owner, as the seeds do. The page
+tests read through the Django client as the owner; their scope is a view check, not a database privilege.
+
 SYNTHETIC data only.
 """
 
@@ -55,6 +60,7 @@ from platform_core.models import AuditEvent, Hub, Workspace
 from tests.conftest import make_user
 from tests.execution_world import build_execution
 from tests.planning_world import DAY, TZ
+from tests.test_readiness_authz_boundary import as_runtime_role
 
 GRANT_SQL = "SELECT accounts_grant_role(%s, %s, %s, %s, NULL, NULL, 'rid-x')"
 REVOKE_SQL = "SELECT accounts_revoke_grant(%s, %s, 'left', 'rid-x')"
@@ -102,7 +108,8 @@ def test_grant_and_revoke_go_through_the_functions_with_one_audit_row_each(app_r
     admin, person = make_user("ga_admin", "admin"), make_user("ga_person")
     hub = Hub.objects.create(code="H1", name="Hub one")
     before = AuditEvent.objects.count()
-    out = account_services.grant_role(admin, user_id=person.pk, role="hub_technician", hub_code="H1")
+    with as_runtime_role():  # the production identity: run_command, accounts_lock_grants and the function
+        out = account_services.grant_role(admin, user_id=person.pk, role="hub_technician", hub_code="H1")
     grant = RoleGrant.objects.get(pk=int(out["entity_id"]))
     assert (grant.user_id, grant.role, grant.hub_id, grant.granted_by_id) == (person.pk, "hub_technician",
                                                                              hub.pk, admin.pk)  # fmt: skip
@@ -111,7 +118,8 @@ def test_grant_and_revoke_go_through_the_functions_with_one_audit_row_each(app_r
         ("accounts.grant_role", "committed", str(grant.pk), admin.pk)
     ]
     assert rows[0].result["hub"] == "H1" and rows[0].payload["user_id"] == person.pk
-    account_services.revoke_role(admin, grant_id=grant.pk, reason="moved on")
+    with as_runtime_role():
+        account_services.revoke_role(admin, grant_id=grant.pk, reason="moved on")
     grant.refresh_from_db()
     assert grant.revoked_at is not None and grant.revoked_by_id == admin.pk
     revoke = AuditEvent.objects.filter(command="accounts.revoke_role")
@@ -196,7 +204,7 @@ def test_only_an_active_admin_grants_and_the_existing_rules_hold(app_role_conn):
     Hub.objects.create(code="H1", name="Hub one")
     # a non-admin through the service: refused before the function, audited as denied
     before = _state()
-    with pytest.raises(PermissionDenied):
+    with as_runtime_role(), pytest.raises(PermissionDenied):
         account_services.grant_role(lead, user_id=person.pk, role="founder")
     assert _state()[:2] == before[:2]
     assert AuditEvent.objects.filter(command="accounts.grant_role", outcome="denied", actor=lead).count() == 1
@@ -227,12 +235,13 @@ def test_only_an_active_admin_grants_and_the_existing_rules_hold(app_role_conn):
             cur.execute(REVOKE_SQL, [admin.pk, gid])
         with pytest.raises(psycopg.errors.CheckViolation, match="A reason is required"):
             cur.execute("SELECT accounts_revoke_grant(%s, %s, '  ', '')", [admin.pk, gid])
-    with pytest.raises(Invalid, match="cannot grant a role to yourself"):
-        account_services.grant_role(admin, user_id=admin.pk, role="founder")
-    with pytest.raises(Conflict, match="already revoked"):
-        account_services.revoke_role(admin, grant_id=gid, reason="again")
-    # an admin can still grant and revoke anything, as before (all roles, any hub)
-    account_services.grant_role(admin, user_id=person.pk, role="field_operator", hub_code="H1")
+    with as_runtime_role():
+        with pytest.raises(Invalid, match="cannot grant a role to yourself"):
+            account_services.grant_role(admin, user_id=admin.pk, role="founder")
+        with pytest.raises(Conflict, match="already revoked"):
+            account_services.revoke_role(admin, grant_id=gid, reason="again")
+        # an admin can still grant and revoke anything, as before (all roles, any hub)
+        account_services.grant_role(admin, user_id=person.pk, role="field_operator", hub_code="H1")
     assert RoleGrant.objects.filter(user=person, role="field_operator", revoked_at__isnull=True).count() == 1
 
 
@@ -240,12 +249,13 @@ def test_only_an_active_admin_grants_and_the_existing_rules_hold(app_role_conn):
 def test_the_first_admin_bootstrap_works_once(monkeypatch, app_role_conn):
     monkeypatch.setenv("WORKSPACE_BOOTSTRAP_TOKEN", "t0ken-for-tests-only")
     assert not RoleGrant.objects.exists()
-    uid = bootstrap_first_admin(
-        token="t0ken-for-tests-only", username="boss", password="a-long-enough-password-1"
-    )
+    with as_runtime_role():  # /setup/ runs as the runtime role in production
+        uid = bootstrap_first_admin(
+            token="t0ken-for-tests-only", username="boss", password="a-long-enough-password-1"
+        )
     assert list(RoleGrant.objects.values_list("user_id", "role", "granted_by_id")) == [(uid, "admin", None)]
     assert AuditEvent.objects.filter(command="accounts.bootstrap_admin", actor_id=uid).count() == 1
-    with pytest.raises(BootstrapRefused):
+    with as_runtime_role(), pytest.raises(BootstrapRefused):
         bootstrap_first_admin(
             token="t0ken-for-tests-only", username="boss2", password="a-long-enough-password-1"
         )
