@@ -539,3 +539,57 @@ The product owner's direction was "make it as real and nice as possible with a g
 - Suggest and next-free-time oracle tests, including a missing travel pair.
 - Travel version auditability: a suggestion names its matrix version.
 - Design bar evidence per 13.1.
+
+### 13.4 EM review of 03B 2026-11-25: binding corrections before the interface is frozen
+
+The six-screen design and the 13.1 design bar are approved. Section 13.2 is amended as follows; where the two
+differ, 13.4 wins.
+
+1. **Pause authority.**
+   - A regional ops lead may pause or lift a hub or zone.
+   - A hub-scoped role may *pause* only with an explicitly defined `safety_pause` permission, granted separately. A
+     general hub grant (hub technician, field operator) is not enough.
+   - **Lifting** needs regional ops lead authority, or a separately defined and approved safety authority.
+   - Required negative direct-SQL tests: a hub technician cannot pause or lift. A hub-scoped user with the pause
+     permission still cannot lift.
+2. **Pause synchronization and scope.**
+   - **Lock order:** one documented order is used by authorization, departure, pause, lift and any change to a
+     visit's hub or zone: **the settings lock first, then the hub row.** It is reconciled with the 03A lock graph,
+     and both race orders are proved with the waiting transaction observed.
+   - **Zone:** a zone pause applies to the visit's authoritative destination zone.
+   - **Visit changes:** changing a visit's hub or zone re-checks every applicable pause before authorization or
+     departure.
+   - **Hub over zone:** a hub pause overrides zone-level state.
+   - **Unknown zone:** an unknown zone never silently gets past a zone pause. A visit with an unknown zone is treated
+     as paused while any zone pause is active at its hub.
+   - **Protective actions:** robots that have already departed can still submit protective actions.
+   - **Invariant:** a committed pause is never bypassed by a later authorization or departure transaction.
+3. **Travel matrix.**
+   - **Direction:** pairs are ordered (from zone to zone); A→B and B→A are separate unless the owner sets both.
+   - **Versions:** each ordered pair has one unique, deterministic effective version.
+   - **No retroactive changes:** a new value has effective_from of now or later, and past dispatch decisions are
+     never silently rewritten.
+   - **Retired zones:** a retired or inactive zone keeps its history. New visits cannot use it, and its pairs are not
+     offered.
+   - **Saved plans:** each saved planning decision stores the matrix version it used. A changed plan is checked fresh.
+   - **No fallback:** a missing pair has no synthetic value. For a new dispatch that needs that route, the option is
+     **blocked / unavailable** (not at risk). The board may still show "Travel time unknown" as an attention item.
+4. **Next free time search.**
+   - **Steps:** candidate starts in 30-minute steps inside the hub's operating hours (an owner setting; demo value
+     08:00-20:00 local), in the hub's IANA time zone, with daylight-saving handled by zone conversion.
+   - **A valid slot has:** a robot under section 12 planning eligibility, a qualified lead and second, a vehicle, a
+     known travel time, and no overlap.
+   - **Ranking:** fully feasible slots come first, then clearly labelled "At risk" slots (robot away on a same-hub
+     run). Within each group, earliest first, then a deterministic tie-break (robot code, crew codes, vehicle code).
+   - **Budget:** at most `dispatch_lookahead_days` (demo 7) days, and a candidate budget of 200 evaluations per
+     request. When the budget is reached, the result says so.
+   - Neither group is ever shown as a departure approval.
+5. **Measurable design review.**
+   - **Ordering:** Needs attention is ordered by safety/operational severity first (blocked, then paused, then at
+     risk), then by how close the departure is, then by a deterministic tie-break. Not "newest first".
+   - **Status words:** "Available for planning", "At risk", "Blocked", "Paused". Never words that imply physical
+     availability or clearance.
+   - **375 px:** every essential dispatch action stays reachable through the hub detail or the review flow. No action
+     is desktop-only.
+   - **Time zones:** time zones come from real IANA conversion. No zone abbreviation is hard-coded.
+- 13.3 exit tests are extended with tests for each of the five corrections.

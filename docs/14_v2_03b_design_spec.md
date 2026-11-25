@@ -1,6 +1,6 @@
 # 03B design specification: regional dispatch
 
-Status: **draft for EM review**, 2026-11-25. Written under the EM's approval of the product owner's direction:
+Status: **approved by the EM 2026-11-25 with the refinements in contract 13.4** (they win over this text). Written under the EM's approval of the product owner's direction:
 *"make it as real and nice as possible with a good taste"*. This spec is part of the 03B acceptance bar (contract 13). It
 comes before any 03B code. Every number and name in it is fictional.
 
@@ -28,7 +28,8 @@ Nothing says which hub or zone a visit belongs to. Crew names are missing, and s
    what blocks it. Nothing on the dispatch board looks like an approval to leave.
 5. **Status is words plus shape, never colour alone.** Each status is a text label with an icon (● feasible, ▲ at
    risk, ■ blocked, ◆ paused) and a colour from the existing tokens, which are tested at 4.5:1.
-6. **Local time, with the zone.** For example "Thu 26 Nov, 14:00 PST". No UTC anywhere a person reads, including
+6. **Local time, with the zone.** For example "Thu 26 Nov, 14:00 PST", where the zone label comes from real IANA
+   conversion and is never hard-coded. No UTC anywhere a person reads, including
    refusal messages.
 7. **Calm density.** Whitespace and alignment follow the existing design system (`docs/ui_components.md`, the
    `base.html` tokens). There are no new colours, no decorative badges and no animation. One accent: the primary
@@ -56,7 +57,7 @@ Each screen lists:
      Bay, Marin), kept on every link;
    - one line stating the planning/departure distinction.
 2. **Summary strip:** three numbers, each a link: "Visits today 24", "Need attention 3", "Hubs paused 0".
-3. **Needs attention:** at most 5 cards, newest risk first, with "Show all (N)". Each card shows:
+3. **Needs attention:** at most 5 cards, ordered blocked, then paused, then at risk, then by how close the departure is (contract 13.4), with "Show all (N)". Each card shows:
    - visit time;
    - home name and area;
    - hub;
@@ -75,7 +76,8 @@ Each screen lists:
 visits" expands them.
 
 **At 375 px:**
-- the summary strip and Needs attention only;
+- the summary strip and Needs attention only, while every essential action stays reachable through the hub detail or
+  the review flow;
 - each hub is a link to its own list;
 - no horizontal scroll, and tap targets of at least 44 px.
 
@@ -121,8 +123,9 @@ The week view stays as "Week list", one click away.
 - **Where:** in "Book a visit" and in S2 when nothing fits.
 - **Shows:** up to three next free slots at the visit's hub, each with its robot, crew and vehicle and a one-line why,
   for example "Tue 1 Dec, 18:30 PST · Jordan Lee and Amara Okafor · NB-001 · VAN-1".
-- **Search window:** a configurable look-ahead. A missing travel pair makes a slot "Travel time unknown"; it is
-  never proposed as free.
+- **Search window:** 30-minute steps inside the hub's operating hours, within `dispatch_lookahead_days`, with a budget of
+  200 candidates (contract 13.4). Fully feasible slots come first, then labelled "At risk" slots. A missing travel
+  pair makes the slot unavailable, never "free" and never merely at risk.
 - **Empty state:** "No free time in the next 7 days at Oakland hub. Widen the search or add crew time."
 
 ### S4. Regional pause (`/planning/pause/`)
