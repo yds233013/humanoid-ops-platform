@@ -31,6 +31,7 @@ from planning.models import Reservation, Site, SiteAssessment, Visit
 from planning.options import plan_options, suggest
 from planning.plain import ALREADY_DONE, plain_blockers, refusal_text, role_words, who_can
 from platform_core.commands import CommandError
+from platform_core.hubscope import hub_scope
 from platform_core.interaction import consume_form_token
 from platform_core.timezones import workspace_zone_name
 
@@ -72,8 +73,10 @@ def week(request: HttpRequest) -> HttpResponse:
     lo = datetime.combine(monday, datetime.min.time(), tz)
     hi = lo + timedelta(days=7)
     days: list[dict[str, Any]] = [{"date": monday + timedelta(days=i), "cards": []} for i in range(7)]
+    scope = hub_scope(request)  # v2 03A-1: visits dispatched from the viewer's hubs; ?hub=CODE narrows
     visits = (
-        Visit.objects.select_related("site", "current_revision")
+        scope.filter(Visit.objects)
+        .select_related("site", "current_revision")
         .filter(current_revision__on_site_start__lt=hi, current_revision__on_site_end__gt=lo)
         .order_by("current_revision__on_site_start")
     )
@@ -92,7 +95,11 @@ def week(request: HttpRequest) -> HttpResponse:
             "next": monday + timedelta(days=7),
             "tz": tz_name,
             "roles": sorted(active_roles(request.user)),
-            "unplanned": [_card(v) for v in Visit.objects.filter(status="requested").select_related("site")],
+            "unplanned": [
+                _card(v)
+                for v in scope.filter(Visit.objects).filter(status="requested").select_related("site")
+            ],
+            "scope": scope,
         },
     )
 
@@ -494,6 +501,7 @@ def book_visit(request: HttpRequest, code: str | None = None) -> HttpResponse:
                         travel_back_min=d["travel_back_min"],
                         tasks=d["tasks"],
                         required_scopes=d["scopes"],
+                        hub_code=d.get("hub") or None,
                     )
                 ) is not None:
                     return redirect("planning-visit", code=result["entity_id"])

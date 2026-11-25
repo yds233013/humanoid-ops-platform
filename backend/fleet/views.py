@@ -45,6 +45,7 @@ from fleet.models import (
 )
 from hub.charging import robot_battery_panel
 from platform_core.commands import CommandError
+from platform_core.hubscope import hub_scope
 from platform_core.interaction import spend_form_token
 from platform_core.timezones import workspace_zone
 
@@ -349,7 +350,8 @@ def fleet_list(request: HttpRequest) -> HttpResponse:
     if not has_permission(request.user, "fleet.read"):
         return HttpResponseForbidden("No fleet access")
     rows = []
-    robots = list(Robot.objects.order_by("code"))
+    scope = hub_scope(request)  # v2 03A-1: robots of the viewer's hubs; ?hub=CODE narrows
+    robots = list(scope.filter(Robot.objects.order_by("code")))
     periodic = periodic_status([r.pk for r in robots])
     for r in robots:
         rows.append(
@@ -361,7 +363,9 @@ def fleet_list(request: HttpRequest) -> HttpResponse:
             }
         )
     return render(
-        request, "fleet/list.html", {"rows": rows, "roles": sorted(active_roles(request.user)), **_banner()}
+        request,
+        "fleet/list.html",
+        {"rows": rows, "roles": sorted(active_roles(request.user)), "scope": scope, **_banner()},
     )
 
 

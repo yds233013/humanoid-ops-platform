@@ -2,6 +2,7 @@
 {% block title %}Fleet{% endblock %}
 {% block content %}
 {% page_header title="Fleet" %}Every robot and whether the planner may consider it. Eligible for planning never means cleared to depart; that needs a visit check.{% endpage_header %}
+{% include "ui/hub_filter.html" %}
 {% can "fleet.register_robot" as may_add %}<p class="row">{% if may_add %}<a class="btn primary" href="/fleet/new/">Add a robot</a>{% endif %}<a class="btn" href="/fleet/patterns/">Configurations</a></p>
 <div class="tablewrap"><table>
 <thead><tr><th>Robot</th><th>Lifecycle</th><th>Configuration</th><th>Planning eligibility</th><th>Periodic inspection</th><th>Open holds</th></tr></thead>

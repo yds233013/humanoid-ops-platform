@@ -22,6 +22,7 @@ from hub import stock as st
 from hub.charging_views import _allowed, _do, _valid
 from hub.models import STOCK_KINDS, StockMovement, StockReservation
 from planning.models import Visit
+from platform_core.hubscope import add_owner_hub_field, hub_scope
 from platform_core.interaction import UIForm, command_page, denied
 
 BACK = "/hub/stock/"
@@ -34,18 +35,21 @@ class QuantityForm(forms.Form):
     quantity = forms.IntegerField(min_value=1, max_value=100000)
     visit = forms.CharField(max_length=12, required=False)
     note = forms.CharField(max_length=200, required=False)
+    hub = forms.CharField(max_length=12, required=False)  # v2 03A-1: which hub's item (codes are per hub)
 
 
 class AdjustForm(forms.Form):
     item = forms.CharField(max_length=12)
     delta = forms.IntegerField(min_value=-100000, max_value=100000)
     reason = forms.CharField(max_length=200)
+    hub = forms.CharField(max_length=12, required=False)
 
 
 class ReserveForm(forms.Form):
     item = forms.CharField(max_length=12)
     visit = forms.CharField(max_length=12)
     quantity = forms.IntegerField(min_value=1, max_value=100000)
+    hub = forms.CharField(max_length=12, required=False)
 
 
 def _visit_options() -> list[Visit]:
@@ -87,14 +91,20 @@ def stock_page(request: HttpRequest) -> HttpResponse:
     roles = active_roles(request.user)
     if not _allowed(roles, "hub.view"):
         return denied(request, "hub.view")
-    items = st.levels()
-    needs = st.visit_needs()
+    scope = hub_scope(request)  # v2 03A-1: the viewer's hubs; ?hub=CODE narrows
+    items = st.levels(scope.ids)
+    needs = st.visit_needs(hub_ids=scope.ids)
     reservations = list(
-        StockReservation.objects.filter(released_at__isnull=True)
+        scope.filter(StockReservation.objects, "item__hub_id")
+        .filter(released_at__isnull=True)
         .select_related("item", "visit__current_revision")
         .order_by("visit__current_revision__on_site_start", "visit__code", "item__code")
     )
-    movements = list(StockMovement.objects.select_related("item", "visit", "actor").order_by("-id")[:RECENT])
+    movements = list(
+        scope.filter(StockMovement.objects, "item__hub_id")
+        .select_related("item", "visit", "actor")
+        .order_by("-id")[:RECENT]
+    )
     return render(
         request,
         "hub/stock.html",
@@ -117,6 +127,7 @@ def stock_page(request: HttpRequest) -> HttpResponse:
             "can_reserve": _allowed(roles, st.RESERVE),
             "can_manage": _allowed(roles, st.MANAGE_ITEMS),
             "now": timezone.now(),
+            "scope": scope,
         },
     )
 
@@ -134,7 +145,8 @@ def _quantity_post(request: HttpRequest, perm: str, fn: Any, ok: str) -> HttpRes
 def receive_view(request: HttpRequest) -> HttpResponse:
     return _quantity_post(
         request, st.MOVE,
-        lambda u, d: st.receive(u, item_code=d["item"], quantity=d["quantity"], note=d["note"]),
+        lambda u, d: st.receive(u, item_code=d["item"], quantity=d["quantity"], note=d["note"],
+                                hub_code=d["hub"] or None),
         "Stock received and added to the ledger.",
     )  # fmt: skip
 
@@ -144,7 +156,8 @@ def receive_view(request: HttpRequest) -> HttpResponse:
 def issue_view(request: HttpRequest) -> HttpResponse:
     return _quantity_post(
         request, st.MOVE,
-        lambda u, d: st.issue(u, item_code=d["item"], quantity=d["quantity"], visit_code=d["visit"] or None),
+        lambda u, d: st.issue(u, item_code=d["item"], quantity=d["quantity"], visit_code=d["visit"] or None,
+                              hub_code=d["hub"] or None),
         "Stock issued. The departure equipment check is still required.",
     )  # fmt: skip
 
@@ -155,7 +168,7 @@ def return_view(request: HttpRequest) -> HttpResponse:
     return _quantity_post(
         request, st.MOVE,
         lambda u, d: st.return_stock(u, item_code=d["item"], quantity=d["quantity"],
-                                     visit_code=d["visit"] or None),
+                                     visit_code=d["visit"] or None, hub_code=d["hub"] or None),
         "Return recorded.",
     )  # fmt: skip
 
@@ -166,7 +179,7 @@ def consume_view(request: HttpRequest) -> HttpResponse:
     return _quantity_post(
         request, st.MOVE,
         lambda u, d: st.consume(u, item_code=d["item"], quantity=d["quantity"],
-                                visit_code=d["visit"] or None),
+                                visit_code=d["visit"] or None, hub_code=d["hub"] or None),
         "Use recorded.",
     )  # fmt: skip
 
@@ -176,7 +189,8 @@ def consume_view(request: HttpRequest) -> HttpResponse:
 def adjust_view(request: HttpRequest) -> HttpResponse:
     def go() -> None:
         d = _valid(AdjustForm(request.POST))
-        st.adjust(request.user, item_code=d["item"], delta=d["delta"], reason=d["reason"])
+        st.adjust(request.user, item_code=d["item"], delta=d["delta"], reason=d["reason"],
+                  hub_code=d["hub"] or None)  # fmt: skip
 
     return _do(request, st.ADJUST, go, "Adjustment recorded with its reason.", back=BACK)
 
@@ -186,7 +200,8 @@ def adjust_view(request: HttpRequest) -> HttpResponse:
 def reserve_view(request: HttpRequest) -> HttpResponse:
     def go() -> None:
         d = _valid(ReserveForm(request.POST))
-        st.reserve(request.user, item_code=d["item"], visit_code=d["visit"], quantity=d["quantity"])
+        st.reserve(request.user, item_code=d["item"], visit_code=d["visit"], quantity=d["quantity"],
+                   hub_code=d["hub"] or None)  # fmt: skip
 
     return _do(
         request, st.RESERVE, go,
@@ -239,11 +254,22 @@ class ItemForm(UIForm):
     kind = forms.ChoiceField(label="Kind", choices=STOCK_KINDS)
     unit = forms.CharField(max_length=20, label="Counted in", initial="kits", help_text="For example kits.")
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        add_owner_hub_field(self, "The hub that keeps this item. Item codes are unique per hub.")
+
 
 @login_required
 def items_page(request: HttpRequest) -> HttpResponse:
     def call(actor: Any, d: dict[str, Any]) -> dict[str, Any]:
-        st.create_item(actor, code=d["code"], name=d["name"], kind=d["kind"], unit=d["unit"])
+        st.create_item(
+            actor,
+            code=d["code"],
+            name=d["name"],
+            kind=d["kind"],
+            unit=d["unit"],
+            hub_code=d.get("hub") or None,
+        )
         return {"entity_id": d["code"].strip().upper()}
 
     return command_page(

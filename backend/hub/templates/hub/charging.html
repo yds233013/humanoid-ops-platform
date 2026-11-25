@@ -7,6 +7,7 @@
 {% endblock %}
 {% block content %}
 {% page_header title="Charging" back_url="/hub/" back_label="Hub work queue" %}Chargers, bookings and charging sessions, and whether each robot is expected to have enough charge for its next visit. Readings and sessions are facts people record; they are never the departure battery check.{% endpage_header %}
+{% include "ui/hub_filter.html" %}
 {% if not configured %}<div class="notice warn" role="note" data-forecast-off="1">The charge forecast is Unknown for every visit: the battery freshness setting (ops_soc_fresh_min) is not provisioned. The deployment owner sets it.</div>{% endif %}
 <div class="row hubchips" data-counts="charging"><span class="chip {% if needs %}chip-warn{% else %}chip-neutral{% endif %}" data-count="needs"><b>{{ needs }}</b> needs charge</span><span class="chip {% if unknown %}chip-warn{% else %}chip-neutral{% endif %}" data-count="unknown"><b>{{ unknown }}</b> charge forecast unknown</span><span class="chip chip-neutral" data-count="sessions"><b>{{ sessions|length }}</b> charging now</span></div>
 

@@ -1,0 +1,5 @@
+{% if scope.show_filter %}<nav class="row hub-filter" aria-label="Hub" style="margin-bottom:12px;gap:8px;flex-wrap:wrap">
+<span class="muted">Hub:</span>
+<a href="?"{% if not scope.code and not scope.refused_code %} aria-current="page" class="btn small primary"{% else %} class="btn small"{% endif %}>{% if scope.regional %}All hubs{% else %}All my hubs{% endif %}</a>
+{% for h in scope.hubs %}<a href="?hub={{ h.code|urlencode }}"{% if scope.code == h.code %} aria-current="page" class="btn small primary"{% else %} class="btn small"{% endif %}>{{ h.code }}</a>{% endfor %}
+</nav>{% if scope.refused_code %}<p class="waiting">You hold no role at hub {{ scope.refused_code }}, so nothing from it is shown.</p>{% endif %}{% endif %}

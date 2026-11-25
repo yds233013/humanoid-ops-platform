@@ -20,6 +20,7 @@ leave" is shown only for a usable authorization, with who, when and until when, 
 checklist is "Checklist complete, waiting for approval". Nothing here decides or grants a departure.
 """
 
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
@@ -201,6 +202,10 @@ class Today:
     readiness_cards: list[tuple[VisitRow, list[str], datetime]] = field(default_factory=list)
     unconfigured: list[str] = field(default_factory=list)
     charge_off: bool = False  # v2 02B: ops_soc_fresh_min missing, so no charge forecast is applied
+    # v2 03A-1 (contract 11.2 "Reads"): the hubs shown; None = every hub (a regional viewer, no filter). When
+    # set, each section keeps only its rows of those hubs (one extra statement per section, whatever the
+    # size).
+    hub_ids: set[int] | None = None
 
 
 def local_day(at: datetime) -> date:
@@ -383,8 +388,36 @@ def _stock_overlay(t: Today, visits: list[Any], rows: list[VisitRow]) -> None:
             row.status, row.label, row.tone, row.note = "at_risk", "At risk", "warn", ""
 
 
+def _visit_hubs(ids: list[int], codes: list[str]) -> tuple[dict[int, int], dict[str, int]]:
+    from django.db.models import Q
+
+    from planning.models import Visit
+
+    by_id: dict[int, int] = {}
+    by_code: dict[str, int] = {}
+    if ids or codes:
+        for vid, code, hub_id in Visit.objects.filter(Q(id__in=ids) | Q(code__in=codes)).values_list(
+            "id", "code", "hub_id"
+        ):
+            by_id[vid], by_code[code] = hub_id, hub_id
+    return by_id, by_code
+
+
+def _scope_timeline(t: Today, tl: Any) -> Any:
+    """Keep only the visits and runs dispatched from the viewer's hubs (unchanged for every hub)."""
+    if t.hub_ids is None:
+        return tl
+    by_id, by_code = _visit_hubs([v.visit_id for v in tl.visits], [r.visit for r in tl.runs])
+    return dataclasses.replace(
+        tl,
+        visits=[v for v in tl.visits if by_id.get(v.visit_id) in t.hub_ids],
+        runs=[r for r in tl.runs if by_code.get(r.visit) in t.hub_ids],
+    )
+
+
 def _read_visits(t: Today) -> None:
     tl = readmodels.timeline(t.at, window_min=window_minutes(t.at, t.local_date))
+    tl = _scope_timeline(t, tl)
     approvals = _usable_approvals([v.visit_id for v in tl.visits], t.at)
     rows = [_visit_row(v, approvals.get(v.visit_id), t.local_date) for v in tl.visits]
     _charge_overlay(t, tl.visits, rows)
@@ -425,7 +458,13 @@ def _read_visits(t: Today) -> None:
 
 def _read_robots(t: Today) -> None:
     counts = {k: 0 for k, _ in ROBOT_GROUPS}
-    for r in readmodels.fleet_overview(t.at):
+    robots = readmodels.fleet_overview(t.at)
+    if t.hub_ids is not None:
+        from fleet.models import Robot
+
+        hubs = dict(Robot.objects.filter(pk__in=[r.robot_id for r in robots]).values_list("id", "hub_id"))
+        robots = [r for r in robots if hubs.get(r.robot_id) in t.hub_ids]
+    for r in robots:
         counts[robot_group(r.status_rule)] += 1
     t.robot_counts = counts
     t.robots_ok = True
@@ -644,10 +683,30 @@ def _readiness_card(row: VisitRow, why: list[str], since: datetime, roles: set[s
 
 def _read_issues(t: Today, roles: set[str]) -> None:
     page = open_exceptions(t.at, limit=INBOX_LIMIT, include_readiness=False)
-    t.inbox_cards = [card_for(x, roles) for x in page.items if x.code not in BLOCKER_CODES]
-    t.issue_count = len(page.items)
+    items = _scope_issues(t, page.items)
+    t.inbox_cards = [card_for(x, roles) for x in items if x.code not in BLOCKER_CODES]
+    t.issue_count = len(items)
     t.issue_count_exact = page.next_cursor is None
     t.issues_ok = True
+
+
+def _scope_issues(t: Today, items: list[OpsException]) -> list[OpsException]:
+    """Keep issues about the viewer's hubs' robots and visits; an issue about neither (a missing setting, a
+    configuration) is shown to everyone who can read Today."""
+    if t.hub_ids is None:
+        return list(items)
+    from fleet.models import Robot
+
+    robot_hubs = dict(
+        Robot.objects.filter(code__in={x.robot for x in items if x.robot}).values_list("code", "hub_id")
+    )
+    _ids, visit_hubs = _visit_hubs([], sorted({x.visit for x in items if x.visit}))
+    out = []
+    for x in items:
+        hub = robot_hubs.get(x.robot) if x.robot else (visit_hubs.get(x.visit) if x.visit else None)
+        if (not x.robot and not x.visit) or hub in t.hub_ids:
+            out.append(x)
+    return out
 
 
 def _read_blockers(t: Today) -> None:
@@ -664,10 +723,10 @@ SECTIONS: list[tuple[str, str]] = [
 ]
 
 
-def build_today(at: datetime, user: Any) -> Today:
+def build_today(at: datetime, user: Any, hub_ids: set[int] | None = None) -> Today:
     roles = active_roles(user)
     day = local_day(at)
-    t = Today(at=at, local_date=day, local_date_text=day.strftime("%a %-d %b"))
+    t = Today(at=at, local_date=day, local_date_text=day.strftime("%a %-d %b"), hub_ids=hub_ids)
     readers: dict[str, Any] = {
         "visits": _read_visits,
         "robots": _read_robots,

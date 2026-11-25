@@ -400,8 +400,10 @@ def coverage_view(coverage: Any) -> dict[str, Any] | None:
 def today_page(request: HttpRequest, at: datetime) -> HttpResponse:
     """The landing page (v2 01B): built only from the existing read models, see operations.today."""
     from operations import today
+    from platform_core.hubscope import hub_scope
 
-    t = today.build_today(at, request.user)
+    scope = hub_scope(request)  # v2 03A-1: the viewer's hubs; ?hub=CODE narrows
+    t = today.build_today(at, request.user, scope.ids)
     roles = active_roles(request.user)
     can = {
         perm.replace(".", "_"): bool(roles & PERMISSIONS[perm])
@@ -415,6 +417,7 @@ def today_page(request: HttpRequest, at: datetime) -> HttpResponse:
         "robot_group_notes": today.ROBOT_GROUP_NOTES,
         "today_rows": [r for r in t.visits if r.day == "today"],
         "tomorrow_rows": [r for r in t.visits if r.day == "tomorrow"],
+        "scope": scope,
     }
     return render(request, "operations/today.html", ctx)
 

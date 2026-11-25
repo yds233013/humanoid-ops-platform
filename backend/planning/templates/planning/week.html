@@ -2,6 +2,7 @@
 {% block title %}Planner{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1>Dispatch</h1><div class="sub">Week of {{ monday|date:"D j M Y" }}</div></div><div class="actions"><a class="btn primary" href="/planning/book/">Book a visit</a></div></div>
+{% include "ui/hub_filter.html" %}
 <div class="row" style="margin:0 0 12px"><a class="btn" href="?week={{ prev|date:'Y-m-d' }}">&larr; Previous</a><a class="btn" href="?">This week</a><a class="btn" href="?week={{ next|date:'Y-m-d' }}">Next &rarr;</a></div>
 <p class="muted">Times are in {% workspace_tz_label %}. "Planning feasible" means the plan has no known blockers. It is <b>never</b> permission to depart.</p>
 <div class="week">
