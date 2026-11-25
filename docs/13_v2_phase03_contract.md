@@ -425,3 +425,61 @@ then **03A-2 location and transfers**. Names below are binding. Bodies are the e
   - an old authorization fails after a transfer;
   - stock reconciliation through transfer out and in.
 - Every Phase 02 and earlier suite stays green.
+
+## 12. EM ruling 2026-11-25: future planning is separate from physical dispatch (amends 10.A)
+
+10.A mixed up two separate questions: where a robot can physically be dispatched from, and whether it can be booked
+for a future visit. **Option B is approved with these binding conditions.**
+
+| Current robot location | Future planning | Authorization and departure |
+|---|---|---|
+| Verified at the visit's hub | Allowed (existing checks) | Allowed (existing checks) |
+| At a site or in a vehicle on an open run of the **same** hub | Allowed, shown **At risk: robot away until verified back at hub** | **Blocked** |
+| At another hub | Blocked | Blocked |
+| In an inter-hub transfer | Blocked | Blocked |
+| Unaccounted or unknown | Blocked | Blocked |
+| At a hub but unverified | Blocked | Blocked |
+
+Conditions:
+- The open run belongs to the same hub as the proposed visit.
+- The new booking does not overlap the run's reserved window, including return travel and turnaround.
+- An overdue or indeterminate return (the run's reserved window has ended and the robot is still not back) is never
+  treated as a reliable availability estimate. Planning is refused.
+- Every hold, maintenance, qualification, reservation and eligibility check still applies.
+- The planner and Suggest show "At risk: robot away until verified back at hub".
+- Authorization and departure keep the strict verified-hub rule, with no exceptions.
+- The physical-dispatch predicate is not weakened. A separate **future-planning location predicate** is added, and it
+  is enforced the same way in Python and in PostgreSQL.
+
+Deviations approved with conditions:
+- **Received transfer row as the location source.** The received transfer row may establish the verified hub
+  location, provided the resolver orders it against later custody events. There must be no competing source of
+  location, and an older receipt never overrides newer custody evidence.
+- **Who may refuse a receipt.** A receipt may be refused at the source or the destination; a third hub is refused. A
+  refusal never establishes custody, completes the transfer or makes the asset available. Only an explicit, audited
+  receipt resolves it.
+- **Lock order.** It is approved only once the lock graph is documented (exclusive settings writers, grant revocation,
+  planning, transfers, authorization) and both concurrency orders are demonstrated.
+
+Security fixes found in 03A (direct role-grant writes, hub change by plain UPDATE, grant locking needing UPDATE
+privilege) are approved in scope. For closure:
+- Every new SECURITY DEFINER function has a fixed search_path, restricted EXECUTE and an actor check, and there is no
+  direct-write bypass.
+- The permission and concurrency tests run as `ops_app`.
+
+Added 03A exit tests:
+- A robot out today with a non-overlapping visit tomorrow: planning is allowed, At risk.
+- An overlap with the existing run: refused.
+- An overdue or unknown return: refused, no optimistic availability.
+- Still away when authorization is requested: refused.
+- Verified back at the right hub: normal re-evaluation.
+- In transfer or at another hub: planning refused.
+- A direct-SQL bypass of the planning location rule: refused.
+- An older transfer receipt followed by a newer custody event: the newer wins.
+- A refused receipt: the asset stays unavailable.
+
+Perf: the fixture stays representative of real operations. Robots are not moved to the hub just to pass. The perf
+run reports the eligible candidate count and benchmarks the revised predicate.
+
+03A closure package: final SHA and diff, migration and backfill evidence, exact runtime privileges, transfer and
+concurrency tests, full CI, perf, and a **browser walkthrough showing hub-scoped permissions and transfers**.
