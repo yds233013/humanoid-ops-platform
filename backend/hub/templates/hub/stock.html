@@ -12,7 +12,7 @@
 
 <section class="sec" data-section="items"><h2>Items</h2>
 {% if items %}<div class="tablewrap"><table><thead><tr><th>Item</th><th>Kind</th><th>On hand</th><th>Reserved</th><th>Available</th><th>Out with visits</th><th>Minimum</th></tr></thead><tbody>
-{% for i in items %}<tr id="item-{{ i.code }}" data-item="{{ i.code }}" data-on-hand="{{ i.on_hand }}" data-reserved="{{ i.reserved }}" data-available="{{ i.available }}"{% if i.below_minimum %} data-below="1"{% endif %}><td><b>{{ i.code }}</b> {{ i.name }}</td><td>{% if i.reusable %}Reusable{% else %}Consumable{% endif %}</td><td>{{ i.on_hand }} {{ i.unit }}</td><td>{{ i.reserved }}</td><td><b>{{ i.available }}</b></td><td>{% if i.reusable %}{{ i.out }}{% else %}<span class="muted">-</span>{% endif %}</td>
+{% for i in items %}<tr id="item-{{ i.code }}" data-item="{{ i.code }}" data-on-hand="{{ i.on_hand }}" data-reserved="{{ i.reserved }}" data-available="{{ i.available }}"{% if i.below_minimum %} data-below="1"{% endif %}><td><b>{{ i.code }}</b> {{ i.name }}</td><td>{% if i.reusable %}Reusable{% else %}Consumable{% endif %}</td><td>{{ i.on_hand_text }}</td><td>{{ i.reserved }}</td><td><b>{{ i.available }}</b></td><td>{% if i.reusable %}{{ i.out }}{% else %}<span class="muted">-</span>{% endif %}</td>
 <td>{% if i.minimum is None %}<span class="muted">No minimum set</span>{% else %}{{ i.minimum }}{% if i.below_minimum %} {% chip "warn" "Below minimum" %}{% endif %}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
 {% else %}{% include "ui/empty.html" with title="No stock item yet." text=" The ops lead or the workspace admin adds items." %}{% endif %}
 {% if can_manage %}<p><a href="/hub/stock/items/">Add an item</a></p>{% endif %}</section>
@@ -41,7 +41,7 @@
 {% if reusable %}<form method="post" action="/hub/stock/return/" class="card">{% csrf_token %}{% form_token %}<h3>Return a kit</h3>
 <label>Item <select name="item" required>{% for i in reusable %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }} ({{ i.out }} out)</option>{% endfor %}</select></label>
 <label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
-<label>From visit (optional) <select name="visit"><option value="">Any visit</option>{% for v in visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label><button class="primary">Record return</button></form>{% endif %}
+<label>From visit (optional) <select name="visit"><option value="">Any visit</option>{% for v in return_visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label><button class="primary">Record return</button></form>{% endif %}
 {% if consumable %}<form method="post" action="/hub/stock/consume/" class="card">{% csrf_token %}{% form_token %}<h3>Record use</h3>
 <label>Item <select name="item" required>{% for i in consumable %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
 <label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>

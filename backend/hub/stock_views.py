@@ -11,6 +11,7 @@ from typing import Any
 
 from django import forms
 from django.contrib.auth.decorators import login_required
+from django.db.models import Case, F, Subquery, Sum, When
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -48,16 +49,35 @@ class ReserveForm(forms.Form):
 
 
 def _visit_options() -> list[Visit]:
-    """Visits stock can be reserved for or issued to: not cancelled, from yesterday to two weeks ahead."""
+    """Visits stock can be reserved for, issued to or used for: upcoming only (not cancelled, not over, run
+    not closed), up to two weeks ahead. The SQL functions refuse anything else in any case."""
     now = timezone.now()
     return list(
         Visit.objects.filter(
-            current_revision__on_site_end__gt=now - timedelta(days=1),
+            current_revision__on_site_end__gt=now,
             current_revision__on_site_start__lt=now + VISIT_WINDOW,
         )
         .exclude(status="cancelled")
+        .exclude(execution_run__closure__isnull=False)
         .select_related("current_revision", "site")
         .order_by("current_revision__on_site_start", "code")[:200]
+    )
+
+
+def _return_visits() -> list[Visit]:
+    """Visits that have kits out with them now (issued - returned > 0), whatever their state: a kit that came
+    back from a finished visit can always be recorded."""
+    out = (
+        StockMovement.objects.filter(kind__in=["issue", "return"], visit__isnull=False, item__kind="reusable")
+        .values("visit")
+        .annotate(n=Sum(Case(When(kind="issue", then="quantity"), default=-F("quantity"))))
+        .filter(n__gt=0)
+        .values("visit")
+    )
+    return list(
+        Visit.objects.filter(pk__in=Subquery(out))
+        .select_related("current_revision")
+        .order_by("current_revision__on_site_start", "code")
     )
 
 
@@ -88,6 +108,7 @@ def stock_page(request: HttpRequest) -> HttpResponse:
             "reservations": reservations,
             "movements": movements,
             "visits": _visit_options(),
+            "return_visits": _return_visits(),
             "reusable": [i for i in items if i.reusable],
             "consumable": [i for i in items if not i.reusable],
             "can_move": _allowed(roles, st.MOVE),
