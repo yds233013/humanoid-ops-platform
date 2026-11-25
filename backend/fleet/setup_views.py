@@ -29,6 +29,7 @@ from fleet.models import (
     Robot,
 )
 from platform_core.commands import Conflict
+from platform_core.hubscope import add_owner_hub_field
 from platform_core.interaction import ROLE_WORDS, ConfirmForm, UIForm, command_page, denied
 
 FLEET_READ = "fleet.read"
@@ -40,6 +41,10 @@ class RobotForm(UIForm):
         max_length=10, label="Robot code", help_text="Your short name for the robot, for example R-21."
     )
     serial = forms.CharField(max_length=60, label="Serial number", help_text="From the robot's label.")
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        add_owner_hub_field(self, "The robot's home hub.")
 
     def clean(self) -> dict[str, Any]:
         data: dict[str, Any] = super().clean() or {}
@@ -174,7 +179,9 @@ def robot_new(request: HttpRequest) -> HttpResponse:
         permission="fleet.register_robot",
         form_class=RobotForm,
         template="fleet/setup_robot_new.html",
-        call=lambda actor, d: s.register_robot(actor, code=d["code"], serial=d["serial"]),
+        call=lambda actor, d: s.register_robot(
+            actor, code=d["code"], serial=d["serial"], hub_code=d.get("hub") or None
+        ),
         ok=lambda r: (
             f"Robot {r['entity_id']} added. It is not ready for anything yet: record its configuration next."
         ),

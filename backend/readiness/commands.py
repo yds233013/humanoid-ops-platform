@@ -322,6 +322,11 @@ def record_departure(
         payload={"authorization": authorization_code},
         handler=handler,
         idempotency_key=idempotency_key,
+        hub=lambda: (
+            DepartureAuthorization.objects.filter(code=authorization_code)
+            .values_list("visit__hub_id", flat=True)
+            .first()
+        ),
     )
 
 

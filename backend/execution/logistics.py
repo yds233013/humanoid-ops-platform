@@ -29,6 +29,7 @@ from execution.models import CustodyEvent, CustodyVerification, ExecutionRun, Re
 from fleet.models import Robot
 from planning.models import Person
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, run_command
+from platform_core.hubscope import robot_hub, run_hub
 from platform_core.locks import lock_guards
 from platform_core.testhooks import checkpoint
 
@@ -178,8 +179,9 @@ def verify_custody(actor: Any, *, run_code: str, custody_seq: int, verifier_code
         )
 
     return run_command(
-        actor, name, permission="execution.record_field_event", payload=payload, handler=handler
-    )
+        actor, name, permission="execution.record_field_event", payload=payload, handler=handler,
+        hub=run_hub(run_code),
+    )  # fmt: skip
 
 
 # ------------------------------------------------------------------ record_trip_event
@@ -276,8 +278,9 @@ def record_trip_event(actor: Any, *, run_code: str, kind: str) -> dict[str, Any]
         return Outcome("trip_event", str(te.pk), result)
 
     return run_command(
-        actor, name, permission="execution.record_field_event", payload=payload, handler=handler
-    )
+        actor, name, permission="execution.record_field_event", payload=payload, handler=handler,
+        hub=run_hub(run_code),
+    )  # fmt: skip
 
 
 # ------------------------------------------------------------------ transfer_custody
@@ -419,8 +422,9 @@ def transfer_custody(
         )
 
     return run_command(
-        actor, name, permission="execution.record_field_event", payload=payload, handler=handler
-    )
+        actor, name, permission="execution.record_field_event", payload=payload, handler=handler,
+        hub=run_hub(run_code),
+    )  # fmt: skip
 
 
 # ------------------------------------------------------------------ recover_robot (no open run)
@@ -514,4 +518,5 @@ def recover_robot(
         payload=payload,
         handler=handler,
         idempotency_key=idempotency_key,
+        hub=robot_hub(robot_code),
     )

@@ -43,6 +43,7 @@ from execution.policy import has_role_now
 from fleet.models import ConfigurationManifest, Hold, Robot
 from planning.models import Person
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, RetryTransaction, run_command
+from platform_core.hubscope import run_hub
 from platform_core.locks import lock_guards
 from platform_core.testhooks import checkpoint
 
@@ -241,6 +242,7 @@ def record_session_event(
         permission="execution.record_field_event",
         payload=payload,
         handler=handler,
+        hub=run_hub(run_code),
     )
 
 
@@ -293,6 +295,7 @@ def open_interruption(actor: Any, *, run_code: str, reason: str) -> dict[str, An
         permission="execution.record_field_event",
         payload={"run": run_code, "reason": reason},
         handler=handler,
+        hub=run_hub(run_code),
     )
 
 

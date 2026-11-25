@@ -30,6 +30,7 @@ from execution.models import SiteCheck, SiteCheckTemplate
 from fleet import services as fleet_services
 from planning.models import Site
 from platform_core.commands import Conflict, Invalid, Outcome, run_command
+from platform_core.hubscope import run_hub
 from platform_core.locks import lock_guards
 from platform_core.testhooks import checkpoint
 
@@ -175,5 +176,6 @@ def record_site_check(
         )
 
     return run_command(
-        actor, name, permission="execution.record_field_event", payload=payload, handler=handler
-    )
+        actor, name, permission="execution.record_field_event", payload=payload, handler=handler,
+        hub=run_hub(run_code),
+    )  # fmt: skip

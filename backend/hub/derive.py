@@ -69,22 +69,24 @@ stock_run AS MATERIALIZED (
   SELECT m.item_id, m.id, m.on_hand_delta - m.reserved_delta AS d,
          sum(m.on_hand_delta - m.reserved_delta) OVER (PARTITION BY m.item_id ORDER BY m.id) AS after_avail
   FROM hub_stock_movement m
-  WHERE m.item_id IN (SELECT i.id FROM hub_stock_item i JOIN stock_min sm ON sm.code = i.code)
+  WHERE m.item_id IN (SELECT i.id FROM hub_stock_item i
+                      JOIN stock_min sm ON sm.hub_id = i.hub_id AND sm.code = i.code)
 ),
 stock_low AS MATERIALIZED (
-  SELECT i.id, i.code, i.name, sm.n AS minimum,
+  SELECT i.id, i.code, i.name, sm.n AS minimum, i.hub_id,
          coalesce((SELECT r.after_avail FROM stock_run r WHERE r.item_id = i.id
                    ORDER BY r.id DESC LIMIT 1), 0) AS available,
          (SELECT max(r.id) FROM stock_run r
           WHERE r.item_id = i.id AND r.after_avail < sm.n AND r.after_avail - r.d >= sm.n) AS crossing,
          (SELECT min(vr.on_site_start - make_interval(mins => coalesce(vr.travel_out_min, 0)))
           FROM planning_visit v JOIN planning_visitrevision vr ON vr.id = v.current_revision_id
-          WHERE EXISTS (SELECT 1 FROM stock_per sp WHERE sp.code = i.code AND sp.n > 0)
-            AND v.status <> 'cancelled'
+          WHERE EXISTS (SELECT 1 FROM stock_per sp
+                        WHERE sp.hub_id = i.hub_id AND sp.code = i.code AND sp.n > 0)
+            AND v.hub_id = i.hub_id AND v.status <> 'cancelled'
             AND vr.on_site_start - make_interval(mins => coalesce(vr.travel_out_min, 0)) >= %(at)s
             AND vr.on_site_start - make_interval(mins => coalesce(vr.travel_out_min, 0))
                 < %(at)s + interval '2 days') AS next_departure
-  FROM hub_stock_item i JOIN stock_min sm ON sm.code = i.code
+  FROM hub_stock_item i JOIN stock_min sm ON sm.hub_id = i.hub_id AND sm.code = i.code
 ),
 facts AS MATERIALIZED (
   SELECT 'periodic_inspection'::text AS kind, 'inspection_due'::text AS type,
@@ -96,7 +98,8 @@ facts AS MATERIALIZED (
              THEN 'Robot ' || ps.robot_code || ' has no periodic inspection on its configuration'
            ELSE 'Periodic inspection of ' || ps.robot_code || ' is due soon' END AS title,
          ps.due_at,
-         '/readiness/robots/' || ps.robot_code || '/inspection/' AS link_url
+         '/readiness/robots/' || ps.robot_code || '/inspection/' AS link_url,
+         (SELECT rr.hub_id FROM fleet_robot rr WHERE rr.id = ps.robot_id) AS hub_id
   FROM pstat ps
   WHERE ps.state IN ('overdue', 'never_inspected')
      OR (ps.state = 'due' AND (SELECT minutes FROM look) IS NOT NULL
@@ -107,7 +110,15 @@ facts AS MATERIALIZED (
               ELSE 'Configuration ' || p.code || ' is on hold (' || h.code || ')' END,
          NULL::timestamptz,
          CASE WHEN h.scope = 'robot' THEN '/fleet/' || r.code || '/'
-              ELSE '/fleet/patterns/' || p.code || '/' END
+              ELSE '/fleet/patterns/' || p.code || '/' END,
+         -- v2 03A-1: a robot hold belongs to the robot's hub; a configuration hold (no robot) to the hub of
+         -- the
+         -- configuration's first robot, else the first hub (it stays one task, as in Phase 02)
+         coalesce(r.hub_id,
+                  (SELECT rr.hub_id FROM fleet_robot rr
+                   JOIN fleet_configurationmanifest m ON m.id = rr.current_manifest_id
+                   WHERE m.pattern_id = h.pattern_id ORDER BY rr.id LIMIT 1),
+                  (SELECT min(hh.id) FROM platform_core_hub hh), platform_core_default_hub())
   FROM fleet_hold h
   LEFT JOIN fleet_robot r ON r.id = h.robot_id
   LEFT JOIN fleet_manifestpattern p ON p.id = h.pattern_id
@@ -115,7 +126,7 @@ facts AS MATERIALIZED (
   UNION ALL
   SELECT 'equipment_check', 'equipment_failure', e.code, e.robot_id, e.visit_id,
          'Equipment check ' || e.code || ' failed for visit ' || v.code,
-         vr.on_site_start, '/readiness/visits/' || v.code || '/'
+         vr.on_site_start, '/readiness/visits/' || v.code || '/', v.hub_id
   FROM (
     SELECT DISTINCT ON (ev.visit_id) ev.*
     FROM readiness_readinessevidence ev
@@ -129,7 +140,7 @@ facts AS MATERIALIZED (
   UNION ALL
   -- v2 02B: visits today and tomorrow whose robot needs charge before departure (hub.charging forecast)
   SELECT 'charge_forecast', 'charging', c ->> 'ref', (c ->> 'robot_id')::bigint, (c ->> 'visit_id')::bigint,
-         c ->> 'title', (c ->> 'due_at')::timestamptz, '/hub/charging/'
+         c ->> 'title', (c ->> 'due_at')::timestamptz, '/hub/charging/', (c ->> 'hub_id')::bigint
   FROM jsonb_array_elements(%(charge)s::jsonb) c
   UNION ALL
   -- v2 02C: maintenance due soon, overdue, unknown or waiting for its inspection, per robot and
@@ -144,7 +155,8 @@ facts AS MATERIALIZED (
            WHEN 'unknown' THEN ' has an unknown status'
            WHEN 'inspection_missing' THEN ' needs its post-maintenance inspection'
            ELSE ' is due soon' END,
-         ms.due_at, '/fleet/' || ms.robot_code || '/maintenance/'
+         ms.due_at, '/fleet/' || ms.robot_code || '/maintenance/',
+         (SELECT rr.hub_id FROM fleet_robot rr WHERE rr.id = ms.robot_id)
   FROM fleet_maintenance_status_set(ARRAY(SELECT id FROM fleet_robot WHERE lifecycle <> 'retired'),
                                     (SELECT production FROM mode), %(at)s) ms
   WHERE ms.state IN ('due_soon', 'overdue', 'unknown', 'inspection_missing')
@@ -156,16 +168,17 @@ facts AS MATERIALIZED (
   -- that takes the item (stock_per_visit), else no due time.
   SELECT 'stock_level', 'kit_low', sl.code || ':' || coalesce(sl.crossing::text, 'start'), NULL::bigint,
          NULL::bigint, 'Restock ' || sl.name || ' (' || sl.code || '): below its minimum of ' || sl.minimum,
-         sl.next_departure, '/hub/stock/#item-' || sl.code
+         sl.next_departure, '/hub/stock/#item-' || sl.code, sl.hub_id
   FROM stock_low sl
   WHERE sl.available < sl.minimum
 ),
 ins AS (
   INSERT INTO hub_workorder (type, title, robot_id, visit_id, due_at, owner_id, status, source_kind,
                              source_ref,
-                             link_url, note, close_reason, created_by_id, created_at, updated_at, version)
+                             link_url, note, close_reason, created_by_id, created_at, updated_at, version,
+                             hub_id)
   SELECT f.type, left(f.title, 160), f.robot_id, f.visit_id, f.due_at, NULL, 'open', f.kind, f.ref,
-         f.link_url, '', '', NULL, %(at)s, %(at)s, 1
+         f.link_url, '', '', NULL, %(at)s, %(at)s, 1, f.hub_id
   FROM facts f
   WHERE NOT EXISTS (SELECT 1 FROM hub_workorder w WHERE w.source_kind = f.kind AND w.source_ref = f.ref)
   ON CONFLICT (source_kind, source_ref) WHERE (NOT (status IN ('done', 'cancelled'))) DO NOTHING
@@ -220,18 +233,18 @@ def _charge_facts(at: datetime) -> list[dict[str, Any]]:
             current_revision__robot__isnull=False,
         )
         .exclude(status="cancelled")
-        .values_list("id", "code", "current_revision__robot__code")
+        .values_list("id", "code", "current_revision__robot__code", "hub_id")
     )
     forecasts = charging.visit_forecasts([v[0] for v in visits], at)
     out = []
-    for vid, code, robot in visits:
+    for vid, code, robot, hub_id in visits:
         f = forecasts.get(vid)
         if f is not None and f.state == charging.NEEDS:
             title = f"Charge {robot} before visit {code}" + (
                 " (cannot be charged in time)" if f.cannot_in_time else ""
             )
             out.append({"ref": f"{code}:{robot}", "robot_id": f.robot_id, "visit_id": vid, "title": title,
-                        "due_at": f.departure_at.isoformat()})  # fmt: skip
+                        "due_at": f.departure_at.isoformat(), "hub_id": hub_id})  # fmt: skip
     return out
 
 

@@ -23,6 +23,7 @@ from hub import charging as ch
 from hub.models import Charger, ChargerReservation, ChargingSession
 from planning.models import Visit
 from platform_core.commands import CommandError
+from platform_core.hubscope import HubScope, add_owner_hub_field, hub_scope
 from platform_core.interaction import UIForm, command_page, denied, explain, spend_form_token
 from platform_core.timezones import workspace_zone
 
@@ -69,24 +70,27 @@ class ReleaseForm(UIForm):
 @login_required
 @require_GET
 def charging_page(request: HttpRequest) -> HttpResponse:
-    roles = active_roles(request.user)
+    scope = hub_scope(request)  # v2 03A-1: the viewer's hubs (and roles, one statement)
+    roles = scope.roles
     if not _allowed(roles, "hub.view"):
         return denied(request, "hub.view")
     now = timezone.now()
     horizon = now + timedelta(days=2)
-    chargers = list(Charger.objects.order_by("code"))
+    chargers = list(scope.filter(Charger.objects.order_by("code")))
     sessions = list(
-        ChargingSession.objects.filter(ended_at__isnull=True)
+        scope.filter(ChargingSession.objects.filter(ended_at__isnull=True))
         .select_related("charger", "robot")
         .order_by("started_at")
     )
     reservations = list(
-        ChargerReservation.objects.filter(released_at__isnull=True, ends_at__gt=now, starts_at__lt=horizon)
+        scope.filter(ChargerReservation.objects)
+        .filter(released_at__isnull=True, ends_at__gt=now, starts_at__lt=horizon)
         .select_related("charger", "robot", "visit")
         .order_by("starts_at")
     )
     visits = list(
-        Visit.objects.filter(
+        scope.filter(Visit.objects)
+        .filter(
             current_revision__on_site_start__gte=now,
             current_revision__on_site_start__lt=horizon,
             current_revision__robot__isnull=False,
@@ -121,7 +125,8 @@ def charging_page(request: HttpRequest) -> HttpResponse:
             "can_reserve": _allowed(roles, ch.RESERVE),
             "can_manage": _allowed(roles, ch.MANAGE_CHARGERS),
             "in_service": [c for c in chargers if c.in_service],
-            "robot_options": _robot_options(),
+            "robot_options": _robot_options(scope),
+            "scope": scope,
             "default_until": (now + timedelta(hours=3))
             .astimezone(workspace_zone())
             .strftime("%Y-%m-%dT%H:%M"),
@@ -129,10 +134,11 @@ def charging_page(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _robot_options() -> list[tuple[str, str]]:
+def _robot_options(scope: HubScope | None = None) -> list[tuple[str, str]]:
     """Named robots for the robot selects: in service first, then the others with their state (the commands
     still validate the code)."""
-    robots = list(Robot.objects.exclude(lifecycle="retired").order_by("code"))
+    qs = Robot.objects.exclude(lifecycle="retired").order_by("code")
+    robots = list(scope.filter(qs) if scope is not None else qs)
     robots.sort(key=lambda r: (r.lifecycle != "in_service", r.code))
     return [
         (r.code, f"{r.code} · in service" if r.lifecycle == "in_service"
@@ -250,6 +256,10 @@ class ChargerForm(UIForm):
     )
     note = forms.CharField(max_length=200, required=False, label="Note (optional)")
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        add_owner_hub_field(self, "The hub where this charger is.")
+
 
 class ServiceForm(UIForm):
     in_service = forms.ChoiceField(label="State", choices=[("1", "In service"), ("0", "Out of service")])
@@ -263,7 +273,9 @@ def chargers_page(request: HttpRequest) -> HttpResponse:
         permission=ch.MANAGE_CHARGERS,
         form_class=ChargerForm,
         template="hub/chargers.html",
-        call=lambda actor, d: ch.create_charger(actor, code=d["code"], name=d["name"], note=d["note"]),
+        call=lambda actor, d: ch.create_charger(
+            actor, code=d["code"], name=d["name"], note=d["note"], hub_code=d.get("hub") or None
+        ),
         ok=lambda r: f"Charger {r['entity_id']} added.",
         success_url="/hub/charging/chargers/",
         context={"chargers": Charger.objects.order_by("code")},

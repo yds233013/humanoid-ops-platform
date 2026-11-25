@@ -10,6 +10,8 @@ from django.db import models
 from django.db.models import Q
 from django.db.models.functions import Now
 
+from platform_core.models import hub_field
+
 USER = settings.AUTH_USER_MODEL
 
 # Slice 7 (docs/07a_production_guardrails_contract.md). Sources are descriptive only: no production gate reads
@@ -26,14 +28,41 @@ def _in(field: str, choices: list[tuple[str, str]]) -> Q:
     return Q(**{f"{field}__in": [k for k, _ in choices]})
 
 
-class DeploymentSetting(models.Model):
-    """Environment switches readable by the runtime role, writable only by the schema owner."""
+# v2 03A-1 (contract 11.3): the only settings a hub row may override. Safety settings (the maintenance gate,
+# freshness, ...) stay global: a hub can never relax them.
+PER_HUB_SETTING_KEYS = ("stock_minimums", "stock_per_visit")
 
-    key = models.CharField(max_length=60, primary_key=True)
+
+class DeploymentSetting(models.Model):
+    """Environment switches readable by the runtime role, writable only by the schema owner.
+
+    v2 03A-1: a row with ``hub`` NULL is the global value; a row with a hub overrides it for that hub
+    (only the PER_HUB_SETTING_KEYS; check constraint). One global row per key and one row per (key, hub)."""
+
+    key = models.CharField(max_length=60)
     value = models.CharField(max_length=200)
+    hub = models.ForeignKey(
+        "platform_core.Hub", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["key"], condition=Q(hub__isnull=True), name="fleet_setting_one_global_per_key"
+            ),
+            models.UniqueConstraint(
+                fields=["key", "hub"],
+                condition=Q(hub__isnull=False),
+                name="fleet_setting_one_per_hub_and_key",
+            ),
+            models.CheckConstraint(
+                condition=Q(hub__isnull=True) | Q(key__in=list(PER_HUB_SETTING_KEYS)),
+                name="fleet_setting_per_hub_keys_only",
+            ),
+        ]
 
     def __str__(self) -> str:
-        return f"{self.key}={self.value}"
+        return f"{self.key}={self.value}" + (f" (hub {self.hub_id})" if self.hub_id else "")
 
 
 class ManifestPattern(models.Model):
@@ -144,6 +173,9 @@ class Robot(models.Model):
     version = models.PositiveIntegerField(default=1)  # guard version, bumped by triggers
     registered_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     registered_at = models.DateTimeField(auto_now_add=True)
+    # v2 03A-1 (contract 11.1, 10.A): the HOME hub, administrative ownership. Never the current location
+    # (03A-2 derives that from custody) and never proof of authority (a hub-qualified role grant is).
+    hub = hub_field()
 
     def __str__(self) -> str:
         return self.code

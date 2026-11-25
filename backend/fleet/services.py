@@ -46,6 +46,7 @@ from fleet.models import (
     Robot,
 )
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, run_command
+from platform_core.hubscope import owner_hub, robot_hub
 from platform_core.locks import lock_guards
 
 User = get_user_model()
@@ -91,7 +92,7 @@ def _current_pattern_id(robot: Robot) -> int | None:
 def setting(key: str) -> str | None:
     from fleet.models import DeploymentSetting
 
-    row = DeploymentSetting.objects.filter(key=key).first()
+    row = DeploymentSetting.objects.filter(key=key, hub__isnull=True).first()  # the global row (v2 03A-1)
     return row.value if row else None
 
 
@@ -595,26 +596,36 @@ def check_eligibility(actor: Any, *, robot_code: str) -> dict[str, Any]:
         permission="fleet.check_eligibility",
         payload={"robot": robot_code},
         handler=handler,
+        hub=robot_hub(robot_code),
     )
 
 
 # ---------------------------------------------------------------- robots and lifecycle
 def register_robot(
-    actor: Any, *, code: str, serial: str, idempotency_key: str | None = None
+    actor: Any, *, code: str, serial: str, hub_code: str | None = None, idempotency_key: str | None = None
 ) -> dict[str, Any]:
+    """Register a robot at its HOME hub (v2 03A-1): ``hub_code``, or the only hub when there is one (the
+    database default refuses to guess when there are several)."""
+    hub = owner_hub(hub_code)
+    payload: dict[str, Any] = {"code": code, "serial": serial}
+    if hub is not None:
+        payload["hub"] = hub.code
+
     def handler() -> Outcome:
         if Robot.objects.filter(code=code).exists() or Robot.objects.filter(serial=serial).exists():
             raise Conflict(f"A robot with code {code} or serial {serial} already exists")
-        robot = Robot.objects.create(code=code, serial=serial, registered_by=actor)
-        return Outcome("robot", robot.code, {"lifecycle": robot.lifecycle})
+        extra = {"hub": hub} if hub is not None else {}
+        robot = Robot.objects.create(code=code, serial=serial, registered_by=actor, **extra)
+        return Outcome("robot", robot.code, {"lifecycle": robot.lifecycle, "hub_id": robot.hub_id})
 
     return run_command(
         actor,
         "fleet.register_robot",
         permission="fleet.register_robot",
-        payload={"code": code, "serial": serial},
+        payload=payload,
         handler=handler,
         idempotency_key=idempotency_key,
+        hub=hub,
     )
 
 
@@ -1884,6 +1895,7 @@ def submit_inspection(
         payload=payload,
         handler=handler,
         idempotency_key=idempotency_key,
+        hub=robot_hub(robot_code),
     )
 
 

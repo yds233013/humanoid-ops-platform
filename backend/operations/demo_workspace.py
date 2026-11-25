@@ -61,6 +61,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from accounts.models import RoleGrant
+from accounts.roles import ADMIN, HUB_SCOPED_ROLES
 from execution import escalation_deadlines as ed
 from execution import incidents as inc
 from execution import policy as ipol
@@ -313,9 +314,9 @@ KEEP_TABLES = {"django_migrations", "django_content_type", "auth_permission"}
 # Rows the migrations insert (fleet/0002, planning/0002, fleet/0008); restored after a wipe.
 MIGRATION_ROWS = [
     "INSERT INTO fleet_deploymentsetting (key, value) VALUES ('allow_draft_policies', 'false') "
-    "ON CONFLICT (key) DO NOTHING",
+    "ON CONFLICT (key) WHERE hub_id IS NULL DO NOTHING",
     "INSERT INTO fleet_deploymentsetting (key, value) VALUES ('max_robots_per_trip', '1') "
-    "ON CONFLICT (key) DO NOTHING",
+    "ON CONFLICT (key) WHERE hub_id IS NULL DO NOTHING",
     "INSERT INTO fleet_holdpolicyregistry (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
 ]
 
@@ -406,11 +407,16 @@ ORDER BY s.relname
 """
 
 
+# v2 03A-1: fleet_deploymentsetting got a surrogate id (identity) and keeps the migration rows across a wipe
+# (MIGRATION_ROWS), so its sequence is never restarted: its ids are internal and appear in no code.
+SEQUENCES_KEPT_FOR = KEEP_TABLES | {"fleet_deploymentsetting"}
+
+
 def restart_sequences() -> None:
     """Application sequences back to their start, so codes (V-0001, ...) are the same for every build of a
     date. Run only on an empty or just-wiped database (every application table is empty)."""
     with connection.cursor() as cur:
-        cur.execute(APP_SEQUENCES_SQL, [sorted(KEEP_TABLES)])
+        cur.execute(APP_SEQUENCES_SQL, [sorted(SEQUENCES_KEPT_FOR)])
         for (seq,) in cur.fetchall():
             cur.execute(f"ALTER SEQUENCE {connection.ops.quote_name(seq)} RESTART")
 
@@ -469,15 +475,25 @@ class _Builder:
                 first_name=first.capitalize(),
                 last_name=last.capitalize(),
             )
-            RoleGrant.objects.create(user=user, role=role)
-            for extra in EXTRA_ROLES.get(username, []):
-                RoleGrant.objects.create(user=user, role=extra)
             self.u[username] = user
             self.s.logins.append((username, " + ".join([role, *EXTRA_ROLES.get(username, [])]), note))
+        # v2 03A-1: the admin's (regional) grant first, then the hub, then every other grant: hub-scoped
+        # roles (hub technician, field operator) are granted AT the Oakland hub, the others are regional. No
+        # record is created before the hub, so the database never has to create a default hub.
+        admin = self.u["priya.raman"]
+        RoleGrant.objects.create(user=admin, role=ADMIN)
         Workspace.ensure()
-        update_workspace(self.u["priya.raman"], name=COMPANY, region=REGION, time_zone=TZ)
+        update_workspace(admin, name=COMPANY, region=REGION, time_zone=TZ)
         Workspace.objects.filter(pk=1).update(demo=True, initialized=True, initialized_at=timezone.now())
-        create_hub(self.u["priya.raman"], code="OAK", name="Oakland hub", area="West Oakland", time_zone=TZ)
+        create_hub(admin, code="OAK", name="Oakland hub", area="West Oakland", time_zone=TZ)
+        oak = Hub.objects.get(code="OAK")
+        for username, role, _code, _note in LOGINS:
+            for r in [role, *EXTRA_ROLES.get(username, [])]:
+                if username == "priya.raman" and r == ADMIN:
+                    continue
+                RoleGrant.objects.create(
+                    user=self.u[username], role=r, hub=oak if r in HUB_SCOPED_ROLES else None
+                )
         self.lap("company, logins, hub")
 
     # .............................................................. configurations, policies

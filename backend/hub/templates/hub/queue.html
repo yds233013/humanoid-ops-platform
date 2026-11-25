@@ -7,6 +7,7 @@
 {% endblock %}
 {% block content %}
 {% page_header title="Hub work queue" %}What needs doing at the hub, who is doing it, and what is done. A task is a to-do only: marking it done never releases a hold, records an inspection or changes whether a robot may be booked or leave.{% endpage_header %}
+{% include "ui/hub_filter.html" %}
 <div class="row" style="margin:0 0 var(--s3)">{% if viewer.work %}<a class="btn primary" href="/hub/tasks/new/">Add a task</a>{% endif %}{% if own_only %}<span class="muted">You see the tasks assigned to you.</span>{% endif %}</div>
 <div class="hubgroup" data-counts="queue"><h2>Queues</h2><div class="row hubchips">
   <a class="chip {% if view == 'all' %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/" data-count="all"><b class="n">{{ total }}</b> <span>All open tasks</span></a>

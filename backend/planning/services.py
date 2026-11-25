@@ -32,6 +32,7 @@ from planning.models import (
     VisitRevision,
 )
 from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied, RetryTransaction, run_command
+from platform_core.hubscope import owner_hub
 from platform_core.locks import lock_guards
 from platform_core.testhooks import checkpoint
 
@@ -616,7 +617,14 @@ def withdraw_consent(actor: Any, *, consent_id: int, reason: str) -> dict[str, A
 
 
 # ------------------------------------------------------------------ people and vehicles
-def register_person(actor: Any, *, username: str, code: str) -> dict[str, Any]:
+def register_person(actor: Any, *, username: str, code: str, hub_code: str | None = None) -> dict[str, Any]:
+    """Register a person at their HOME hub (v2 03A-1). The home hub confers no authority: roles come only from
+    hub-qualified grants."""
+    hub = owner_hub(hub_code)
+    payload: dict[str, Any] = {"username": username, "code": code}
+    if hub is not None:
+        payload["hub"] = hub.code
+
     def handler() -> Outcome:
         try:
             user = User.objects.get(username=username)
@@ -624,7 +632,7 @@ def register_person(actor: Any, *, username: str, code: str) -> dict[str, Any]:
             raise Invalid(f"No user {username}") from None
         if Person.objects.filter(code=code).exists() or Person.objects.filter(user=user).exists():
             raise Conflict("Person already registered")
-        p = Person.objects.create(user=user, code=code)
+        p = Person.objects.create(user=user, code=code, **({"hub": hub} if hub is not None else {}))
         Resource.objects.create(kind="person", person=p)
         return Outcome("person", p.code)
 
@@ -632,8 +640,9 @@ def register_person(actor: Any, *, username: str, code: str) -> dict[str, Any]:
         actor,
         "planning.register_person",
         permission="planning.manage_people",
-        payload={"username": username, "code": code},
+        payload=payload,
         handler=handler,
+        hub=hub,
     )
 
 
@@ -804,14 +813,27 @@ def inspection_signer_problem(inspection: Any) -> str | None:
 
 
 def register_vehicle(
-    actor: Any, *, code: str, robot_capacity: int | None = None, restraint_kit: str = ""
+    actor: Any,
+    *,
+    code: str,
+    robot_capacity: int | None = None,
+    restraint_kit: str = "",
+    hub_code: str | None = None,
 ) -> dict[str, Any]:
+    hub = owner_hub(hub_code)
+    payload: dict[str, Any] = {"code": code, "robot_capacity": robot_capacity, "restraint_kit": restraint_kit}
+    if hub is not None:
+        payload["hub"] = hub.code
+
     def handler() -> Outcome:
         if robot_capacity is not None and robot_capacity < 1:
             raise Invalid("Robot capacity must be at least 1, or unknown")
         if Vehicle.objects.filter(code=code).exists():
             raise Conflict(f"Vehicle {code} exists")
-        v = Vehicle.objects.create(code=code, robot_capacity=robot_capacity, restraint_kit=restraint_kit)
+        extra = {"hub": hub} if hub is not None else {}
+        v = Vehicle.objects.create(
+            code=code, robot_capacity=robot_capacity, restraint_kit=restraint_kit, **extra
+        )
         Resource.objects.create(kind="vehicle", vehicle=v)
         return Outcome("vehicle", v.code, {"robot_capacity": robot_capacity})
 
@@ -819,8 +841,9 @@ def register_vehicle(
         actor,
         "planning.register_vehicle",
         permission="planning.manage_vehicles",
-        payload={"code": code, "robot_capacity": robot_capacity, "restraint_kit": restraint_kit},
+        payload=payload,
         handler=handler,
+        hub=hub,
     )
 
 
@@ -841,8 +864,10 @@ def request_visit(
     travel_back_min: int | None = None,
     tasks: list[str] | None = None,
     required_scopes: list[str] | None = None,
+    hub_code: str | None = None,
 ) -> dict[str, Any]:
-    payload = {
+    hub = owner_hub(hub_code)  # v2 03A-1: the DISPATCH hub (the only hub when none is named)
+    payload: dict[str, Any] = {
         "site": site_code,
         "start": on_site_start.isoformat(),
         "end": on_site_end.isoformat(),
@@ -851,6 +876,8 @@ def request_visit(
         "tasks": tasks or [],
         "required_scopes": required_scopes or ["presence"],
     }
+    if hub is not None:
+        payload["hub"] = hub.code
 
     def handler() -> Outcome:
         if on_site_start.tzinfo is None or on_site_end.tzinfo is None:
@@ -861,7 +888,9 @@ def request_visit(
         _positive("Travel back", travel_back_min)
         s = _site(site_code)
         lock_guards(share_sites=[s.pk], label="planning.request_visit")
-        v = Visit.objects.create(code=_next_visit_code(), site=s, created_by=actor)
+        v = Visit.objects.create(
+            code=_next_visit_code(), site=s, created_by=actor, **({"hub": hub} if hub is not None else {})
+        )
         p = evaluate(
             site=s,
             start=on_site_start,
@@ -896,7 +925,7 @@ def request_visit(
         return Outcome("visit", v.code, {"feasibility": p.feasibility})
 
     return run_command(
-        actor, "planning.request_visit", permission="planning.plan", payload=payload, handler=handler
+        actor, "planning.request_visit", permission="planning.plan", payload=payload, handler=handler, hub=hub
     )
 
 

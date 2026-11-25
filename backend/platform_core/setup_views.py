@@ -136,6 +136,19 @@ class ResetPasswordForm(ConfirmForm):
 
 class GrantForm(UIForm):
     role = forms.ChoiceField(label="Role", choices=[(r, r.replace("_", " ").capitalize()) for r in ALL_ROLES])
+    # v2 03A-1 (contract 11.2): the hub of a hub technician or field operator grant; other roles are regional
+    hub = forms.ChoiceField(
+        label="Hub",
+        required=False,
+        help_text="For a hub technician or field operator: the hub where they work. "
+        "Other roles cover every hub.",
+    )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.fields["hub"].choices = [("", "Every hub (regional roles)")] + [  # type: ignore[attr-defined]
+            (h.code, f"{h.code} {h.name}") for h in Hub.objects.order_by("code")
+        ]
 
 
 class RevokeForm(ConfirmForm):
@@ -304,7 +317,11 @@ def hub_new(request: HttpRequest) -> HttpResponse:
 def _active_grants() -> dict[int, list[RoleGrant]]:
     now = timezone.now()
     out: dict[int, list[RoleGrant]] = {}
-    for g in RoleGrant.objects.filter(revoked_at__isnull=True, valid_from__lte=now).order_by("role"):
+    for g in (
+        RoleGrant.objects.filter(revoked_at__isnull=True, valid_from__lte=now)
+        .select_related("hub")
+        .order_by("role", "hub__code")
+    ):
         if g.valid_to is None or g.valid_to > now:
             out.setdefault(g.user_id, []).append(g)
     return out
@@ -315,10 +332,7 @@ def user_list(request: HttpRequest) -> HttpResponse:
     if not has_permission(request.user, ADMIN_PERM):
         return denied(request, ADMIN_PERM)
     grants = _active_grants()
-    rows = [
-        {"user": u, "roles": [g.role for g in grants.get(u.pk, [])]}
-        for u in User.objects.order_by("username")
-    ]
+    rows = [{"user": u, "roles": grants.get(u.pk, [])} for u in User.objects.order_by("username")]
     return render(request, "settings/users.html", {"rows": rows})
 
 
@@ -349,8 +363,13 @@ def user_detail(request: HttpRequest, user_id: int) -> HttpResponse:
         permission=ADMIN_PERM,
         form_class=GrantForm,
         template="settings/user_detail.html",
-        call=lambda actor, d: account_services.grant_role(actor, user_id=target.pk, role=d["role"]),
-        ok=lambda r: f"Role {r['role'].replace('_', ' ')} given to {target.username}.",
+        call=lambda actor, d: account_services.grant_role(
+            actor, user_id=target.pk, role=d["role"], hub_code=d.get("hub") or None
+        ),
+        ok=lambda r: (
+            f"Role {r['role'].replace('_', ' ')} given to {target.username}"
+            + (f" at hub {r['hub']}." if r.get("hub") else ".")
+        ),
         success_url=request.path,
         context={"target": target, "grants": grants, "is_self": target.pk == request.user.pk},
     )

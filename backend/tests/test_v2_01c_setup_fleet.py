@@ -492,7 +492,9 @@ def test_refusal_wording_helpers():
 def test_first_run_checklist_progress_and_who_approves(w):
     client = _client(w.admin)
     html = _html(client.get("/settings/setup/"))
-    assert "1 of 6 steps done" in html  # people: the fixture users already hold roles
+    # people: the fixture users already hold roles; hub (v2 03A-1): the fixture's first robot was registered before
+    # any hub existed, so the database created HUB-1 "Main hub" (platform_core_default_hub)
+    assert "2 of 6 steps done" in html
     assert "never approves anything" in html and "Production readiness" in html
     assert "the safety reviewer" in html  # who must approve
     _post(
@@ -571,7 +573,8 @@ def test_setup_creates_no_approval_qualification_or_policy_rows(w):
     _post(admin, "/settings/users/new/", {"username": "zed", "email": "", "password": "Temp-pass-8842!"})
     zed = User.objects.get(username="zed")
     _post(admin, f"/settings/users/{zed.pk}/", {"role": "engineer"})
-    _post(ops, "/fleet/new/", {"code": "R-77", "serial": "SN-77"})
+    # v2 03A-1: two hubs now (HUB-1 from the fixture, H1 above), so every new record names its hub
+    _post(ops, "/fleet/new/", {"code": "R-77", "serial": "SN-77", "hub": "H1"})
     _post(
         lead,
         "/fleet/patterns/new/",
@@ -580,8 +583,8 @@ def test_setup_creates_no_approval_qualification_or_policy_rows(w):
     _post(eng, "/fleet/R-77/manifest/", {"pattern": "P-7", "autonomy_version": "a", "safety_config_hash": "b" * 64,
                                          "calibration_ref": "", "provenance": "manual"})  # fmt: skip
     _post(eng, "/fleet/patterns/P-7/profile/", {"stop_behaviour": "stops", "source": "engineering_doc"})
-    _post(ops, "/people/new/", {"username": "spare", "code": "P-8"})
-    _post(ops, "/vehicles/new/", {"code": "V-7", "robot_capacity": "", "restraint_kit": ""})
+    _post(ops, "/people/new/", {"username": "spare", "code": "P-8", "hub": "H1"})
+    _post(ops, "/vehicles/new/", {"code": "V-7", "robot_capacity": "", "restraint_kit": "", "hub": "H1"})
     assert (
         Robot.objects.filter(code="R-77").exists()
         and CapabilityProfile.objects.filter(pattern__code="P-7").exists()

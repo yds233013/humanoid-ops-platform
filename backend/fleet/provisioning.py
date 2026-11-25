@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from django.db import connection
 
@@ -182,8 +183,27 @@ def parse_stock_levels(raw: str | None) -> dict[str, int]:
     return {c: int(n) for c, n in (p.split("=") for p in text.split(","))}
 
 
-def current_values() -> dict[str, str]:
-    return dict(DeploymentSetting.objects.filter(key__in=ALLOWED_KEYS).values_list("key", "value"))
+def current_values(hub: Any = None) -> dict[str, str]:
+    """The GLOBAL values (hub rows never mix in); with ``hub``, that hub's own override rows only
+    (v2 03A-1)."""
+    qs = DeploymentSetting.objects.filter(key__in=ALLOWED_KEYS)
+    qs = qs.filter(hub__isnull=True) if hub is None else qs.filter(hub=hub)
+    return dict(qs.values_list("key", "value"))
+
+
+def hub_value(key: str, hub_id: int | None) -> str | None:
+    """The value that applies at a hub: its own row when it has one, else the global row (v2 03A-1, 11.3).
+    Only PER_HUB_SETTING_KEYS have hub rows; every other key is global."""
+    from django.db.models import Q
+
+    rows = list(
+        DeploymentSetting.objects.filter(key=key)
+        .filter(Q(hub__isnull=True) | Q(hub_id=hub_id))
+        .values_list("hub_id", "value")
+    )
+    own = [v for h, v in rows if h is not None]
+    glob = [v for h, v in rows if h is None]
+    return own[0] if own else (glob[0] if glob else None)
 
 
 def rows() -> list[dict[str, object]]:

@@ -7,6 +7,7 @@
 {% endblock %}
 {% block content %}
 {% page_header title="Stock" back_url="/hub/" back_label="Hub work queue" %}Kits and consumables at the hub: what is on hand, what is reserved for visits and what is still available. Every number is added up from the recorded movements. Stock is never the departure equipment check: each departure still needs its own check.{% endpage_header %}
+{% include "ui/hub_filter.html" %}
 <div class="row hubchips" data-counts="stock"><span class="chip {% if below %}chip-warn{% else %}chip-neutral{% endif %}" data-count="below"><b>{{ below }}</b> below minimum</span><span class="chip {% if short %}chip-warn{% else %}chip-neutral{% endif %}" data-count="short"><b>{{ short }}</b> visit needs that cannot be met</span><span class="chip chip-neutral" data-count="reservations"><b>{{ reservations|length }}</b> reservations</span></div>
 {% if items and not any_minimum %}<div class="notice warn" role="note" data-minimums-off="1">No minimum level is set for any item, so no restocking task is created. The deployment owner sets them (stock_minimums).</div>{% endif %}
 
@@ -25,34 +26,34 @@
 {% else %}<p class="muted">Every visit in the next two days has what it needs reserved or issued.</p>{% endif %}</section>
 
 <section class="sec" data-section="reservations"><h2>Reserved for visits</h2>
-{% if can_reserve and cancelled_rows %}<form id="release-cancelled" method="post" action="/hub/stock/release-cancelled/">{% csrf_token %}{% form_token %}</form>{% endif %}
+{% if can_reserve and cancelled_rows %}<form id="release-cancelled" method="post" action="/hub/stock/release-cancelled/">{% csrf_token %}{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}{% form_token %}</form>{% endif %}
 {% if reservations %}<div class="tablewrap"><table><thead><tr><th>Visit</th><th>Item</th><th>Quantity</th><th></th></tr></thead><tbody>
 {% for r in reservations %}<tr data-reservation="{{ r.pk }}"><td><a href="/planning/visits/{{ r.visit.code }}/">{{ r.visit.code }}</a>{% if r.visit.status == "cancelled" %} {% chip "warn" "Visit cancelled: release this" %}{% endif %}</td><td>{{ r.item.code }} {{ r.item.name }}</td><td>{{ r.quantity }}</td><td>{% if can_reserve %}{% if r.visit.status == "cancelled" %}<button form="release-cancelled" name="reservation" value="{{ r.pk }}" class="primary" data-release-cancelled="{{ r.pk }}">Release now</button> {% endif %}<a href="/hub/stock/reservations/{{ r.pk }}/release/">Release</a>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
 {% else %}<p class="muted">Nothing is reserved.</p>{% endif %}</section>
 
 {% if can_move or can_adjust or can_reserve %}<section class="sec" data-section="forms"><h2>Record</h2><div class="stockforms">
-{% if can_move %}<form method="post" action="/hub/stock/receive/" class="card">{% csrf_token %}{% form_token %}<h3>Receive</h3>
+{% if can_move %}<form method="post" action="/hub/stock/receive/" class="card">{% csrf_token %}{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}{% form_token %}<h3>Receive</h3>
 <label>Item <select name="item" required>{% for i in items %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
 <label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
 <label>Note (optional) <input name="note" maxlength="200"></label><button class="primary">Record receipt</button></form>
-<form method="post" action="/hub/stock/issue/" class="card">{% csrf_token %}{% form_token %}<h3>Issue</h3>
+<form method="post" action="/hub/stock/issue/" class="card">{% csrf_token %}{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}{% form_token %}<h3>Issue</h3>
 <label>Item <select name="item" required>{% for i in items %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
 <label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
 <label>For visit (optional) <select name="visit"><option value="">No visit</option>{% for v in visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label><button class="primary">Issue</button></form>
-{% if reusable %}<form method="post" action="/hub/stock/return/" class="card">{% csrf_token %}{% form_token %}<h3>Return a kit</h3>
+{% if reusable %}<form method="post" action="/hub/stock/return/" class="card">{% csrf_token %}{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}{% form_token %}<h3>Return a kit</h3>
 <label>Item <select name="item" required>{% for i in reusable %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }} ({{ i.out }} out)</option>{% endfor %}</select></label>
 <label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
 <label>From visit (optional) <select name="visit"><option value="">Any visit</option>{% for v in return_visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label><button class="primary">Record return</button></form>{% endif %}
-{% if consumable %}<form method="post" action="/hub/stock/consume/" class="card">{% csrf_token %}{% form_token %}<h3>Record use</h3>
+{% if consumable %}<form method="post" action="/hub/stock/consume/" class="card">{% csrf_token %}{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}{% form_token %}<h3>Record use</h3>
 <label>Item <select name="item" required>{% for i in consumable %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
 <label>Quantity <input type="number" name="quantity" min="1" max="100000" required></label>
 <label>For visit (optional) <select name="visit"><option value="">No visit</option>{% for v in visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label><button class="primary">Record use</button></form>{% endif %}{% endif %}
-{% if can_reserve %}<form method="post" action="/hub/stock/reserve/" class="card">{% csrf_token %}{% form_token %}<h3>Reserve for a visit</h3>
+{% if can_reserve %}<form method="post" action="/hub/stock/reserve/" class="card">{% csrf_token %}{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}{% form_token %}<h3>Reserve for a visit</h3>
 <label>Item <select name="item" required>{% for i in items %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }} ({{ i.available }} available)</option>{% endfor %}</select></label>
 <label>Visit <select name="visit" required>{% for v in visits %}<option value="{{ v.code }}">{{ v.code }} · {{ v.current_revision.on_site_start|local_dt }}</option>{% endfor %}</select></label>
 <label>Quantity for this visit <input type="number" name="quantity" min="1" max="100000" required></label><button class="primary">Reserve</button>
 <p class="muted">Reserving again for the same visit changes its quantity; it never adds a second reservation.</p></form>{% endif %}
-{% if can_adjust %}<form method="post" action="/hub/stock/adjust/" class="card">{% csrf_token %}{% form_token %}<h3>Adjust after a count</h3>
+{% if can_adjust %}<form method="post" action="/hub/stock/adjust/" class="card">{% csrf_token %}{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}{% form_token %}<h3>Adjust after a count</h3>
 <label>Item <select name="item" required>{% for i in items %}<option value="{{ i.code }}">{{ i.code }} {{ i.name }}</option>{% endfor %}</select></label>
 <label>Change (+ found, - missing or written off) <input type="number" name="delta" min="-100000" max="100000" required></label>
 <label>Reason (required, kept in the audit log) <input name="reason" maxlength="200" required></label><button class="primary">Record adjustment</button></form>{% endif %}

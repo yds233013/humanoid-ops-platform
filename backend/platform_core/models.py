@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.conf import settings
 from django.db import models
 
@@ -89,8 +91,10 @@ class Workspace(models.Model):
 class Hub(models.Model):
     """A hub (depot) of the workspace: where robots, vehicles and crews are based (v2 contract section 6).
 
-    Setup data, like the workspace row: it records a fact and approves nothing. Robots, vehicles and people
-    do not reference a hub yet (an optional reference comes later; the guarded tables keep their rules).
+    Setup data, like the workspace row: it records a fact and approves nothing. Since Phase 03A-1 every
+    robot, vehicle, person (home hub), visit (dispatch hub), work order, charger, charging session, charger
+    reservation and stock item belongs to exactly one hub (``hub_id`` NOT NULL;
+    docs/13_v2_phase03_contract.md 11.1).
     """
 
     code = models.CharField(max_length=12, unique=True)
@@ -107,6 +111,26 @@ class Hub(models.Model):
 
     def __str__(self) -> str:
         return f"{self.code} {self.name}"
+
+
+class DefaultHub(models.Func):
+    """The database default of every owner ``hub_id`` column (platform_core migration 0005): the only hub,
+    a new HUB-1 when none exists yet, or a refusal ("hub required") when there are several. Evaluated by
+    PostgreSQL when a row is inserted without a hub, so direct-SQL inserts get the same rule as the ORM."""
+
+    function = "platform_core_default_hub"
+    template = "%(function)s()"
+    output_field = models.BigIntegerField()
+
+    def __init__(self) -> None:
+        super().__init__()
+
+
+def hub_field() -> Any:
+    """The owner hub of a record: NOT NULL, PROTECT, with the database default hub."""
+    return models.ForeignKey(
+        "platform_core.Hub", on_delete=models.PROTECT, related_name="+", db_default=DefaultHub()
+    )
 
 
 class FormToken(models.Model):

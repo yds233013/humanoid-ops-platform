@@ -31,6 +31,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 {% endblock %}
 {% block content %}
 <div class="today-head"><div><h1>Today, {{ t.local_date_text }}</h1><div class="sub muted op-asof" data-as-of="{{ as_of_iso }}">As of <b>{{ as_of_iso|local_dt }}</b> · one consistent snapshot; reload for a newer one</div></div></div>
+{% include "ui/hub_filter.html" %}
 {% if t.attention_total %}<p class="jump" style="margin:var(--s1) 0 var(--s3)"><a href="#attention" data-jump="attention">{{ t.attention_total }} item{{ t.attention_total|pluralize:" needs,s need" }} your attention</a></p>{% endif %}
 
 {% for n in t.notices %}<div class="notice {{ n.tone }}" role="alert" data-notice="{{ n.key }}">{{ n.text }}</div>{% endfor %}

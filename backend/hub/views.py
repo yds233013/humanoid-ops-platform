@@ -22,7 +22,6 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from accounts.permissions import active_roles
 from accounts.roles import PERMISSIONS
 from hub import derive
 from hub import services as hs
@@ -30,6 +29,7 @@ from hub.api import parse_version
 from hub.models import FINAL, TYPES, WorkOrder
 from planning.models import Person
 from platform_core.commands import CommandError
+from platform_core.hubscope import HubScope, hub_scope
 from platform_core.interaction import UIForm, command_page, denied, explain, spend_form_token
 from platform_core.timezones import workspace_zone
 
@@ -68,7 +68,8 @@ def _allowed(roles: set[str], perm: str | None) -> bool:
 
 class Viewer:
     def __init__(self, request: HttpRequest) -> None:
-        self.roles = active_roles(request.user)
+        self.scope: HubScope = hub_scope(request)  # v2 03A-1: the hubs this viewer holds a grant for
+        self.roles = self.scope.roles  # the same statement read the viewer's active roles
         self.person = hs.person_of(request.user)
         self.all = _allowed(self.roles, "hub.view_all")
         self.work = _allowed(self.roles, hs.WORK)
@@ -147,6 +148,7 @@ def hub_page(request: HttpRequest) -> HttpResponse:
         Q(status__in=["open", "assigned", "in_progress"])
         | Q(finished_at__gte=now - timedelta(days=RECENT_DAYS))
     )
+    qs = v.scope.filter(qs)  # v2 03A-1: only the hubs the viewer holds a grant for; ?hub=CODE narrows
     if not v.all:  # a field operator sees their own tasks only (contract 8.6)
         qs = qs.filter(owner=v.person) if v.person is not None else qs.none()
     tasks = list(qs.order_by("due_at", "id"))
@@ -185,6 +187,7 @@ def hub_page(request: HttpRequest) -> HttpResponse:
             "viewer": v,
             "own_only": not v.all,
             "tz_now": now.astimezone(workspace_zone()),
+            "scope": v.scope,
         },
     )
 
@@ -205,10 +208,25 @@ class TaskForm(UIForm):
     )
     owner = forms.ChoiceField(required=False, label="Owner")
     note = forms.CharField(max_length=300, required=False, label="Note (optional)")
+    hub = forms.ChoiceField(
+        required=False,
+        label="Hub",
+        help_text="A task about a robot belongs to the robot's hub. Otherwise choose the hub.",
+    )
 
-    def __init__(self, *args: Any, owner_choices: list[tuple[str, str]] | None = None, **kw: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        owner_choices: list[tuple[str, str]] | None = None,
+        hub_choices: list[tuple[str, str]] | None = None,
+        **kw: Any,
+    ) -> None:
         super().__init__(*args, **kw)
         self.fields["owner"].choices = owner_choices or [("", "Nobody yet")]  # type: ignore[attr-defined]
+        if hub_choices and len(hub_choices) > 1:
+            self.fields["hub"].choices = [("", "The robot's hub")] + hub_choices  # type: ignore[attr-defined]
+        else:
+            del self.fields["hub"]  # one hub: nothing to choose
 
     def clean_due_at(self) -> datetime | None:
         value: datetime | None = self.cleaned_data.get("due_at")
@@ -235,7 +253,10 @@ def task_new(request: HttpRequest) -> HttpResponse:
         request,
         permission=hs.WORK,
         form_class=TaskForm,
-        form_kwargs={"owner_choices": _owner_choices(v)},
+        form_kwargs={
+            "owner_choices": _owner_choices(v),
+            "hub_choices": [(h.code, f"{h.code} {h.name}") for h in v.scope.hubs],
+        },
         template="hub/task_new.html",
         call=lambda actor, d: hs.create_task(
             actor,
@@ -245,6 +266,7 @@ def task_new(request: HttpRequest) -> HttpResponse:
             due_at=d["due_at"],
             owner_code=d["owner"] or None,
             note=d["note"],
+            hub_code=d.get("hub") or None,
         ),
         ok=lambda r: f"Task WO-{int(r['entity_id']):04d} added.",
         success_url="/hub/",
@@ -263,6 +285,8 @@ def task_detail(request: HttpRequest, task_id: int) -> HttpResponse:
     )
     if not v.all and not v.mine(t):
         return denied(request, "hub.view_all")
+    if v.scope.regional is False and t.hub_id not in {h.pk for h in v.scope.hubs}:
+        return denied(request, "hub.view_all")  # v2 03A-1: another hub's task
     people = (
         [(p.code, p.label) for p in Person.objects.select_related("user").order_by("code")]
         if v.manager
