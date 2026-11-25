@@ -336,3 +336,23 @@ Direct-SQL tests as `ops_app` prove it cannot:
 - manufacture a maintenance record, a rule approval, a state-of-charge reading or a stock movement;
 - reserve outside the functions;
 - update or delete any of them.
+
+### 8.9 EM ruling 2026-11-25: demo practice runs
+
+The EM approved two practice runs in the Northbay demo. This revises 01D ruling B ("no execution records in the
+demo") for Phase 02. Conditions (binding):
+
+- Exactly two completed practice runs after each rebuild. Both visits are clearly labelled as fictional practice
+  visits, and the label is visible on the visit and run pages. (The demo uses its own home `PRACTICE`, whose town
+  field reads "Fictional practice visit (Emeryville)".)
+- All normal readiness, authorization, custody, execution and reconciliation guards stay active.
+- Real command timestamps. No backdating and no clock advancement. The 00:30 visit time works with build-time
+  execution under the normal scheduling guards; the records say when they were really made.
+- Maintenance rules are labelled demo values.
+- Predictor rows come only from the owner-only logger.
+- No demo-specific bypasses. Practice-run generation lives only in the demo builder, which refuses it in production
+  mode.
+- Rebuilds never accumulate history: `--reset` empties the database before each build.
+
+Two practice runs show that the pipeline works. They establish no predictive accuracy and no fleet reliability.
+

@@ -52,7 +52,8 @@ Goal: one person can run a hub's day from one screen (journey J8, "Hub day").
 - An item below its minimum creates a restock task.
 - The departure equipment check stays the gate.
 
-**Fleet health (02D).** `/ops/health/` shows, per robot and for the fleet: uptime share, holds by source, incidents
+**Fleet health (02D).** `/ops/health/` shows, per robot and for the fleet: recorded availability (from hold and
+lifecycle records, not measured uptime), holds by source, incidents
 by type and severity, and repeat failures. Every figure shows its numerator, denominator, window and what it does not
 establish.
 
@@ -66,15 +67,16 @@ decision.
 
 Read these before you show or sell Phase 02.
 
-- **Health metrics are descriptive, not certified uptime.** They count recorded hold time against recorded
-  in-service time. They do not measure availability, reliability or failure rates. Maintenance-due periods are not
+- **Health metrics are descriptive, not certified uptime.** The page calls the figure "Recorded availability (from
+  hold and lifecycle records), not measured uptime". It counts recorded hold time against recorded in-service time. They do not measure availability, reliability or failure rates. Maintenance-due periods are not
   subtracted.
 - **Current configuration only.** Pattern-hold matching on the health page, and the maintenance status in the
   predictor log, use the robot's current configuration. Configuration history is not reconstructed. A robot that
   changed configuration inside the window can be counted against the wrong pattern.
-  - 02E finding: the health page does **not** say this on screen today. It is stated only in the code
-    (`operations/health.py`) and in the 02D closure note. Reported to the lead; not changed in 02E.
-- **The predictor is observational only.** It predicts nothing. No planning, readiness, fleet, hub or execution code
+  - The health page says this on screen, next to the hold figures and in the predictor section (added in 02E at
+    the EM's request).
+- **The predictor is observational only.** It predicts nothing. In the demo, two practice runs show that the
+  pipeline works; they establish no predictive accuracy and no fleet reliability (also stated on the page). No planning, readiness, fleet, hub or execution code
   reads it. It is not a model and it is not validated.
 - **No stock API and no purchasing.** Stock is changed on the Hub > Stock pages only. There are no suppliers, prices,
   orders or serial-level parts.
@@ -86,7 +88,7 @@ Read these before you show or sell Phase 02.
   rules, thresholds and workflows have not been checked against real operations.
 - **Fictional demo boundary.** The Northbay demo is fictional. Its rules, intervals, thresholds and approvals are
   demo values on `synthetic_demo` records. Production mode refuses every one of them. The demo's practice runs are
-  recorded at build time, not at their planned time (section 7).
+  recorded at build time, not at their planned time (section 7; contract 11, section 8.9).
 - **Battery levels are typed in by people.** There is no telemetry. A stale or missing reading gives Unknown, never
   a guessed number.
 - **One hub only.** Multiple hubs come in Phase 03.
@@ -200,15 +202,24 @@ codes depend on the build date, so read the build output: it names the J4 visit 
 | Maintenance overdue (gate active) | Hub, Today: "SENSOR-CLEAN overdue"; its visit tomorrow shows Blocked |
 | Maintenance unknown | NB-044 (no baseline), commissioning robots NB-049 and NB-050 |
 | Periodic inspection due | Hub: NB-046 and NB-047 "due soon" (beta build inspected every day, demo value); NB-048 never inspected |
-| Kit short and restock | Today: the last visit of the next two days is "Kit short"; Hub: "Restock Nitrile gloves" and a hand-made restock task |
+| Kit short and restock | Today: V-0034 (tomorrow 14:00, NB-038) is "At risk: Kit short" and nothing else (the build output names it); Hub: restock tasks for restraint kits and gloves, and a hand-made one |
 | Work orders to assign and complete | Hub: hand-made and derived tasks, open, assigned and in progress |
 | Held robots | NB-019 (maintenance hold, still booked), NB-012 (failed inspection), NB-007 (incident) |
-| Health and predictor log | `/ops/health/`: uptime share, 3 holds, 1 incident, 2 logged departures |
+| Health and predictor log | `/ops/health/`: recorded availability, 3 holds, 1 incident, 2 logged departures |
 
-**Practice runs.** The demo has two short practice visits at 00:30 local time today, run end to end and closed. Their
-records are stamped when the demo is built, not at 00:30: the build cannot back-date anything. They exist so that the
-predictor log has departures and the visit-count demo rules have closed runs. Every other past visit is still a
-"Historical scheduled visit" with no execution record.
+**Practice runs (EM ruling, contract 11 section 8.9).** The demo has exactly two short practice visits at 00:30 local
+time today, at their own home `PRACTICE` ("Fictional practice visit (Emeryville)", shown on the visit, readiness and
+run pages). They are run end to end through the normal guards and closed. Their records are stamped when the demo is
+built, not at 00:30: the build cannot back-date anything. They exist so that the predictor log has departures and the
+visit-count demo rules have closed runs. Every other past visit is still a "Historical scheduled visit" with no
+execution record. The demo builder refuses to make practice runs in production mode.
+
+**Clean kit-short visit.** One restraint kit is reserved for every visit up to the end of the day after tomorrow,
+except one regular visit tomorrow. That visit also has a recovery plan and a hand battery reading above the minimum,
+so "Kit short" is its only At-risk cause; readiness misses only the day's checks.
+
+**Demo battery freshness.** The demo's `ops_soc_fresh_min` is 1440 minutes (a day; demo value), so the readings taken
+at the 04:00 rebuild still count while the demo is walked during the day.
 
 **Demo maintenance rules.** Four rules on each configuration, all labelled "Demo value, not an engineering
 requirement": JOINT-SERVICE, HAND-SERVICE (from 02C), and two short visit-count rules added in 02E, SENSOR-CLEAN

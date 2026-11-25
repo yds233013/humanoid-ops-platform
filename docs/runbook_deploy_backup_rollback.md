@@ -283,8 +283,9 @@ DJANGO_DB_IDENTITY=owner python manage.py build_demo_workspace --reset   # destr
   them), one failed inspection that holds a robot, one maintenance hold, an incident reported this morning, and
   the recovery plan of the J4 visit. The attention item is a beta robot (NB-048) with no periodic inspection on
   its configuration yet, which is true at any time; there is no "overdue return" (it needed a fabricated run).
-- **Practice runs (v2 02E)**: the one exception to the rule above. Two short practice visits at 00:30 local today
-  (crews B and C, home H-104) are run end to end through the real readiness and execution commands and closed
+- **Practice runs (v2 02E, EM ruling in contract 11 section 8.9)**: the one exception to the rule above. Two short
+  practice visits at 00:30 local today (crews B and C, home `PRACTICE`, labelled "Fictional practice visit" on the
+  visit, readiness and run pages) are run end to end through the real readiness and execution commands and closed
   during the build. Their records are stamped at the build time, never back-dated, so a run reads "departed at
   <build time>" for a visit planned at 00:30. They give the predictor log its departures (the build runs the
   owner-only predictor log once) and the visit-count demo maintenance rules their closed runs: one robot is then
