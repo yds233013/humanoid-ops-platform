@@ -40,6 +40,8 @@ TIMELINE_DEFAULT_MIN = 1440
 TIMELINE_MAX_MIN = 90 * 1440
 METRICS_DEFAULT_DAYS = 7
 METRICS_MAX_DAYS = 366
+HEALTH_DEFAULT_DAYS = 28  # v2 02D fleet health: default window, last 28 days ending at the snapshot
+HEALTH_DAYS_CHOICES = (7, 28, 90)
 UNAVAILABLE = "The operations snapshot could not be opened as the outermost transaction; nothing was read."
 
 
@@ -337,6 +339,31 @@ def metrics_data(at: datetime, start: datetime, end: datetime) -> dict[str, Any]
     return {"as_of": at, "start": start, "end": end, "metrics": metrics.metrics(start, end, at)}
 
 
+def parse_health_window(at: datetime, query: Any) -> tuple[datetime, datetime]:
+    """v2 02D: ``days`` (one of HEALTH_DAYS_CHOICES, ending at the snapshot) or explicit ``start``/``end``.
+    An end later than the snapshot is clipped to it by the read model (time after ``at`` is never counted)."""
+    if query.get("start") or query.get("end"):
+        return parse_metrics_window(at, query.get("start"), query.get("end"))
+    raw = query.get("days") or str(HEALTH_DEFAULT_DAYS)
+    if not raw.isdigit() or int(raw) not in HEALTH_DAYS_CHOICES:
+        raise BadParam(f"days must be one of {', '.join(str(d) for d in HEALTH_DAYS_CHOICES)}")
+    return at - timedelta(days=int(raw)), at
+
+
+def health_data(at: datetime, start: datetime, end: datetime) -> dict[str, Any]:
+    """v2 02D fleet health + the observational predictor log, both read inside the caller's snapshot."""
+    health = _read_model("health")
+    predictors = _read_model("predictors")
+
+    if start >= at:
+        raise BadParam("start must be before the as-of time")
+    return {
+        "as_of": at,
+        "health": health.fleet_health(start, end, at),
+        "predictor_log": predictors.recent_observations(at),
+    }
+
+
 # ------------------------------------------------------------------ page helpers
 def _base(request: HttpRequest, at: datetime, section: str) -> dict[str, Any]:
     demo = demo_mode()
@@ -492,3 +519,24 @@ def metrics_page(request: HttpRequest, at: datetime) -> HttpResponse:
         "end_text": as_of_text(end),
     }
     return render(request, "operations/metrics.html", ctx)
+
+
+@ops_view("operations.metrics")
+def health_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    """v2 02D fleet health (/ops/health/): read-only, one snapshot, operations.metrics like /ops/metrics/."""
+    try:
+        start, end = parse_health_window(at, request.GET)
+        data = health_data(at, start, end)
+    except BadParam as exc:
+        return _bad(request, at, "health", exc)
+    h = data["health"]
+    ctx = {
+        **_base(request, at, "health"),
+        **data,
+        "start_text": as_of_text(h.start),
+        "end_text": as_of_text(h.end),
+        "days_choices": HEALTH_DAYS_CHOICES,
+        "days_selected": request.GET.get("days")
+        or ("" if request.GET.get("start") else str(HEALTH_DEFAULT_DAYS)),
+    }
+    return render(request, "operations/health.html", ctx)

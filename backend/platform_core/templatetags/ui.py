@@ -366,6 +366,7 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     ],
     "reports": [
         ("Metrics", "/ops/metrics/", "operations.metrics"),
+        ("Fleet health", "/ops/health/", "operations.metrics"),
         ("Capacity forecast", "/ops/capacity/", "operations.metrics"),
     ],
 }
@@ -383,6 +384,7 @@ SECTION_PREFIXES: list[tuple[str, str]] = [
     ("/ops/production-readiness/", "settings"),
     ("/ops/robots/", "fleet"),
     ("/ops/metrics/", "reports"),
+    ("/ops/health/", "reports"),
     ("/ops/capacity/", "reports"),
     ("/planning/sites/", "customers"),
     ("/ops/closeout/", "hub"),
