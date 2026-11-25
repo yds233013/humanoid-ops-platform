@@ -10,17 +10,17 @@
 {% include "ui/hub_filter.html" %}
 <div class="row" style="margin:0 0 var(--s3)">{% if viewer.work %}<a class="btn primary" href="/hub/tasks/new/">Add a task</a>{% endif %}{% if own_only %}<span class="muted">You see the tasks assigned to you.</span>{% endif %}</div>
 <div class="hubgroup" data-counts="queue"><h2>Queues</h2><div class="row hubchips">
-  <a class="chip {% if view == 'all' %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/" data-count="all"><b class="n">{{ total }}</b> <span>All open tasks</span></a>
-  <a class="chip {% if view == 'mine' %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/?view=mine" data-count="mine"><b class="n">{{ counts.mine }}</b> <span>Assigned to me</span></a>
-  <a class="chip {% if counts.overdue %}chip-bad{% else %}chip-neutral{% endif %}" href="/hub/?view=overdue" data-count="overdue"><b class="n">{{ counts.overdue }}</b> <span>Overdue</span></a>
-  <a class="chip {% if counts.unassigned %}chip-warn{% else %}chip-neutral{% endif %}" href="/hub/?view=unassigned" data-count="unassigned"><b class="n">{{ counts.unassigned }}</b> <span>No owner yet</span></a>
-  <a class="chip {% if view == 'resolved' %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/?view=resolved" data-count="resolved"><b class="n">{{ counts.resolved }}</b> <span>Resolved by the underlying record</span></a>
+  <a class="chip {% if view == 'all' %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/{% if scope.code %}?hub={{ scope.code|urlencode }}{% endif %}" data-count="all"><b class="n">{{ total }}</b> <span>All open tasks</span></a>
+  <a class="chip {% if view == 'mine' %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/?view=mine{% if scope.code %}&hub={{ scope.code|urlencode }}{% endif %}" data-count="mine"><b class="n">{{ counts.mine }}</b> <span>Assigned to me</span></a>
+  <a class="chip {% if counts.overdue %}chip-bad{% else %}chip-neutral{% endif %}" href="/hub/?view=overdue{% if scope.code %}&hub={{ scope.code|urlencode }}{% endif %}" data-count="overdue"><b class="n">{{ counts.overdue }}</b> <span>Overdue</span></a>
+  <a class="chip {% if counts.unassigned %}chip-warn{% else %}chip-neutral{% endif %}" href="/hub/?view=unassigned{% if scope.code %}&hub={{ scope.code|urlencode }}{% endif %}" data-count="unassigned"><b class="n">{{ counts.unassigned }}</b> <span>No owner yet</span></a>
+  <a class="chip {% if view == 'resolved' %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/?view=resolved{% if scope.code %}&hub={{ scope.code|urlencode }}{% endif %}" data-count="resolved"><b class="n">{{ counts.resolved }}</b> <span>Resolved by the underlying record</span></a>
 </div></div>
 <div class="hubgroup" data-counts="types"><h2>By type</h2><div class="row hubchips">
-{% for key, label, n in types %}<a class="chip {% if view == 'type:'|add:key %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/?view=type:{{ key }}" data-type="{{ key }}"><b class="n">{{ n }}</b> <span>{{ label }}</span></a>
+{% for key, label, n in types %}<a class="chip {% if view == 'type:'|add:key %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/?view=type:{{ key }}{% if scope.code %}&hub={{ scope.code|urlencode }}{% endif %}" data-type="{{ key }}"><b class="n">{{ n }}</b> <span>{{ label }}</span></a>
 {% endfor %}</div></div>
 {% if owners %}<div class="hubgroup" data-counts="owners"><h2>By owner</h2><div class="row hubchips">
-{% for code, label, n in owners %}<a class="chip {% if view == 'owner:'|add:code %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/?view=owner:{{ code }}" data-owner="{{ code }}"><b class="n">{{ n }}</b> <span>{{ label }}</span></a>
+{% for code, label, n in owners %}<a class="chip {% if view == 'owner:'|add:code %}chip-info{% else %}chip-neutral{% endif %}" href="/hub/?view=owner:{{ code }}{% if scope.code %}&hub={{ scope.code|urlencode }}{% endif %}" data-owner="{{ code }}"><b class="n">{{ n }}</b> <span>{{ label }}</span></a>
 {% endfor %}</div></div>{% endif %}
 <section class="sec" id="tasks" data-section="tasks"><h2>{% if view == 'all' %}Open tasks{% elif view == 'mine' %}Assigned to me{% elif view == 'overdue' %}Overdue{% elif view == 'unassigned' %}No owner yet{% elif view == 'resolved' %}Resolved by the underlying record{% else %}Filtered tasks{% endif %} <span class="muted">({{ rows|length }})</span></h2>
 {% if rows %}<div class="tablewrap"><table><thead><tr><th>Task</th><th>Type</th><th>Robot</th><th>Due</th><th>Owner</th><th>Status</th><th>Next step</th></tr></thead><tbody>
