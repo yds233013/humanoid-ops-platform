@@ -112,8 +112,9 @@ def holds_permission_locked(actor: User, permission: str, hub: HubRef = None) ->
 def guarded_function(sql: str, params: list[Any]) -> Any:
     """Call a guarded SECURITY DEFINER function inside a command's handler (v2 03A: the creation functions
     of hub/0015) and return its first column. Its refusals become the command errors: the actor ->
-    PermissionDenied (audited as denied by run_command), a duplicate -> Conflict, a rule -> Invalid.
-    Nothing is written on a refusal."""
+    PermissionDenied (audited as denied by run_command); a duplicate or a rule -> Conflict, as run_command
+    maps every database refusal (REFUSED_SQLSTATES), so the services' errors stay what they were (their own
+    Python checks raise Invalid first, as before). Nothing is written on a refusal."""
     try:
         with connection.cursor() as cur:
             cur.execute(sql, params)
@@ -124,10 +125,8 @@ def guarded_function(sql: str, params: list[Any]) -> Any:
         text = getattr(getattr(cause, "diag", None), "message_primary", None) or str(exc)
         if state == "42501":
             raise PermissionDenied(text) from exc
-        if state == "23505":
+        if state in ("23505", "23514"):
             raise Conflict(text) from exc
-        if state == "23514":
-            raise Invalid(text) from exc
         raise
 
 
