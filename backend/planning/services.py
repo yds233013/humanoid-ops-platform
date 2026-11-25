@@ -36,6 +36,7 @@ from platform_core.commands import Conflict, Invalid, Outcome, PermissionDenied,
 from platform_core.hubscope import owner_hub
 from platform_core.locks import lock_guards
 from platform_core.testhooks import checkpoint
+from platform_core.timezones import localize_utc_text
 
 User = get_user_model()
 
@@ -303,7 +304,7 @@ def evaluate(
                     b,
                     "blocked",
                     "ROBOT_AWAY_OVERLAP",
-                    f"{robot.code}: {other}",
+                    f"{robot.code}: {localize_utc_text(other)}",
                     "Choose another robot, or a time after its run is back and verified at the hub",
                 )
             elif where.away:
