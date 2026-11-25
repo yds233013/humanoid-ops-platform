@@ -533,7 +533,10 @@ def test_no_decision_module_imports_or_reads_the_predictor_log():
         for p in (root / "operations").rglob("*")
         if p.suffix in (".py", ".html") and "predictor" in p.read_text()
     )
+    # 02E: the demo builder (and its command's output) runs the same owner-only logger once; it never reads rows
     assert ops_hits == [
+        "operations/demo_workspace.py",
+        "operations/management/commands/build_demo_workspace.py",
         "operations/management/commands/log_predictor_signals.py",
         "operations/migrations/0008_predictor_log.py",
         "operations/models.py",
@@ -669,6 +672,15 @@ def test_health_page_permissions_banner_wording_and_constant_statements():
     assert 'data-synthetic-banner="1"' in body and "SYNTHETIC DEMO" in body
     assert "Observational only; not used for any decision." in body and "Nothing logged yet." in body
     assert 'data-metric="uptime_share"' in body and 'data-robot="R-01"' in body
+    # 02E (EM): the current-configuration limit, availability vs uptime and the practice-run limit, on screen
+    config_note = (
+        "Pattern holds and the predictor's maintenance status use each robot's current configuration; "
+        "configuration history is not reconstructed."
+    )
+    assert body.count(config_note) == 2  # next to the hold figures and in the predictor section
+    assert "Recorded availability is not measured uptime." in body
+    assert "from hold and lifecycle records, not measured uptime" in body
+    assert "They establish no predictive accuracy and no fleet reliability." in body
     assert "prorated" in body and "Does not establish" in body
     main = body[body.index('data-synthetic-banner="1"') :]
     for word in (r"\bsafe\b", r"\bcleared\b", r"\breliable\b", r"guarantee"):
