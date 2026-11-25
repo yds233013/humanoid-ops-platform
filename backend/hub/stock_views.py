@@ -106,6 +106,7 @@ def stock_page(request: HttpRequest) -> HttpResponse:
             "any_minimum": any(i.minimum is not None for i in items),
             "any_per_visit": any(i.per_visit is not None for i in items),
             "reservations": reservations,
+            "cancelled_rows": sum(1 for r in reservations if r.visit.status == "cancelled"),
             "movements": movements,
             "visits": _visit_options(),
             "return_visits": _return_visits(),
@@ -191,6 +192,21 @@ def reserve_view(request: HttpRequest) -> HttpResponse:
         request, st.RESERVE, go,
         "Stock reserved for the visit. The departure equipment check is still required.", back=BACK,
     )  # fmt: skip
+
+
+@login_required
+@require_POST
+def release_cancelled_view(request: HttpRequest) -> HttpResponse:
+    """02E: one click on a "Visit cancelled: release this" row (hub_release_stock, reason filled in)."""
+
+    def go() -> None:
+        try:
+            rid = int(request.POST.get("reservation", ""))
+        except ValueError:
+            raise forms.ValidationError("reservation: choose a reservation") from None
+        st.release_for_cancelled_visit(request.user, reservation_id=rid)
+
+    return _do(request, st.RESERVE, go, "Reservation released: its visit was cancelled.", back=BACK)
 
 
 class ReleaseForm(UIForm):

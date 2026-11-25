@@ -28,6 +28,9 @@ urlpatterns = [
     path("hub/stock/adjust/", stock_views.adjust_view, name="hub-stock-adjust"),
     path("hub/stock/reserve/", stock_views.reserve_view, name="hub-stock-reserve"),
     path(
+        "hub/stock/release-cancelled/", stock_views.release_cancelled_view, name="hub-stock-release-cancelled"
+    ),
+    path(
         "hub/stock/reservations/<int:reservation_id>/release/",
         stock_views.release_view,
         name="hub-stock-release",

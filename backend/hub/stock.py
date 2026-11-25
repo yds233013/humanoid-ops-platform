@@ -9,7 +9,8 @@ READ MODELS (one statement each, whatever the number of items, movements or visi
 
 * ``levels()``: per item on hand, reserved, available, out with visits (reusable), the owner-provisioned
   minimum (``stock_minimums``; absent = "No minimum set") and whether available is below it. Every number is a
-  sum over the ledger: there is no counter column.
+  sum over the ledger: there is no counter column. 02E: also how much of "reserved" is still held for visits
+  that were cancelled (active reservations of a cancelled visit), so it is visible and can be released.
 * ``visit_needs()``: for the visits leaving in the next two days, what each still needs of the items listed in
   ``stock_per_visit`` (absent = not counted per visit) after its reservation and what was already issued or
   used for it. Visits are served in departure order from what is available; a visit that cannot be served is
@@ -26,7 +27,7 @@ from typing import Any
 from django.db import DatabaseError, connection, transaction
 from django.utils import timezone
 
-from hub.models import StockItem
+from hub.models import StockItem, StockReservation
 from planning.models import Visit
 from platform_core.commands import CommandError, Conflict, Invalid, NotAuthenticated, PermissionDenied
 from platform_core.middleware import current_request_id
@@ -159,6 +160,19 @@ def release(actor: Any, *, reservation_id: int, reason: str) -> None:
              [reservation_id, reason], {"reservation_id": reservation_id, "reason": reason})  # fmt: skip
 
 
+def release_for_cancelled_visit(actor: Any, *, reservation_id: int) -> str:
+    """02E: the one-click release of a reservation whose visit was cancelled, through hub_release_stock (same
+    role check, lock and audit) with the reason filled in. Refused for a visit that is not cancelled: that
+    needs the release page and a reason. Returns the visit code."""
+    r = StockReservation.objects.select_related("visit").filter(pk=reservation_id).first()
+    if r is None:
+        raise Invalid("No such stock reservation")
+    if r.visit.status != "cancelled":
+        raise Conflict(f"Visit {r.visit.code} is not cancelled; release it with a reason on its release page")
+    release(actor, reservation_id=r.pk, reason=f"Visit {r.visit.code} was cancelled")
+    return str(r.visit.code)
+
+
 # ------------------------------------------------------------------ wording
 def singular(unit: str) -> str:
     """The unit for a count of 1 (``boxes`` -> ``box``, ``kits`` -> ``kit``). Same rule as hub_stock_qty() in
@@ -190,11 +204,17 @@ tot AS MATERIALIZED (
   SELECT m.item_id, sum(m.on_hand_delta) AS on_hand, sum(m.reserved_delta) AS reserved,
          sum(CASE m.kind WHEN 'issue' THEN m.quantity WHEN 'return' THEN -m.quantity ELSE 0 END) AS out_qty
   FROM hub_stock_movement m GROUP BY m.item_id
+),
+held AS MATERIALIZED (
+  SELECT r.item_id, sum(r.quantity) AS q FROM hub_stock_reservation r
+  JOIN planning_visit v ON v.id = r.visit_id
+  WHERE r.released_at IS NULL AND v.status = 'cancelled' GROUP BY r.item_id
 )
 SELECT i.id, i.code, i.name, i.kind, i.unit, coalesce(t.on_hand, 0), coalesce(t.reserved, 0),
-       coalesce(t.out_qty, 0), mins.n, per.n
+       coalesce(t.out_qty, 0), mins.n, per.n, coalesce(h.q, 0)
 FROM hub_stock_item i
 LEFT JOIN tot t ON t.item_id = i.id
+LEFT JOIN held h ON h.item_id = i.id
 LEFT JOIN mins ON mins.code = i.code
 LEFT JOIN per ON per.code = i.code
 ORDER BY i.code
@@ -214,6 +234,7 @@ class Level:
     out: int
     minimum: int | None
     per_visit: int | None
+    cancelled: int = 0  # 02E: of ``reserved``, how much is still held for visits that were cancelled
 
     @property
     def available(self) -> int:
@@ -236,7 +257,7 @@ def levels() -> list[Level]:
     with connection.cursor() as cur:
         cur.execute(LEVELS_SQL)
         return [
-            Level(r[0], r[1], r[2], r[3], r[4], int(r[5]), int(r[6]), int(r[7]), r[8], r[9])
+            Level(r[0], r[1], r[2], r[3], r[4], int(r[5]), int(r[6]), int(r[7]), r[8], r[9], int(r[10]))
             for r in cur.fetchall()
         ]
 
