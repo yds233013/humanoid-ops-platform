@@ -72,7 +72,10 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "'fleet_hub_transfer', "
             # Phase 03A-3 (contract I-8, 10.B): role grants are written only through the SECURITY DEFINER
             # functions of accounts/0006. The runtime role has SELECT only. Asserted below.
-            "'accounts_rolegrant') "
+            "'accounts_rolegrant', "
+            # Phase 03A closure (hub/0015): robots, vans and chargers are created only through SECURITY DEFINER
+            # functions; the runtime role keeps SELECT and UPDATE (DELETE for robots and vans). Asserted below.
+            "'fleet_robot', 'planning_vehicle', 'hub_charger') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
@@ -123,6 +126,16 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "has_table_privilege(current_user, 'fleet_holdrebaseactivation', 'SELECT')"
         )
         assert cur.fetchone() == (False, True, True, False, True)
+        # Deliberate exception (03A closure, hub/0015): created only by fleet_create_robot,
+        # planning_create_vehicle and hub_create_charger; other columns stay updatable by the commands.
+        for table in ("fleet_robot", "planning_vehicle", "hub_charger"):
+            cur.execute(
+                "SELECT has_table_privilege(current_user, %s, 'INSERT'), "
+                "has_table_privilege(current_user, %s, 'SELECT'), "
+                "has_table_privilege(current_user, %s, 'UPDATE')",
+                [table] * 3,
+            )
+            assert cur.fetchone() == (False, True, True), table
 
 
 def test_runtime_role_is_not_superuser_and_owns_nothing(app_role_conn):
