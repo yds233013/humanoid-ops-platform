@@ -34,6 +34,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from django.db import connection
+from django.db.models.expressions import RawSQL
 
 from fleet import services as fleet_services
 from fleet.models import ManifestPattern, Robot
@@ -244,8 +245,18 @@ def plan_options(visit: Visit) -> PlanOptions:
         bucket[:] = _sort(bucket)
 
     # vehicles: capacity and restraint kit recorded (as evaluate requires), then conflicts
-    for v in Vehicle.objects.order_by("code"):
-        if v.robot_capacity is None:
+    # v2 03A-2: whether it is on its way to another hub (its latest transfer step not received), same read
+    moving = RawSQL(
+        "(SELECT t.state <> 'received' FROM fleet_hub_transfer t WHERE t.vehicle_id = planning_vehicle.id"
+        " ORDER BY t.id DESC LIMIT 1)",
+        [],
+    )
+    for v in Vehicle.objects.annotate(moving=moving).order_by("code"):
+        if v.moving:
+            status, note = UNUSABLE, "on its way to another hub"
+        elif v.hub_id != visit.hub_id:
+            status, note = UNUSABLE, "at another hub"
+        elif v.robot_capacity is None:
             status, note = UNUSABLE, "capacity not recorded"
         elif not v.restraint_kit:
             status, note = UNUSABLE, "no restraint kit recorded"

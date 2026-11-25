@@ -1,7 +1,9 @@
 """v2 Phase 03A-2 (docs/13_v2_phase03_contract.md 11.4, correction 10.A): hub-end custody events name the hub.
 
 execution_custodyevent.hub_id: the hub at the hub end of the move (from_kind = hub or to_kind = hub); NULL for a
-move with no hub end (check constraint custody_hub_at_hub_end).
+move with no hub end (check constraint custody_hub_only_at_hub_end). The trigger below always sets it at a hub
+end; the constraint does not require it, so a history written by the schema owner with triggers disabled (test
+fixtures of broken histories) still loads, and fleet_robot_location then falls back to the home hub.
 
   * Backfill: every existing hub-end event gets the robot's HOME hub (in a Phase 02 database there is one hub,
     so this is where every such move happened). The table is append-only (reject_mutation), so the owner disables
@@ -82,11 +84,8 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name="custodyevent",
             constraint=models.CheckConstraint(
-                condition=(
-                    ((Q(from_kind="hub") | Q(to_kind="hub")) & Q(hub__isnull=False))
-                    | (~Q(from_kind="hub") & ~Q(to_kind="hub") & Q(hub__isnull=True))
-                ),
-                name="custody_hub_at_hub_end",
+                condition=Q(from_kind="hub") | Q(to_kind="hub") | Q(hub__isnull=True),
+                name="custody_hub_only_at_hub_end",
             ),
         ),
         migrations.RunSQL(TRIGGER, TRIGGER_REVERSE),

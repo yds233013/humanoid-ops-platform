@@ -88,7 +88,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION fleet_robot_location(p_robot bigint)
 RETURNS TABLE (kind text, hub_id bigint, ref text, verified boolean)
-LANGUAGE plpgsql STABLE SET search_path = public, pg_temp AS $fn$
+LANGUAGE plpgsql STABLE ROWS 1 SET search_path = public, pg_temp AS $fn$
 #variable_conflict use_column
 DECLARE rb fleet_robot; c record; e execution_custodyevent; t fleet_hub_transfer; h bigint;
 BEGIN

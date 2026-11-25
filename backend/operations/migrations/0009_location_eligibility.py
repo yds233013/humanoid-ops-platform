@@ -32,13 +32,23 @@ def _once(text: str, old: str, new: str) -> str:
 _RS = ") ap ON p.id IS NOT NULL\nCROSS JOIN LATERAL (\n  SELECT\n"
 _END = "             ORDER BY h.id)\n    AS reasons\n) rs;\n"
 
+_MODE = "WITH mode AS MATERIALIZED (SELECT fleet_production_mode() AS production),\n"
+_PLOCS = (
+    "-- v2 03A-2: every robot's location, computed ONCE per statement (MATERIALIZED, like pstat), so a query\n"
+    "-- joining or filtering this view never re-runs the per-robot function\n"
+    "plocs AS MATERIALIZED (\n"
+    "  SELECT r.id AS robot_id, l.kind, l.hub_id, l.ref, l.verified\n"
+    "  FROM fleet_robot r CROSS JOIN LATERAL fleet_robot_location(r.id) l\n"
+    "),\n"
+)
+
 VIEW_SQL = _once(
     _once(
-        _OPS7.ELIGIBILITY_SQL,
+        _once(_OPS7.ELIGIBILITY_SQL, _MODE, _MODE + _PLOCS),
         _RS,
         ") ap ON p.id IS NOT NULL\n"
-        "-- v2 03A-2: the robot's location (one row per robot)\n"
-        "CROSS JOIN LATERAL (SELECT * FROM fleet_robot_location(r.id)) loc\n"
+        "-- v2 03A-2: the robot's location (once per robot and statement, see plocs)\n"
+        "LEFT JOIN plocs loc ON loc.robot_id = r.id\n"
         "CROSS JOIN LATERAL (\n  SELECT\n",
     ),
     _END,

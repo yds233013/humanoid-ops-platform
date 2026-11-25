@@ -382,6 +382,8 @@ class PeriodicStatus:
     # v2 02C: read in the same statement by the readiness evaluator (None = not read with this status)
     maintenance_reasons: list[str] | None = None
     maintenance_due: datetime | None = None
+    # v2 03A-2: the robot's location, read in the same statement by the readiness evaluator (None = not read)
+    location: Location | None = None
 
 
 def qualifying_periodic_inspection(robot: Robot, *, production: bool) -> Inspection | None:
@@ -550,7 +552,9 @@ def evaluate_eligibility(
         reasons.append(f"Robot hold {h.code} ({h.get_source_type_display()}): {h.reason}")
     # v2 03A-2 (10.A): only a verified hub location makes a robot available (same position and wording as the
     # SQL view, operations/0009). Which hub (= the visit's) is checked by the planner, not here.
-    where = robot_location(robot.pk)
+    where = (
+        shared.location if shared is not None and shared.location is not None else robot_location(robot.pk)
+    )
     if where.problem:
         reasons.append(where.problem)
     ok = not reasons

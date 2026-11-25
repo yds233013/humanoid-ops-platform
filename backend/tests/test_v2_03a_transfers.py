@@ -728,11 +728,10 @@ def test_vehicle_with_an_open_or_future_trip_cannot_move_and_one_in_transit_cann
     van2 = Vehicle.objects.get(code="VAN-2")
     # in transit: neither hub can book it
     code = _new_visit(w, h0=17)
-    res = plan(w, code, robot="R-03", second="P-3", vehicle="VAN-2")
-    assert res["feasibility"] == "blocked"
-    assert any(
-        b["code"] == "VEHICLE_IN_TRANSFER" for b in Visit.objects.get(code=code).current_revision.blockers
-    )
+    opt = next(o for o in popt.plan_options(Visit.objects.get(code=code)).vehicles if o.code == "VAN-2")
+    assert (opt.status, opt.note) == (popt.UNUSABLE, "on its way to another hub")
+    with pytest.raises(Conflict, match="vehicle VAN-2: In transfer TR-"):
+        plan(w, code, robot="R-03", second="P-3", vehicle="VAN-2")
     vres = Resource.objects.get_or_create(kind="vehicle", vehicle=van2)[0].pk
     with app_role_conn.cursor() as cur, pytest.raises(psycopg.errors.CheckViolation, match="In transfer"):
         cur.execute(BOOK_SQL, [vres, _requested_revision(w)])

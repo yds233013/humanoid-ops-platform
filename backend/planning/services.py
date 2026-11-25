@@ -16,7 +16,6 @@ from django.utils import timezone
 
 from fleet import services as fleet_services
 from fleet.models import CapabilityProfile, ManifestPattern, Robot
-from fleet.transfers import open_transfer_text
 from planning.models import (
     AssessmentApproval,
     ConsentRecord,
@@ -329,15 +328,6 @@ def evaluate(
     if vehicle is None:
         _add(b, "blocked", "VEHICLE_MISSING", "No vehicle assigned", "Assign a vehicle")
     else:
-        moving = open_transfer_text("vehicle", vehicle.pk)
-        if moving:
-            _add(
-                b,
-                "blocked",
-                "VEHICLE_IN_TRANSFER",
-                f"{vehicle.code} is in transfer {moving}",
-                "Choose another vehicle, or receive this one first",
-            )
         if vehicle.robot_capacity is None:
             _add(
                 b,

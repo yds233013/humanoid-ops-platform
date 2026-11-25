@@ -231,11 +231,8 @@ class CustodyEvent(models.Model):
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=(
-                    ((Q(from_kind="hub") | Q(to_kind="hub")) & Q(hub__isnull=False))
-                    | (~Q(from_kind="hub") & ~Q(to_kind="hub") & Q(hub__isnull=True))
-                ),
-                name="custody_hub_at_hub_end",
+                condition=Q(from_kind="hub") | Q(to_kind="hub") | Q(hub__isnull=True),
+                name="custody_hub_only_at_hub_end",
             ),
             models.UniqueConstraint(fields=["robot", "seq"], name="uniq_custody_robot_seq"),
             models.CheckConstraint(condition=_in("from_kind", CUSTODY_KINDS), name="custody_from_valid"),
