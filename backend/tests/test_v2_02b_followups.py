@@ -36,6 +36,11 @@ HELPERS = {
     "hub_audit",
     "hub_charge_conflict",
     "hub_lock_robot_charger",
+    # v2 03A-1 (accounts/0005, hub/0010): the hub-qualified grant check and the same-hub / owner-change
+    # triggers. Helpers too: not SECURITY DEFINER, not executable by ops_app or PUBLIC (asserted below).
+    "hub_actor_has_at",
+    "hub_same_hub_guard",
+    "hub_owner_change_guard",
 }
 ROLES = ("public", "ops_app", "ops_owner")
 
@@ -64,7 +69,7 @@ def _hub_functions() -> dict[str, dict[str, Any]]:
 
 def test_every_hub_function_has_exactly_the_intended_privileges():
     fns = {n: f for n, f in _hub_functions().items() if "stock" not in n}  # 02D's: test_v2_02d_inventory
-    assert set(fns) == ENTRY | HELPERS  # nothing else was created by hub/0003-0004
+    assert set(fns) == ENTRY | HELPERS  # nothing else was created by hub/0003-0004 (and 03A-1's helpers)
     for name, f in fns.items():
         assert f["owner"] == "ops_owner" and f["ops_owner"] is True, name
         assert f["public"] is False, name  # EXECUTE revoked from PUBLIC on every one

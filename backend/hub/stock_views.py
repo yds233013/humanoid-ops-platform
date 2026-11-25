@@ -17,7 +17,6 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from accounts.permissions import active_roles
 from hub import stock as st
 from hub.charging_views import _allowed, _do, _valid
 from hub.models import STOCK_KINDS, StockMovement, StockReservation
@@ -88,10 +87,10 @@ def _return_visits() -> list[Visit]:
 @login_required
 @require_GET
 def stock_page(request: HttpRequest) -> HttpResponse:
-    roles = active_roles(request.user)
+    scope = hub_scope(request)  # v2 03A-1: the viewer's hubs (and roles, one statement)
+    roles = scope.roles
     if not _allowed(roles, "hub.view"):
         return denied(request, "hub.view")
-    scope = hub_scope(request)  # v2 03A-1: the viewer's hubs; ?hub=CODE narrows
     items = st.levels(scope.ids)
     needs = st.visit_needs(hub_ids=scope.ids)
     reservations = list(

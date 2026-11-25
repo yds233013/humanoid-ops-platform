@@ -28,6 +28,7 @@ class HubScope:
     selected: Hub | None = None  # ?hub=CODE, when visible
     refused_code: str = ""  # ?hub=CODE of a hub the viewer may not see (the page shows nothing)
     by_id: dict[int, Hub] = field(default_factory=dict)
+    roles: set[str] = field(default_factory=set)  # the viewer's active roles, any hub (= active_roles(user))
 
     @property
     def ids(self) -> set[int] | None:
@@ -65,15 +66,16 @@ class HubScope:
 
 
 # The viewer's active grants (the validity rule of accounts.permissions, database clock) -> regional or
-# not, and the hubs they may see. Always returns at least one row (the regional flag), hub columns NULL when none.
+# not, their roles, and the hubs they may see. Always at least one row; hub columns NULL when none.
 SCOPE_SQL = """
 WITH g AS MATERIALIZED (
-  SELECT gr.hub_id FROM accounts_rolegrant gr JOIN auth_user u ON u.id = gr.user_id AND u.is_active
+  SELECT gr.hub_id, gr.role FROM accounts_rolegrant gr JOIN auth_user u ON u.id = gr.user_id AND u.is_active
   WHERE gr.user_id = %s AND gr.revoked_at IS NULL AND gr.valid_from <= clock_timestamp()
     AND (gr.valid_to IS NULL OR gr.valid_to > clock_timestamp())
 ),
-r AS (SELECT EXISTS (SELECT 1 FROM g WHERE g.hub_id IS NULL) AS regional)
-SELECT r.regional, h.id, h.code, h.name
+r AS (SELECT EXISTS (SELECT 1 FROM g WHERE g.hub_id IS NULL) AS regional,
+             ARRAY(SELECT DISTINCT g.role FROM g) AS roles)
+SELECT r.regional, h.id, h.code, h.name, r.roles
 FROM r LEFT JOIN platform_core_hub h ON (r.regional OR h.id IN (SELECT g.hub_id FROM g))
 ORDER BY h.code
 """
@@ -81,15 +83,15 @@ ORDER BY h.code
 
 def hub_scope(request: HttpRequest) -> HubScope:
     user = request.user
-    regional, hubs = False, []
+    regional, hubs, roles = False, [], set()
     if getattr(user, "is_authenticated", False):
         with connection.cursor() as cur:
             cur.execute(SCOPE_SQL, [user.pk])
-            for reg, hub_id, code, name in cur.fetchall():
-                regional = bool(reg)
+            for reg, hub_id, code, name, role_list in cur.fetchall():
+                regional, roles = bool(reg), set(role_list or [])
                 if hub_id is not None:
                     hubs.append(Hub(id=hub_id, code=code, name=name))
-    scope = HubScope(hubs=hubs, regional=regional, by_id={h.pk: h for h in hubs})
+    scope = HubScope(hubs=hubs, regional=regional, by_id={h.pk: h for h in hubs}, roles=roles)
     code = (request.GET.get("hub") or "").strip().upper()
     if code:
         scope.selected = next((h for h in hubs if h.code == code), None)

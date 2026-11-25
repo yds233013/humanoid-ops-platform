@@ -70,12 +70,12 @@ class ReleaseForm(UIForm):
 @login_required
 @require_GET
 def charging_page(request: HttpRequest) -> HttpResponse:
-    roles = active_roles(request.user)
+    scope = hub_scope(request)  # v2 03A-1: the viewer's hubs (and roles, one statement)
+    roles = scope.roles
     if not _allowed(roles, "hub.view"):
         return denied(request, "hub.view")
     now = timezone.now()
     horizon = now + timedelta(days=2)
-    scope = hub_scope(request)  # v2 03A-1: the viewer's hubs; ?hub=CODE narrows
     chargers = list(scope.filter(Charger.objects.order_by("code")))
     sessions = list(
         scope.filter(ChargingSession.objects.filter(ended_at__isnull=True))

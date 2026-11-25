@@ -22,7 +22,6 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from accounts.permissions import active_roles
 from accounts.roles import PERMISSIONS
 from hub import derive
 from hub import services as hs
@@ -70,7 +69,7 @@ def _allowed(roles: set[str], perm: str | None) -> bool:
 class Viewer:
     def __init__(self, request: HttpRequest) -> None:
         self.scope: HubScope = hub_scope(request)  # v2 03A-1: the hubs this viewer holds a grant for
-        self.roles = active_roles(request.user)
+        self.roles = self.scope.roles  # the same statement read the viewer's active roles
         self.person = hs.person_of(request.user)
         self.all = _allowed(self.roles, "hub.view_all")
         self.work = _allowed(self.roles, hs.WORK)
