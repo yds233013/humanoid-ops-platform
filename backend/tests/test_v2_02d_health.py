@@ -552,3 +552,142 @@ def test_no_decision_module_imports_or_reads_the_predictor_log():
             " AND definition LIKE '%%predictor_observation%%'"
         )
         assert cur.fetchall() == []
+
+
+# ================================================================== privileges (runtime role: SELECT only)
+def refused(conn: Any, sql: str, match: str = "permission denied") -> None:
+    import psycopg
+
+    with conn.cursor() as cur, pytest.raises(psycopg.Error) as err:
+        cur.execute(sql)
+    assert match in str(err.value), str(err.value)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_runtime_role_can_only_select_the_log_and_cannot_run_the_logger(app_role_conn):
+    w = predictor_world("pp_")
+    assert log() == 4
+    t = "operations_predictor_observation"
+    with app_role_conn.cursor() as cur:
+        cur.execute(
+            "SELECT has_table_privilege(current_user, %s, 'SELECT'), has_table_privilege(current_user, %s, 'INSERT'),"
+            " has_table_privilege(current_user, %s, 'UPDATE'), has_table_privilege(current_user, %s, 'DELETE'),"
+            " has_table_privilege(current_user, %s, 'TRUNCATE'),"
+            " has_function_privilege(current_user, 'operations_log_predictor_signals()', 'EXECUTE')",
+            [t] * 5,
+        )
+        assert cur.fetchone() == (True, False, False, False, False, False)
+        cur.execute(f"SELECT count(*) FROM {t}")
+        assert cur.fetchone()[0] == 4
+    refused(app_role_conn, "SELECT operations_log_predictor_signals()")
+    refused(
+        app_role_conn,
+        f"INSERT INTO {t} (departure_id, visit_id, robot_id, departed_at, battery_state, open_holds,"
+        f" open_incidents, maintenance_overdue, maintenance_states, source_refs, observed_at)"
+        f" SELECT d.id, d.visit_id, d.robot_id, d.departed_at, 'unknown', 0, 0, false, '[]', '{{}}', now()"
+        f" FROM readiness_departureevent d LIMIT 1",
+    )
+    refused(app_role_conn, f"UPDATE {t} SET open_holds = 0")
+    refused(app_role_conn, f"DELETE FROM {t}")
+    refused(app_role_conn, f"TRUNCATE {t}")
+    refused(app_role_conn, f"SELECT nextval('{t}_id_seq')")
+    with connection.cursor() as cur:  # append-only even for the owner
+        for sql in (f"UPDATE {t} SET open_holds = 9", f"DELETE FROM {t}"):
+            with pytest.raises(Exception, match="append-only"), transaction_savepoint():
+                cur.execute(sql)
+        cur.execute(
+            "SELECT p.prosecdef, pg_get_userbyid(p.proowner), coalesce(p.proacl::text, ''), p.proconfig::text"
+            " FROM pg_proc p WHERE p.proname = 'operations_log_predictor_signals'"
+        )
+        secdef, owner, acl, config = cur.fetchone()
+    import os
+
+    assert secdef and owner == os.environ.get("DB_OWNER_USER", "ops_owner")
+    assert "search_path=public, pg_temp" in config
+    assert not any(e.startswith("=") for e in acl.strip("{}").split(",") if e)  # no PUBLIC EXECUTE
+    assert "ops_app" not in acl
+    assert w.run1 is not None
+
+
+def transaction_savepoint() -> Any:
+    from django.db import transaction
+
+    return transaction.atomic()
+
+
+# ================================================================== the page
+def page_client(*roles: str, name: str) -> Any:
+    from django.test import Client
+
+    from tests.conftest import make_user
+
+    c = Client()
+    c.force_login(make_user(name, *roles))
+    return c
+
+
+def page_statements(c: Any, url: str = "/ops/health/") -> tuple[int, str]:
+    import re
+
+    seen: list[str] = []
+
+    def wrapper(execute: Any, sql: str, params: Any, many: bool, context: Any) -> Any:
+        seen.append(sql)
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(wrapper):
+        r = c.get(url)
+    assert r.status_code == 200, (url, r.status_code)
+    assert "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY" in seen
+    writes = r"\b(INSERT|UPDATE|DELETE|FOR UPDATE|FOR SHARE|nextval|set_config|pg_advisory)\b"
+    assert not [s for s in seen if re.search(writes, s, re.I)]
+    assert sum(1 for s in seen if "WITH win AS" in s) == 1  # fleet health: one statement
+    assert sum(1 for s in seen if "FROM operations_predictor_observation o" in s) == 1  # predictor log: one
+    return len(seen), r.content.decode()
+
+
+# Every statement of the request: session, user, the two 01D middleware reads, the snapshot (SET + time), the
+# permission and page-chrome reads, then the page's own read models: fleet health (1) and the predictor log (1).
+HEALTH_STATEMENTS = 11
+
+
+@pytest.mark.django_db(transaction=True)
+def test_health_page_permissions_banner_wording_and_constant_statements():
+    import re
+
+    from tests.fleet_world import set_setting
+
+    set_setting("demo_mode", "true")
+    w = ow.ops_world("pg_", robots=2)
+    for role in ("field_operator", "engineer", "hub_technician", "admin"):
+        assert page_client(role, name=f"hp_no_{role}").get("/ops/health/").status_code == 403, role
+    assert page_client(name="hp_none").get("/ops/health/").status_code == 403
+    for role in ("ops_lead", "engineering_lead", "safety_reviewer", "founder"):
+        assert page_client(role, name=f"hp_yes_{role}").get("/ops/health/").status_code == 200, role
+    c = page_client("ops_lead", name="hp_lead")
+    small, body = page_statements(c)
+    assert 'data-synthetic-banner="1"' in body and "SYNTHETIC DEMO" in body
+    assert "Observational only; not used for any decision." in body and "Nothing logged yet." in body
+    assert 'data-metric="uptime_share"' in body and 'data-robot="R-01"' in body
+    assert "prorated" in body and "Does not establish" in body
+    main = body[body.index('data-synthetic-banner="1"') :]
+    for word in (r"\bsafe\b", r"\bcleared\b", r"\breliable\b", r"guarantee"):
+        assert not re.search(word, main, re.I), word
+    # a bigger, busier fleet: more robots, holds, incidents and logged departures; same statement count
+    for code in ("R-03", "R-04", "R-05"):
+        ow.add_robot(w, code)
+    ow.place_hold(w, "robot", "R-03", source="manual")
+    report(w, "R-04", "fall")
+    report(w, "R-04", "fall")
+    ow.depart_new(w, "R-01")
+    ow.depart_new(w, "R-02")
+    assert log() == 2
+    big, body2 = page_statements(c)
+    assert small == big == HEALTH_STATEMENTS, (small, big)
+    assert 'data-robot="R-05"' in body2 and "R-04 fall x2" in body2
+    assert body2.count("data-observation=") == 2
+    # window choices and bad input
+    assert c.get("/ops/health/?days=7").status_code == 200
+    assert c.get("/ops/health/?days=5").status_code == 400
+    assert c.get("/ops/health/?start=2026-01-02&end=2026-01-01").status_code == 400
+    assert c.get("/ops/health/?start=2026-01-01&end=2026-01-02").status_code == 200
