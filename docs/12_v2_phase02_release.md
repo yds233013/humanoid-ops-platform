@@ -120,7 +120,8 @@ add choices.
 
 There is no `hub/0005`. The numbering skips it; `hub/0006` depends on `hub/0004`.
 
-- TODO (engineer A, 02E): add the migrations of the 02E carried items here, if any, with one line each.
+- `planning/0009_maintenance_gate_settings_lock` (02E): the three planning maintenance triggers take the settings lock in shared mode before reading `maintenance_gate_active`, so a direct-SQL write cannot slip past a gate activation in progress. Reverse restores the 0008 bodies.
+- `fleet/0011_maintenance_open_sessions` (02E): a maintenance record no longer hides an execution session that was still open when it was recorded; the hours counter stays Unknown until that session is stopped. Reverse restores the 0010 body.
 
 ## 4. Before you migrate: backup
 
