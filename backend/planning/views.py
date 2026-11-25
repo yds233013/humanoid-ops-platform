@@ -136,6 +136,9 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "options": options,
             # v2 02B: the assigned robot's charge forecast (planning information, never a departure decision)
             "charge": charging.visit_forecasts([v.pk]).get(v.pk) if charging.forecast_configured() else None,
+            # v2 02D: stock reserved for this visit, and what it still cannot get (planning information; the
+            # departure equipment check stays the gate)
+            **_stock_context(v),
             "suggestion": suggestion,
             "site_tz": v.site.timezone,
             "roles": sorted(active_roles(request.user)),
@@ -148,6 +151,22 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "plan_form": PlanForm(),
         },
     )
+
+
+def _stock_context(v: Visit) -> dict[str, Any]:
+    from hub import stock  # noqa: PLC0415
+    from hub.models import StockReservation  # noqa: PLC0415
+
+    if v.status == "cancelled":
+        return {"stock_reserved": [], "stock_needs": []}
+    return {
+        "stock_reserved": list(
+            StockReservation.objects.filter(visit=v, released_at__isnull=True)
+            .select_related("item")
+            .order_by("item__code")
+        ),
+        "stock_needs": [n for n in stock.visit_needs() if n.visit_id == v.pk],
+    }
 
 
 # ------------------------------------------------------------------ shared plumbing for state-changing forms
