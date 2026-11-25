@@ -69,6 +69,7 @@ from fleet.models import Inspection, Robot
 from fleet.services import demo_mode
 from planning.models import Person, Visit
 from platform_core.commands import CommandError, Invalid
+from platform_core.hubscope import hub_scope, other_hub_refusal
 from platform_core.interaction import one_time_form, refused_message
 from platform_core.models import AuditEvent
 from platform_core.timezones import workspace_zone
@@ -461,6 +462,7 @@ def index(request: HttpRequest) -> HttpResponse:
     if (deny := _deny(request)) is not None:
         return deny
     runs = ExecutionRun.objects.select_related("visit__site", "robot", "trip").order_by("-recorded_at", "-id")
+    runs = hub_scope(request).filter(runs, "visit__hub_id")  # v2 03A-3 (I-8): the viewer's hubs only
     return render(request, "execution/index.html", {"rows": [run_summary(r) for r in runs], **_base(request)})
 
 
@@ -516,6 +518,8 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _deny(request)) is not None:
         return deny
     run = _get_run(code)
+    if (deny := other_hub_refusal(request, run.visit.hub_id)) is not None:  # v2 03A-3: another hub's run
+        return deny
     tz = run.visit.site.timezone
     summary = run_summary(run)
     custody = [
@@ -1281,6 +1285,8 @@ def dossier(request: HttpRequest, visit_code: str) -> HttpResponse:
     if (deny := _deny(request)) is not None:
         return deny
     visit = get_object_or_404(Visit.objects.select_related("site"), code=visit_code)
+    if (deny := other_hub_refusal(request, visit.hub_id)) is not None:  # v2 03A-3: another hub's visit
+        return deny
     tz = visit.site.timezone
     entries = [{"e": e, "local": _local(e.at, tz)} for e in visit_dossier(visit)]
     run = ExecutionRun.objects.filter(visit=visit).first()

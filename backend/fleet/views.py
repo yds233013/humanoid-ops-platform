@@ -45,7 +45,7 @@ from fleet.models import (
 )
 from hub.charging import robot_battery_panel
 from platform_core.commands import CommandError
-from platform_core.hubscope import hub_scope
+from platform_core.hubscope import hub_scope, other_hub_refusal
 from platform_core.interaction import spend_form_token
 from platform_core.timezones import workspace_zone
 
@@ -374,6 +374,8 @@ def robot_detail(request: HttpRequest, code: str) -> HttpResponse:
     if not has_permission(request.user, "fleet.read"):
         return HttpResponseForbidden("No fleet access")
     r = get_object_or_404(Robot, code=code)
+    if (deny := other_hub_refusal(request, r.hub_id)) is not None:  # v2 03A-3: another hub's robot
+        return deny
     production = _production()
     own = list(r.holds.select_related("policy").order_by("-placed_at"))
     pattern_open = (
@@ -949,6 +951,8 @@ def robot_maintenance(request: HttpRequest, code: str) -> HttpResponse:
     Unknown, the required inspection, and "Record maintenance" for a qualified person. Readable with fleet
     access or the record permission (the hub technician, who has no other fleet page)."""
     r = get_object_or_404(Robot, code=code)
+    if (deny := other_hub_refusal(request, r.hub_id)) is not None:  # v2 03A-3: another hub's robot
+        return deny
     if request.method == "POST":
         p = request.POST
         return _mnt_post(

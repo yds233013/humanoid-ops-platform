@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from django.db import connection
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 
 from platform_core.models import Hub
 
@@ -96,6 +96,32 @@ def hub_scope(request: HttpRequest) -> HubScope:
         if scope.selected is None:
             scope.refused_code = code[:12]
     return scope
+
+
+# ------------------------------------------------------------------ detail pages (v2 03A-3, invariant I-8)
+OTHER_HUB_TEXT = (
+    "This record belongs to a hub you do not work at, so you cannot open it. "
+    "Ask your ops lead if you need it."
+)
+
+
+def other_hub_refusal(request: HttpRequest, hub_id: int | None) -> HttpResponse | None:
+    """A detail page's read scope: None when the viewer may see a record of ``hub_id`` (a regional grant sees
+    every hub; otherwise an active grant at that hub), else a 403 with a plain sentence. The record's own hub,
+    never client input. One statement (accounts.permissions.visible_hub_ids)."""
+    from accounts.permissions import visible_hub_ids
+
+    hubs = visible_hub_ids(request.user)
+    if hubs is None or (hub_id is not None and int(hub_id) in hubs):
+        return None
+    return HttpResponseForbidden(OTHER_HUB_TEXT)
+
+
+def with_hub(url: str, scope: HubScope) -> str:
+    """``url`` keeping the page's ?hub= filter (v2 03A-3): week and view links of a scoped page."""
+    if scope.selected is None:
+        return url
+    return f"{url}{'&' if '?' in url else '?'}hub={scope.selected.code}"
 
 
 # ------------------------------------------------------------------ the hub of a command's TARGET RECORD

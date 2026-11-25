@@ -20,7 +20,7 @@ from accounts.models import RoleGrant
 from accounts.permissions import has_permission
 from planning import services as ps
 from planning.models import Person, Qualification, Vehicle
-from platform_core.hubscope import add_owner_hub_field
+from platform_core.hubscope import add_owner_hub_field, hub_scope
 from platform_core.interaction import ConfirmForm, UIForm, command_page, denied, holds_any
 from platform_core.timezones import workspace_zone
 
@@ -235,7 +235,9 @@ def qualification_revoke(request: HttpRequest, code: str, qid: int) -> HttpRespo
 def vehicle_list(request: HttpRequest) -> HttpResponse:
     if not has_permission(request.user, READ):
         return denied(request, READ)
-    return render(request, "resources/vehicles.html", {"vehicles": Vehicle.objects.order_by("code")})
+    # v2 03A-3 (I-8): the vans of the viewer's hubs only (regional = all). There is no vehicle detail page.
+    vehicles = hub_scope(request).filter(Vehicle.objects.order_by("code"))
+    return render(request, "resources/vehicles.html", {"vehicles": vehicles})
 
 
 @login_required

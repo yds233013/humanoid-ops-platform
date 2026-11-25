@@ -29,6 +29,7 @@ from fleet.services import demo_mode
 from planning import services as planning_services
 from planning.models import Person, Visit
 from platform_core.commands import CommandError, Invalid
+from platform_core.hubscope import hub_scope, other_hub_refusal
 from platform_core.interaction import (
     command_page,
     one_time_form,
@@ -305,8 +306,11 @@ def index(request: HttpRequest) -> HttpResponse:
     from operations.readmodels import READINESS_CAP, READINESS_LOOKAHEAD, read_thresholds  # noqa: PLC0415
 
     now = timezone.now()
+    # v2 03A-3 (I-8): the viewer's hubs only (regional = all), BEFORE the cap, so the cap and the
+    # "not assessed" notes describe the visits this viewer can open.
     visits = list(
-        Visit.objects.select_related("site", "current_revision__robot")
+        hub_scope(request)
+        .filter(Visit.objects.select_related("site", "current_revision__robot"))
         .filter(status="confirmed", current_revision__on_site_end__gt=now)
         .order_by("current_revision__on_site_start", "pk")
     )
@@ -432,6 +436,8 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _deny(request)) is not None:
         return deny
     v = get_object_or_404(Visit.objects.select_related("site", "current_revision"), code=code)
+    if (deny := other_hub_refusal(request, v.hub_id)) is not None:  # v2 03A-3: another hub's visit
+        return deny
     tz = v.site.timezone
     summary = _summary(v)
     evidence = (
@@ -906,6 +912,8 @@ def visit_inspection(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _deny(request)) is not None:
         return deny
     v = get_object_or_404(Visit.objects.select_related("current_revision__robot"), code=code)
+    if (deny := other_hub_refusal(request, v.hub_id)) is not None:  # v2 03A-3: another hub's visit
+        return deny
     rev = v.current_revision
     if rev is None or rev.robot is None:
         messages.error(
@@ -925,4 +933,6 @@ def robot_inspection(request: HttpRequest, code: str) -> HttpResponse:
     if not has_permission(request.user, "fleet.read"):
         return HttpResponseForbidden("No fleet access")
     robot = get_object_or_404(Robot.objects.select_related("current_manifest"), code=code)
+    if (deny := other_hub_refusal(request, robot.hub_id)) is not None:  # v2 03A-3: another hub's robot
+        return deny
     return _inspection_page(request, robot, visit=None, back_url=f"/fleet/{code}/")
