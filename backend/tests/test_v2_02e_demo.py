@@ -253,7 +253,11 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     assert "SENSOR-CLEAN overdue" in today_page  # the overdue robot's visit tomorrow is blocked
     kit_line = today_page[today_page.index(f"{kit_visit} robot") :]
     kit_line = kit_line[: kit_line.index(" V-", 5)]
-    assert "At risk Kit short" in kit_line, kit_line
+    # At risk with Kit short; when the build runs late in the day, Today's readiness look-ahead also evaluates
+    # tomorrow's visit and adds the day's own check, which is expected (the visit misses only the day's checks).
+    assert "At risk" in kit_line and "Kit short" in kit_line, kit_line
+    rest = kit_line.split("At risk", 1)[1].replace("A pre-departure check has not been recorded", "")
+    assert rest.strip().startswith("Kit short"), kit_line
     for other in ("Charge forecast", "Needs charge", "Blocked", "recovery plan", "Maintenance"):
         assert other not in kit_line, kit_line
 
