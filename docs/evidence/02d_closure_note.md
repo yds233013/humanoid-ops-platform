@@ -6,13 +6,13 @@ Branch `v2/phase02`. `main` and the Northbay demo are unchanged. All data is fic
 
 | Item | Value |
 |---|---|
-| Final SHA | `260abf7` |
-| What it contains | 02D-b fleet health + predictor log (6 commits `192704a`..`056a604`, merged as `8ece61a`), 02D-a kit inventory (7 commits `f3d0ddc`..`770856f`, merged as `d11b713`), walk fixes `62a96c4` (merged as `260abf7`) |
-| Diff | `b94bbdf...260abf7` (34 files) |
+| Final SHA | `bacdce6` |
+| What it contains | 02D-b fleet health + predictor log (6 commits `192704a`..`056a604`, merged as `8ece61a`), 02D-a kit inventory (7 commits `f3d0ddc`..`770856f`, merged as `d11b713`), walk fixes `62a96c4` (merged as `260abf7`), CI flake fix `bacdce6` |
+| Diff | `b94bbdf...bacdce6` |
 | Migrations (additive) | `operations/0008_predictor_log` · `hub/0007_stock` · `hub/0008_stock_write_boundary` · `hub/0009_stock_visit_and_units` |
 | Perf on `d11b713` | 3/3 green (45573674233, 45573678045, 45573682504) |
 | Perf on `260abf7` | 3/3 green (45574680379, 45574684727, 45574688527) |
-| Full CI | on `260abf7` (run linked in the closure request) |
+| Full CI | `260abf7`: 1 failed, 2029 passed (pre-existing oracle ordering flake, below); fixed in `bacdce6`, CI on `bacdce6` success (45580403925, 2030 passed) |
 
 Perf p95 on the 200-robot fixture, three runs on `260abf7`: `/hub/` 76 / 164 / 149 ms; `/hub/` with charging tasks 203 / 260 / 250 ms; `/hub/stock/` 56 / 43 / 44 ms (19-21 statements); `/hub/charging/` 48 / 31 / 26 ms; `/ops/health/` 51 / 77 / 64 ms; `/readiness/` 972 / 1,280 / 1,204 ms. All under the 2 s ceiling.
 
@@ -37,6 +37,10 @@ Two defects found and fixed in `62a96c4`:
 ## Tests
 
 `tests/test_v2_02d_inventory.py` (37 tests) and `tests/test_v2_02d_health.py` (11 tests); updated exact-list tests: hub_technician permission sets (02A, 02B), hub function list (02B follow-ups), SELECT-only tables in `test_db_security.py`. Statement counts: `/hub/stock/` 19 (budget 20, constant from 2 to 14 items); `/hub/` 11 (constant from 2 to 12 restock tasks); `/ops/health/` 11 (constant).
+
+## CI history
+
+CI on `260abf7` (run 45574677385): 1 failed, 2029 passed, 15 skipped. The failure was the Slice 6 scale oracle (`test_scale_fixture_oracle_and_explain_without_growing_seq_scans`): robot 1297 had four incident holds, the SQL view lists them `ORDER BY h.id`, but the Python eligibility query (`fleet/services.py`) had no ORDER BY, so it returned heap order. Pre-existing, not 02D code; it can also change the order of reasons shown on pages. Fixed in `bacdce6` (robot and configuration holds `order_by("id")`); CI 45580403925 success, 2030 passed; `tests/test_operations_sql.py` 122 passed locally. `bacdce6` touches only that query, so the perf runs on `260abf7` stand.
 
 ## Open items and limits
 
