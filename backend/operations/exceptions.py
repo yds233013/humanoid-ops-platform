@@ -681,6 +681,22 @@ ORDER BY priority, since, code, entity_ref
 LIMIT %(limit)s
 """
 )
+# 03B closure (P2): the same rules for a hub-scoped viewer, filtered BEFORE the limit (operations.scope.
+# keep_issues's rule: the robot's hub, else the visit's hub; an issue about neither is everyone's). The
+# regional read keeps RULES_SQL, unchanged.
+HUB_FILTER_SQL = r"""
+  AND ((t.robot IS NULL AND t.visit IS NULL)
+       OR (CASE WHEN t.robot IS NOT NULL
+                THEN (SELECT r.hub_id FROM fleet_robot r WHERE r.code = t.robot)
+                ELSE (SELECT pv.hub_id FROM planning_visit pv WHERE pv.code = t.visit) END)
+          = ANY(%(hubs)s::bigint[]))
+"""
+_KEYSET = "WHERE %(a_prio)s::int IS NULL\n   OR"
+_KEYSET_END = '%(a_ref)s::text COLLATE "C")\nORDER BY'
+assert RULES_SQL.count(_KEYSET) == 1 and RULES_SQL.count(_KEYSET_END) == 1
+RULES_HUB_SQL = RULES_SQL.replace(_KEYSET, "WHERE (%(a_prio)s::int IS NULL\n   OR").replace(
+    _KEYSET_END, '%(a_ref)s::text COLLATE "C"))' + HUB_FILTER_SQL + "ORDER BY"
+)
 
 # Projection (ii): how many rows the same relation holds; no ordering, pagination or row materialization.
 COUNT_SQL = RULES_RELATION_SQL + "SELECT count(*) FROM ex\n"
@@ -693,6 +709,12 @@ FROM operations_open_run_stage ors
 WHERE ors.arrived_hub_at IS NULL AND ors.planned_unloading_end IS NULL
 ORDER BY 2
 """
+# 03B closure (P2): the same for a hub-scoped viewer (the run's robot's hub)
+UNKNOWN_BASIS_HUB_SQL = UNKNOWN_BASIS_SQL.replace(
+    "ORDER BY 2",
+    "  AND (SELECT r.hub_id FROM fleet_robot r WHERE r.id = ors.robot_id)"
+    " = ANY(%(hubs)s::bigint[])\nORDER BY 2",
+)
 
 READINESS_SQL = r"""
 SELECT v.id, v.code, rb.code, rv.on_site_start - make_interval(mins => %(look)s) AS since,
@@ -707,6 +729,12 @@ WHERE v.status = 'confirmed'
 ORDER BY rv.on_site_start, v.id
 LIMIT %(cap)s
 """
+# 03B closure (P2): the same, for the viewer's hubs, filtered BEFORE the cap (the coverage then describes
+# their hubs, as on the timeline). An item's hub is its robot's hub, else its visit's (scope.keep_issues).
+READINESS_HUB_SQL = READINESS_SQL.replace(
+    "ORDER BY rv.on_site_start, v.id",
+    "AND COALESCE(rb.hub_id, v.hub_id) = ANY(%(hubs)s::bigint[])\nORDER BY rv.on_site_start, v.id",
+)
 
 
 def _relation_params(
@@ -731,6 +759,7 @@ def _sql_rules(
     limit: int | None,
     after: SortKey | None,
     since_at: datetime | None = None,
+    hubs: list[int] | None = None,
 ) -> list[OpsException]:
     params = {
         **_relation_params(at, thresholds, since_at),
@@ -742,7 +771,10 @@ def _sql_rules(
         "limit": limit,
     }
     with connection.cursor() as cur:
-        cur.execute(RULES_SQL, params)
+        if hubs is None:
+            cur.execute(RULES_SQL, params)
+        else:
+            cur.execute(RULES_HUB_SQL, {**params, "hubs": hubs})
         rows = cur.fetchall()
     return [
         OpsException(
@@ -775,13 +807,18 @@ def _sql_rules(
     ]
 
 
-def _readiness(at: datetime, lookahead: int | None) -> tuple[list[OpsException], dict[str, Any]]:
+def _readiness(
+    at: datetime, lookahead: int | None, hubs: list[int] | None = None
+) -> tuple[list[OpsException], dict[str, Any]]:
     """READINESS_INCOMPLETE_SOON (contract 4a): the authoritative evaluator for the first READINESS_CAP
     qualifying visits by (on_site_start, visit id); never inferred for the rest."""
     if lookahead is None:  # rule disabled; nothing evaluated, so coverage can never be claimed complete
         return [], {"qualifying": 0, "evaluated": 0, "not_evaluated": 0, "complete": False, "skipped": False}
     with connection.cursor() as cur:
-        cur.execute(READINESS_SQL, {"look": lookahead, "at": at, "cap": READINESS_CAP})
+        if hubs is None:
+            cur.execute(READINESS_SQL, {"look": lookahead, "at": at, "cap": READINESS_CAP})
+        else:
+            cur.execute(READINESS_HUB_SQL, {"look": lookahead, "at": at, "cap": READINESS_CAP, "hubs": hubs})
         rows = cur.fetchall()
     qualifying = int(rows[0][4]) if rows else 0
     visits = Visit.objects.in_bulk([r[0] for r in rows]) if rows else {}
@@ -883,6 +920,7 @@ def open_exceptions(
     after: SortKey | None = None,
     include_readiness: bool = True,
     since_at: datetime | None = None,
+    hub_ids: set[int] | None = None,
 ) -> ExceptionPage:
     """Open exceptions at the snapshot time ``at`` in the total order, starting after the sort key ``after``
     (keyset pagination), at most ``limit`` items. Call inside ``read_snapshot()``; each call (page) is its own
@@ -892,17 +930,24 @@ def open_exceptions(
     ``since_at``: the 'since' of items with no start time of their own (a missing setting, an unconfigured
     interval or deadline set, a production blocker, a never-inspected robot); default ``at``. Continuation
     pages pass the FIRST page's snapshot time so those items keep one keyset position across pages (otherwise
-    each new snapshot moves them past the cursor again and the pages never end)."""
+    each new snapshot moves them past the cursor again and the pages never end).
+    ``hub_ids`` (03B closure P2): a hub-scoped viewer's hubs; None = regional (everything). The scope is
+    applied in SQL BEFORE the limit and the readiness cap, so pages are full, the cursor is exact and the
+    coverage counts the viewer's hubs. Same statements as the regional read."""
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
     thresholds, missing, tz = read_settings()
 
-    sql_items = _sql_rules(at, thresholds, None if limit is None else limit + 1, after, since_at)
+    hubs = None if hub_ids is None else sorted(hub_ids)
+    sql_items = _sql_rules(at, thresholds, None if limit is None else limit + 1, after, since_at, hubs)
     with connection.cursor() as cur:
-        cur.execute(UNKNOWN_BASIS_SQL)
+        if hubs is None:
+            cur.execute(UNKNOWN_BASIS_SQL)
+        else:
+            cur.execute(UNKNOWN_BASIS_HUB_SQL, {"hubs": hubs})
         unknown = [{"rule": r, "run": run, "reason": why} for r, run, why in cur.fetchall()]
     if include_readiness:
-        ready_items, coverage = _readiness(at, thresholds["ops_readiness_lookahead_min"])
+        ready_items, coverage = _readiness(at, thresholds["ops_readiness_lookahead_min"], hubs)
     else:
         ready_items = []
         coverage = {"qualifying": 0, "evaluated": 0, "not_evaluated": 0, "complete": False, "skipped": True}
