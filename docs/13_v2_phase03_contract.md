@@ -943,3 +943,114 @@ schema addition. It wins over 14.1 to 14.8 where they differ.
 | 7 | The same key claimed on two runs at once: the second claim fails on the unique key and answers `retry` (bounded: nothing is claimed); the resend then gets `KEY_REUSED`. | — |
 | Lock | The ledger's run-row lock taken before the domain's robot and visit locks inverts the global lock order. Fix by 03C-1: a ledger-only sync lock taken first, so the field claim no longer holds the run row ahead of the domain's locks. | 14.5 "the run row FOR UPDATE first" |
 | Protective fallback | A protective pause or stop the session state does not allow records an interruption only (it blocks start and resume; holds come only from incident reports). Approved once its boundary is proven, by 03C-2. | 14.2 "places a hold where the incident rules call for one" |
+
+## 15. 03D interface: offline field screen client contract (frozen by the lead before code, 2026-11-26)
+
+03C closed at `e24c713` (EM 2026-11-26). 03D is authorized for development, not release. It builds the offline field
+screen on top of the closed 03C protocol (section 14 with 14.8 and 14.9) and changes nothing on the server side. The
+one exception is the first-batch item 15.7.
+
+### 15.1 What runs on the phone
+- **Progressive enhancement** of the existing run page (`/execution/runs/<code>/`). Without JavaScript or a service
+  worker it works online exactly as today.
+- **One service worker** (`/sw.js`, scope `/execution/`). It caches the run page shell, its static assets and a JSON
+  snapshot of the run (`GET /api/field/runs/<code>/snapshot`, read-only).
+  - The snapshot holds only previously authorized, minimal data: the step labels, the current state, and the crew
+    names on the run.
+  - It never holds credentials, session cookies, consent details or other homes' data.
+- **One plain ES module** (`/static/field/queue.js`, no framework, no build step) holds the queue logic. It is tested
+  in a real browser.
+
+### 15.2 IndexedDB schema (database `ops-field`, version 1)
+- **`queues`**: key is `${user_id}:${run}:${device_id}`. It holds:
+  - `user_id`, `run`, `device_id`, `generation`;
+  - `next_seq` (the next ordinary sequence number to give out) and `last_decided_seq`;
+  - `last_decided_outcome`, `last_sync_at`.
+- **`commands`**: key is `key` (a uuid made once, never reused). It holds:
+  - `queue_id`, `channel`, `seq`, `generation`, `command`, `payload`, `device_observed_at`;
+  - `last_decided_seq` and `last_decided_outcome`, as known when the command was created;
+  - `state` (15.3), `reason_code`, `message`, `final`;
+  - `created_at`, `sent_at`, `decided_at`.
+- **`device`**: a single row holding `device_id`, a uuid made on first use and kept until the browser storage is
+  cleared.
+- **Identity:** every field of the 14.8 identity (`device_id`, `run`, `channel`, `seq`, `generation`, `command`,
+  `payload`, `device_observed_at`) is frozen when the command is created. A retry resends exactly the same body.
+
+### 15.3 Queue states (per command)
+`local` → `sending` → one of:
+- **`confirmed`** (final): only a per-command result `outcome=confirmed` reaches this state. An HTTP 200 alone never
+  marks a step done.
+- **`rejected`** (final, `final=true`): shown with the reason. It is never resent, but kept for the record.
+- **`blocked_access`** (`NOT_PERMITTED`, `final=false`): kept and shown as "Waiting for access: ask an ops lead".
+  Resent only when the user taps "Try again".
+- **`local`** again, for `held` and `retry`: resent automatically with the same key.
+
+Rules for uncertain answers:
+- An HTTP 5xx, 503 `OUTCOME_UNKNOWN`, a network error or a timeout leaves every sent command in `sending`; they then go
+  back to `local` and are retried with the same keys. Nothing is ever dropped because the answer was uncertain.
+- An HTTP 401 stops syncing and asks the user to sign in again. The queue stays.
+- An HTTP 403 `NOT_YOUR_RUN` stops this run's queue and shows "This run is not yours; ask your ops lead".
+
+### 15.4 Classes on the phone (I-2)
+- **Class A** (depart, start, resume, handover to site, recover) is **never queued**. Offline, its button is disabled
+  and reads "Needs a connection. Do not start."
+- **Class B** (pause, stop, incident, interruption):
+  - Recorded locally at once, and the screen immediately shows a persistent banner, "Robot must not operate: report
+    saved on this phone, not yet confirmed".
+  - Sent on the protective channel first, ahead of any ordinary commands, independent of ordinary gaps.
+  - The banner changes to "confirmed" only on a per-command confirmed result. For `effect=protective_state` the screen
+    shows the server's message.
+- **Class C** (records) gets `seq = next_seq++` within the current generation and is shown as "Saved on this phone".
+
+### 15.5 Sync, reconciliation and account binding
+- **When it syncs:** on reconnect (`online` event), on page load and every 30 s while online.
+- **How:** batches of at most 20. Protective commands go first; ordinary commands follow in `seq` order.
+  `unsent_count` is reported with each batch.
+- **Abandonment:**
+  - "Skip this step" calls `/api/field/abandon` for the next expected `seq`, after a confirmation that names the step.
+  - When the response opens a new generation, the phone shows **Reconcile**: a list of local steps that are now
+    invalid (`AFTER_ABANDONED`), next to the server's current state from a fresh snapshot.
+  - The crew re-records what is still needed in the new generation. Old steps are kept for the record, marked "not
+    sent: replaced after a skipped step". Nothing is resent silently.
+- **Signing out:**
+  - With unsent steps, sign-out asks for confirmation: "N steps are not yet confirmed. They stay on this phone for
+    {user}; another person cannot send them."
+  - The queue is kept, keyed by `user_id`. Another account on the same phone never sees or sends it.
+  - Deleting a queue needs a second confirmation, and its count is reported to the server (unsent_count = 0 with a
+    reason note).
+- **Session expiry or revocation:** syncing is blocked until the user signs in again (HTTP 401). The queue stays.
+
+### 15.6 Service worker updates and restarts
+- **New version:** waits until no command is in `sending`. It is never `skipWaiting` while unsent steps exist.
+  Activation shows "Update ready" and applies on the next page load. A new service worker never deletes the
+  IndexedDB database.
+- **Restarts:** a browser or phone restart restores the queue from IndexedDB, and commands left in `sending` go back to
+  `local`.
+- **Schema changes:** a later IndexedDB version upgrade migrates rows and never drops unsent ones.
+
+### 15.7 First-batch server item (EM)
+A dedicated readiness and departure code, `ROBOT_INTERRUPTION_UNRESOLVED`: "Robot NB-014 has an unresolved
+interruption from an earlier run. Resolve it before requesting departure authorization."
+- It is used in readiness, Today, the API and the field screen, in place of the misleading `ROBOT_NOT_AT_HUB`.
+- The database gate is unchanged.
+
+### 15.8 Design bar (as 03B)
+- Clear offline, syncing, rejected and waiting-for-access states.
+- A visible distinction between "Saved on this phone" and "Confirmed".
+- Protective controls that are large, keyboard reachable and usable at 375 px.
+- Calm messages that name the next action.
+- Real-browser review at 1024, 768 and 375 px, with screenshots in `docs/evidence/03d_design_review/`.
+
+### 15.9 03D exit tests (real browser, Playwright or the built-in browser with scripted network control)
+- **Network:** cut, then record class C steps, then reconnect; each step is confirmed in order. Refresh while offline
+  and restart; the queue survives.
+- **Unknown outcome:** a 503 is answered by resending the same keys, confirmed once.
+- **Protective:** a protective step recorded offline shows the banner at once and syncs before the ordinary steps.
+- **Class A** cannot be queued and is disabled offline.
+- **Conflicting devices:** two devices record the same step. One is confirmed; the other shows "Already recorded by
+  {name}".
+- **Accounts:** after a sign-out and sign-in as another user, the first user's queue is not visible.
+- **Access:** a revoked grant gives "Waiting for access"; after the grant is restored, "Try again" confirms.
+- **Abandonment:** skip, then reconcile, then the new generation.
+- **Service worker update** while steps are unsent: no loss.
+- **HTTP 200 without a confirmed result** never marks a step done.
