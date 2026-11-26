@@ -112,8 +112,9 @@ Each cell is the p95 in ms from `perf05.log`. Fill in the run link and the runne
 
 | Round | Run | Load before | `/hub/` | Today `/ops/` | `/planning/board/` | `/readiness/` | sync-20 | All within budget |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 1 | | | | | | | | |
-| 2 | | | | | | | | |
-| 3 | | | | | | | | |
+| 1 | 45895674016 (`cdb0154`) | see log | 278.9 | 905.1 | 432.7 | 590.0 | 533.1 | Yes |
+| 2 | 45895683113 (`cdb0154`) | see log | 168.9 | 738.0 | 344.6 | 504.5 | 397.4 | Yes |
+| 3 | 45895692044 (`cdb0154`) | see log | 269.2 | 863.8 | 403.1 | 614.9 | 478.8 | Yes |
 
+All three rounds are within budget, so the verified synthetic scale is 500 robots / 5 hubs / 5,000 visits.
 If any round fails a budget after the single fix, publish the last verified scale (contract 15.11), not 500.
