@@ -16,9 +16,9 @@
   <td><span class="badge {{ r.planning_state }}">{{ r.planning_label }}</span></td>
   <td><span class="badge {{ r.readiness_state }}">{{ r.result.label }}</span>
       {% if r.result.blockers %}<div class="muted">{{ r.result.blockers|length }} blocker{{ r.result.blockers|length|pluralize }}</div>{% endif %}</td>
-  <td>{% if r.auth %}<span class="badge {{ r.auth.state }}">{{ r.auth.label }}</span> <span class="muted">{{ r.auth.auth.code }}</span>{% elif r.readiness_state == "ready" %}<span class="muted">None issued</span><div class="muted">Checklist complete - ask the ops lead to approve</div>{% else %}<span class="muted">None issued</span>{% endif %}</td>
+  <td>{% if r.paused %}{% include "readiness/_paused.html" with p=r.paused %}{% endif %}{% if r.auth %}<span class="badge {{ r.auth.state }}">{{ r.auth.label }}</span> <span class="muted">{{ r.auth.auth.code }}</span>{% elif r.paused %}<span class="muted">None issued</span>{% elif r.readiness_state == "ready" %}<span class="muted">None issued</span><div class="muted">Checklist complete - ask the ops lead to approve</div>{% else %}<span class="muted">None issued</span>{% endif %}</td>
   {% else %}
-  <td colspan="3" data-not-assessed="1"><span class="badge neutral">Not assessed yet</span><div class="muted">{{ r.why }}</div><a href="/readiness/visits/{{ r.visit.code }}/">Check this visit now</a></td>
+  <td colspan="3" data-not-assessed="1"><span class="badge neutral">Not assessed yet</span><div class="muted">{{ r.why }}</div>{% if r.paused %}{% include "readiness/_paused.html" with p=r.paused %}{% endif %}<a href="/readiness/visits/{{ r.visit.code }}/">Check this visit now</a></td>
   {% endif %}
 </tr>
 {% empty %}<tr><td colspan="6"><div class="empty"><b>No upcoming confirmed visits</b>Confirmed visits that have not finished show up here.</div></td></tr>

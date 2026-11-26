@@ -250,6 +250,30 @@ def _summary(v: Visit, *, live_planning: bool = True) -> dict[str, Any]:
     }
 
 
+PAUSED_LABEL = "Paused: departure authorization unavailable"
+
+
+def _paused(v: Visit) -> dict[str, Any] | None:
+    """v2 03B-4: the regional pause covering the visit, shown before anyone asks for approval to leave. Read
+    in the visit's own statement (``operations.pauses.with_pause``), so no statement is added; the database
+    gates refuse authorization and departure under a pause anyway."""
+    from operations.pauses import pause_of  # noqa: PLC0415 - operations depends on readiness, not the reverse
+
+    p = pause_of(v)
+    if p is None:
+        return None
+    tz = p.time_zone or v.site.timezone
+    local = p.since.astimezone(ZoneInfo(tz))
+    return {
+        "label": PAUSED_LABEL,
+        "where": p.where,
+        "reason": p.reason,
+        "since": p.since,
+        "since_local": f"{local.strftime('%a %d %b, %H:%M %Z')} ({tz})",
+        "scope": p.scope,
+    }
+
+
 def _refused(request: HttpRequest, exc: CommandError) -> None:
     messages.error(request, refused_message(exc, ERROR_KINDS))
 
@@ -303,16 +327,20 @@ def index(request: HttpRequest) -> HttpResponse:
     own page always runs the full evaluator; nothing here grants or decides anything (01D release fix)."""
     if (deny := _deny(request)) is not None:
         return deny
+    from operations.pauses import with_pause  # noqa: PLC0415
     from operations.readmodels import READINESS_CAP, READINESS_LOOKAHEAD, read_thresholds  # noqa: PLC0415
 
     now = timezone.now()
     # v2 03A-3 (I-8): the viewer's hubs only (regional = all), BEFORE the cap, so the cap and the
     # "not assessed" notes describe the visits this viewer can open.
+    # v2 03B-4: each visit's regional pause comes in the same statement (with_pause), so it is shown up front
     visits = list(
-        hub_scope(request)
-        .filter(Visit.objects.select_related("site", "current_revision__robot"))
-        .filter(status="confirmed", current_revision__on_site_end__gt=now)
-        .order_by("current_revision__on_site_start", "pk")
+        with_pause(
+            hub_scope(request)
+            .filter(Visit.objects.select_related("site", "current_revision__robot"))
+            .filter(status="confirmed", current_revision__on_site_end__gt=now)
+            .order_by("current_revision__on_site_start", "pk")
+        )
     )
     lookahead = read_thresholds()[READINESS_LOOKAHEAD]
     try:
@@ -331,7 +359,7 @@ def index(request: HttpRequest) -> HttpResponse:
     rows: list[dict[str, Any]] = []
     for v in visits:
         if v.pk in chosen:
-            rows.append({**_summary(v, live_planning=False), "assessed": True})
+            rows.append({**_summary(v, live_planning=False), "assessed": True, "paused": _paused(v)})
             continue
         r = v.current_revision
         if lookahead_end is None:
@@ -347,6 +375,7 @@ def index(request: HttpRequest) -> HttpResponse:
                 "start": r.on_site_start if r else None,
                 "assessed": False,
                 "why": why,
+                "paused": _paused(v),
             }
         )
     counts = {"all": len(visits), "assessed": len(chosen), "not_assessed": len(visits) - len(chosen)}
@@ -435,7 +464,10 @@ def usable_inspections(v: Visit) -> list[dict[str, Any]]:
 def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _deny(request)) is not None:
         return deny
-    v = get_object_or_404(Visit.objects.select_related("site", "current_revision"), code=code)
+    from operations.pauses import with_pause  # noqa: PLC0415
+
+    # v2 03B-4: the visit's regional pause comes in the same statement (with_pause)
+    v = get_object_or_404(with_pause(Visit.objects.select_related("site", "current_revision")), code=code)
     if (deny := other_hub_refusal(request, v.hub_id)) is not None:  # v2 03A-3: another hub's visit
         return deny
     tz = v.site.timezone
@@ -536,6 +568,7 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "who_inspect": refusal_text("fleet.submit_inspection"),
             "who_authorize": who_can("readiness.authorize_departure"),
             "valid_auth": next((a for a in auths if a["state"] == "usable"), None),
+            "paused": _paused(v),
             **_base(request),
         },
     )
