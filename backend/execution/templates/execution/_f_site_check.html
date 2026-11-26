@@ -1,4 +1,4 @@
-{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/site-check/" style="margin-top:10px" data-site-check-form="1">{% csrf_token %}{% form_token %}
+{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/site-check/" style="margin-top:10px" data-site-check-form="1" data-field-command="site_check.record">{% csrf_token %}{% form_token %}
   <h3>Record a site check</h3>
   {% for t in templates %}<fieldset><legend><label><input type="radio" name="template" value="{{ t.version }}" {% if forloop.first %}checked{% endif %}> Template {{ t.version }}{% if t.source == "synthetic_demo" %} (demo checklist, not approved for production){% endif %}</label></legend>
     <div class="row">{% for i in t.items %}<label>{{ i.label }} <select name="cond_{{ i.id }}"><option value="">not checked</option><option value="ok">ok</option><option value="not_ok">not ok</option></select></label>{% endfor %}</div></fieldset>{% endfor %}

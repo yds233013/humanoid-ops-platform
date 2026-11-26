@@ -21,11 +21,12 @@ from zoneinfo import ZoneInfo
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import AnonymousUser
 from django.db import connection
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from accounts.permissions import active_roles, has_permission
 from accounts.roles import ALL_ROLES
@@ -512,6 +513,19 @@ def my_visits(request: HttpRequest) -> HttpResponse:
     return render(
         request, "execution/mine.html", {"person": person, "rows": rows, "today": today, **_base(request)}
     )
+
+
+@require_GET
+def field_shell(request: HttpRequest) -> HttpResponse:
+    """v2 03D-3 (contract 15.1, 15.10 item 1): the offline page shell for the run page.
+
+    The service worker caches this response and serves it in place of a run page when the phone has no
+    connection; run.js then fills it from the phone's account-bound snapshot. It must never carry run or
+    account data, so it is always rendered as signed out (no user, no messages), whoever asks for it."""
+    request.user = AnonymousUser()
+    response = render(request, "execution/field_shell.html", {"messages": [], "user": request.user})
+    response["Cache-Control"] = "no-cache"
+    return response
 
 
 @login_required

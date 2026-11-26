@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Field run{% endblock %}
+{% block extra_css %}{% include "execution/_field_css.html" %}{% endblock %}
+{% block content %}
+{% comment %}v2 03D-3 (contract 15.1, 15.10 item 1): the offline page shell. The service worker caches this page and
+serves it for a run page when there is no connection. It carries no run data and no account data; run.js fills
+it from this phone's saved, account-bound snapshot ("Last known at HH:MM").{% endcomment %}
+<div data-field-app data-mode="shell"></div>
+<div class="card" data-field-shell-fallback>
+  <h2>No connection</h2>
+  <p>This page could not be loaded. Steps saved on this phone stay saved. Open the page again when you have a connection.</p>
+</div>
+{% endblock %}

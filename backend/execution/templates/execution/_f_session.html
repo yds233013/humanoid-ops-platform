@@ -1,4 +1,4 @@
-{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/session/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
+{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/session/" class="row" style="margin-top:10px" data-field-form="session">{% csrf_token %}{% form_token %}
   <label>Event <select name="kind">{% for k in session_kinds %}<option value="{{ k }}"{% if k == preset %} selected{% endif %}>{{ k }}</option>{% endfor %}</select></label>
   <label>Site check (start/resume) <select name="site_check_id"><option value="">-</option>{% if latest_check %}<option value="{{ latest_check.pk }}" selected>#{{ latest_check.pk }} ({{ latest_check.get_result_display }})</option>{% endif %}</select></label>
   <label>Note <input name="note"></label>

@@ -20,6 +20,7 @@ dev = [
     "django-stubs[compatible-mypy]>=5.1,<5.2",
     "djangorestframework-stubs>=3.15,<3.16",
     "types-openpyxl>=3.1.5.20261017",
+    "pytest-playwright>=0.10.0",
 ]
 
 [tool.pytest.ini_options]
@@ -28,6 +29,7 @@ addopts = "-ra --strict-markers"
 markers = [
     "perf: Slice 5 p95 time budget on the scale fixture (run with -m perf; skipped otherwise)",
     "xlsx: Slice 6 workbook reconciliation via LibreOffice headless (skipped when soffice is not installed)",
+    "browser: v2 03D real-browser tests (Playwright + Chromium; uv run playwright install chromium)",
 ]
 testpaths = ["tests"]
 

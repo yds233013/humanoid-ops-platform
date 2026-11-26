@@ -1,4 +1,4 @@
-{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/reconcile/" style="margin-top:10px">{% csrf_token %}{% form_token %}
+{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/reconcile/" style="margin-top:10px" data-field-online="1">{% csrf_token %}{% form_token %}
   <div class="row"><label>Post-visit inspection <select name="inspection_code" required>{% for i in post_inspections %}<option value="{{ i.code }}">{{ i.code }} ({{ i.get_result_display }}, {{ i.submitted_at|local_dt }})</option>{% endfor %}</select></label>
   <label>Discrepancies (one per line)<br><textarea name="discrepancies" rows="2" cols="40"></textarea></label>
   <button class="primary">Record return reconciliation</button></div>

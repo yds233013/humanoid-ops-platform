@@ -1,8 +1,12 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}{{ run.code }} execution{% endblock %}
+{% block extra_css %}{% include "execution/_field_css.html" %}{% endblock %}
 {% block content %}
 {% page_header title=run.code back_url="/execution/" back_label="Field runs" %}{{ run.visit.code }} · {{ run.visit.site|home_label }} · <a href="/fleet/{{ run.robot.code }}/">{{ run.robot.code }}</a> · <a href="/readiness/visits/{{ run.visit.code }}/">Readiness</a> · <a href="/execution/visits/{{ run.visit.code }}/dossier/">Visit dossier</a>{% endpage_header %}
 <p class="muted">Opened {{ run.recorded_at|local_dt }} by the recorded departure.</p>
+{# v2 03D-3: the field screen mount. Empty (and hidden) without JavaScript; run.js fills it with the connection pill, the protective banner and the steps saved on this phone. #}
+<div data-field-app data-mode="page" data-run="{{ run.code }}" data-tz="{{ tz }}" data-home="{{ run.visit.site|home_label }}" data-robot="{{ run.robot.code }}"></div>
+{% include "execution/_field_offline_data.html" %}
 
 {% if not_back %}<div class="banner notback" role="alert"><b>Robot is NOT back: trip cannot close</b>. The robot is {{ custody_text|lower }}{% if stranded %} and a left-on-site / unaccounted disposition is recorded{% endif %}. The vehicle returning does not return the robot; the run stays open until the robot is received at the hub and the return is reconciled.</div>{% endif %}
 
@@ -79,13 +83,13 @@
     <td>{{ it.reason }}</td>
     <td>{% if it.resolution %}<span class="badge resolved">Resolved</span> <span class="muted">{{ it.resolution.recorded_by.username }}: {{ it.resolution.note }}</span>
         {% else %}<span class="badge unresolved">Open</span>
-        {% if can.triage_incident and not closed %}<form method="post" action="/execution/runs/{{ run.code }}/interruptions/resolve/" class="inline">{% csrf_token %}{% form_token %}
+        {% if can.triage_incident and not closed %}<form method="post" action="/execution/runs/{{ run.code }}/interruptions/resolve/" class="inline" data-field-online="1">{% csrf_token %}{% form_token %}
           <input type="hidden" name="interruption" value="{{ it.code }}"><input name="note" placeholder="Resolution note (required)"><button class="primary">Resolve</button></form>
           {% if it.incident %}<div class="muted">Refused while the incident hold is unreleased. Resolving does not resume the session.</div>{% endif %}{% endif %}{% endif %}</td></tr>
   {% empty %}<tr><td colspan="4" class="muted">No interruptions.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_field_event and not closed %}
-  <form method="post" action="/execution/runs/{{ run.code }}/interruptions/open/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/interruptions/open/" class="row" style="margin-top:10px" data-field-command="interruption.open">{% csrf_token %}{% form_token %}
     <label>Reason <input name="reason" size="40"></label><button class="primary">Open interruption</button>
   </form>{% endif %}
 </div>
@@ -99,7 +103,7 @@
   {% empty %}<tr><td colspan="5" class="muted">No incidents on this run.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.report_incident %}
-  <form method="post" action="/execution/incidents/report/" style="margin-top:10px">{% csrf_token %}{% form_token %}
+  <form method="post" action="/execution/incidents/report/" style="margin-top:10px" data-field-command="incident.report">{% csrf_token %}{% form_token %}
     <h2>Report incident</h2>
     <input type="hidden" name="robot" value="{{ run.robot.code }}"><input type="hidden" name="run" value="{{ run.code }}">
     <input type="hidden" name="idempotency_key" value="{{ report_key }}">
@@ -122,7 +126,7 @@
   {% empty %}<tr><td colspan="4" class="muted">No dispositions.</td></tr>{% endfor %}
   </tbody></table></div>
   {% if can.record_disposition and not closed %}
-  <form method="post" action="/execution/runs/{{ run.code }}/disposition/" class="row" style="margin-top:10px">{% csrf_token %}{% form_token %}
+  <form method="post" action="/execution/runs/{{ run.code }}/disposition/" class="row" style="margin-top:10px" data-field-online="1">{% csrf_token %}{% form_token %}
     <label>Decision <select name="decision">{% for k, lbl in decisions %}<option value="{{ k }}">{{ lbl }}</option>{% endfor %}</select></label>
     <label>Reason <input name="reason" size="30"></label>
     <label>Incident (left on site / unaccounted) <select name="incident_code"><option value="">-</option>{% for x in incidents %}<option>{{ x.i.code }}</option>{% endfor %}</select></label>

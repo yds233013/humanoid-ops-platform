@@ -1,0 +1,73 @@
+/* ---- v2 03D-3: the field screen (contract 15.8 and 15.10). Shown only with JavaScript: run.js fills the
+   [data-field-app] mount; without JavaScript the page is exactly the server page. Existing tokens only, no
+   animation, status is words plus shape. ---- */
+[data-field-app]:empty{display:none}
+.f-bar{display:flex;align-items:center;flex-wrap:wrap;gap:var(--s2) var(--s3);margin:0 0 var(--s3)}
+.f-pill{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 12px;border-radius:999px;font-size:var(--fs-sm);font-weight:700;border:1px solid var(--line);background:var(--neutralbg);color:var(--ink);font-variant-numeric:tabular-nums}
+.f-pill .shape{font-size:.8rem;line-height:1}
+.f-pill.p-online,.f-pill.p-syncing{background:var(--bluebg);color:var(--blue);border-color:var(--blueline)}
+.f-pill.p-offline{background:var(--amberbg);color:var(--amber);border-color:var(--amberline)}
+.f-pill.p-uptodate{background:var(--posbg);color:var(--pos);border-color:var(--posline)}
+.f-bar .f-when{color:var(--soft);font-size:var(--fs-sm)}
+.f-bar .f-when b{color:var(--ink);font-weight:600}
+
+/* The protective banner: first on the page; never shown as an all-clear, never removed by a rejection. */
+.f-protect{border:2px solid var(--red);background:var(--redbg);color:var(--ink);border-radius:var(--radius);padding:var(--s3) var(--s4);margin:0 0 var(--s4)}
+.f-protect h2{display:flex;align-items:center;gap:var(--s2);color:var(--red);font-size:var(--fs-lg);margin:0 0 var(--s1)}
+.f-protect h2 .shape{font-size:.9rem}
+.f-protect p{margin:var(--s1) 0} .f-protect .f-state{font-weight:700}
+.f-protect .f-server{border-left:3px solid var(--redline);padding-left:var(--s3);color:var(--ink)}
+.f-protect .f-leads{margin:var(--s2) 0 0;padding:var(--s2) var(--s3);background:var(--card);border:1px solid var(--redline);border-radius:8px}
+.f-protect .f-leads ul{margin:var(--s1) 0 0;padding-left:20px}
+
+/* Notices that name the next action (sign in, update, not your run, update ready). */
+.f-note{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:var(--s2) var(--s4)}
+.f-note p{margin:0;flex:1 1 260px} .f-note .shape{margin-right:6px}
+.f-note .btn,.f-note button{min-height:44px}
+
+/* Big, calm actions: at least 44 px tall everywhere on the field screen. */
+.f-app button,.f-app .btn,[data-field-form] button,[data-field-command] button{min-height:44px}
+.f-actions{display:flex;flex-wrap:wrap;gap:var(--s2);margin-top:var(--s2)}
+.f-actions .btn,.f-actions button{min-height:44px}
+button.f-quiet{background:transparent;border-color:var(--line);color:var(--blue)}
+button.f-danger{background:var(--red);color:#fff;border-color:var(--red)}
+button[disabled],button[aria-disabled="true"]{background:var(--neutralbg)!important;color:var(--soft)!important;border-color:var(--line)!important;cursor:not-allowed}
+.f-needs{display:flex;gap:6px;align-items:flex-start;margin:var(--s2) 0 0;font-weight:700;color:var(--amber);font-size:var(--fs-sm)}
+.f-saved{margin:var(--s2) 0 0;padding:var(--s2) var(--s3);border-radius:8px;border:1px solid var(--amberline);background:var(--amberbg);color:var(--amber);font-size:var(--fs-sm);font-weight:600}
+.f-saved.ok{border-color:var(--posline);background:var(--posbg);color:var(--pos)}
+.f-err{color:var(--red);font-weight:600;font-size:var(--fs-sm);margin:var(--s1) 0 0}
+
+/* Steps on this phone and the offline checklist. */
+.f-list{list-style:none;margin:0;padding:0}
+.f-list>li{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s3);padding:var(--s3) 0;border-bottom:1px solid var(--line)}
+.f-list>li:last-child{border-bottom:0}
+.f-list .f-what{flex:1 1 220px;min-width:0} .f-list .f-what b{display:block} .f-list .f-meta{color:var(--soft);font-size:var(--fs-xs);font-variant-numeric:tabular-nums}
+.f-list .f-why{flex-basis:100%;margin:0;font-size:var(--fs-sm);color:var(--ink)}
+.f-list .f-why.bad{color:var(--red)}
+.f-list .f-actions{flex-basis:100%;margin-top:0}
+.status.t-ok{background:var(--posbg);color:var(--pos);border-color:var(--posline)}
+.f-list li.done .f-what b{font-weight:600}
+.f-gap{margin:0 0 var(--s3)}
+.f-cols{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
+.f-cols h3{margin-top:0}
+.f-form{margin-top:var(--s2);padding:var(--s3);border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.f-form .field{margin-bottom:var(--s2)}
+.f-shell-head{margin:var(--s2) 0 var(--s3)} .f-shell-head .sub{color:var(--soft);font-size:var(--fs-sm);margin-top:var(--s1)}
+
+/* Confirmations: the native dialog element (focus stays inside; Escape closes). */
+dialog.f-dialog{border:1px solid var(--line);border-radius:var(--radius);padding:var(--s4) var(--s5);max-width:min(520px,calc(100vw - 32px));color:var(--ink);background:var(--card);box-shadow:0 16px 48px #0F2A4340}
+dialog.f-dialog::backdrop{background:#0F2A4366}
+dialog.f-dialog h2{margin:0 0 var(--s2)} dialog.f-dialog p{margin:var(--s2) 0}
+dialog.f-dialog .f-actions{justify-content:flex-end;margin-top:var(--s4)}
+dialog.f-dialog textarea,dialog.f-dialog input{width:100%;font-family:inherit}
+
+@media (max-width:700px){
+  .f-cols{grid-template-columns:1fr}
+  .f-actions .btn,.f-actions button,.f-note .btn,.f-note button{flex:1 1 100%;justify-content:center}
+  [data-field-form] button.primary,[data-field-command] button.primary{width:100%}
+  dialog.f-dialog{padding:var(--s4)}
+  dialog.f-dialog .f-actions{flex-direction:column-reverse}
+}
+/* No motion is used here; run.js scrolls without smoothing when the reader asks for reduced motion. */
+@media (prefers-reduced-motion:reduce){.f-app *,dialog.f-dialog{transition:none!important}}
+.row>.f-needs,.row>.f-saved,.row>.f-err{flex-basis:100%;margin-top:0}
