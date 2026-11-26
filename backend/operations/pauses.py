@@ -143,7 +143,7 @@ def history(hub_ids: list[int] | set[int] | None, limit: int = 20) -> list[dict[
 
 # ------------------------------------------------------------------ the preview shown before a pause
 AFFECTED_SQL = """
-SELECT v.code, s.code, s.timezone, r.on_site_start, v.status, h.code
+SELECT v.code, s.code, s.timezone, r.on_site_start, v.status, h.code, s.zone, h.name
 FROM planning_visit v
 JOIN planning_visitrevision r ON r.id = v.current_revision_id
 JOIN planning_site s ON s.id = v.site_id
@@ -167,6 +167,12 @@ class Affected:
     start: datetime
     status: str
     hub_code: str
+    area: str = ""  # v2 03B-3: the home's area (its name on screen: "Piedmont home")
+    hub_name: str = ""
+
+    @property
+    def home(self) -> str:
+        return f"{self.area} home" if self.area else "Home"
 
 
 def affected_visits(hub_id: int, zone_id: int | None) -> list[Affected]:

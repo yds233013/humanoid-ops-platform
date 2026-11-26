@@ -78,12 +78,30 @@ def zone_list(request: HttpRequest, hub_code: str) -> HttpResponse:
     if not holds_any(request, SETUP_PERMS):
         return denied(request, SETUP_PERMS)
     hub = _hub(hub_code)
+    from django.db.models import Count, IntegerField, OuterRef, Subquery  # noqa: PLC0415
+    from django.db.models.functions import Coalesce  # noqa: PLC0415
+
+    from planning.models import Site  # noqa: PLC0415
+
+    homes = (
+        Site.objects.filter(zone_ref_id=OuterRef("pk"))
+        .order_by()
+        .values("zone_ref_id")
+        .annotate(n=Count("id"))
+        .values("n")[:1]
+    )
+
     return render(
         request,
         "planning/zones.html",
         {
             "hub": hub,
-            "zones": list(Zone.objects.filter(hub=hub).order_by("-active", "name")),
+            # v2 03B-3: how many homes each zone holds (one statement with the zones)
+            "zones": list(
+                Zone.objects.filter(hub=hub)
+                .annotate(homes=Coalesce(Subquery(homes, output_field=IntegerField()), 0))
+                .order_by("-active", "name")
+            ),
             "page_title": f"Zones of {hub.name}",
         },
     )
@@ -165,19 +183,35 @@ def zone_retire(request: HttpRequest, hub_code: str, zone_code: str) -> HttpResp
 # ------------------------------------------------------------------ travel matrix
 @login_required
 def travel_matrix(request: HttpRequest) -> HttpResponse:
+    """v2 03B-3 (S5): one grid per hub (a trip never runs between two hubs' zones), hub names first."""
     if not holds_any(request, SETUP_PERMS):
         return denied(request, SETUP_PERMS)
     scope = hub_scope(request)
     zs = list(Zone.objects.filter(active=True).select_related("hub").order_by("hub__code", "name"))
-    if scope.selected is not None:
-        zs = [z for z in zs if z.hub_id == scope.selected.pk]
+    zs = [z for z in zs if scope.allows(z.hub_id)]
     cells = travel.matrix([z.pk for z in zs])
-    grid = [{"from": f, "cells": [{"to": t, "cell": cells.get((f.pk, t.pk))} for t in zs]} for f in zs]
-    unknown = sum(1 for c in cells.values() if not c.current.known)
+    hubs: list[dict[str, Any]] = []
+    unknown = 0
+    # the hub scope reads hubs without their own zone; one statement for it
+    home = dict(Hub.objects.values_list("pk", "home_zone_id"))
+    for h in [h for h in scope.hubs if scope.allows(h.pk)]:
+        mine = [z for z in zs if z.hub_id == h.pk]
+        grid = [
+            {
+                "from": f,
+                "cells": [{"to": t, "cell": cells.get((f.pk, t.pk)), "same": f.pk == t.pk} for t in mine],
+            }
+            for f in mine
+        ]
+        missing = sum(1 for f in mine for t in mine if not cells[(f.pk, t.pk)].current.known)
+        unknown += missing
+        hubs.append(
+            {"hub": h, "home_zone_id": home.get(h.pk), "zones": mine, "grid": grid, "unknown": missing}
+        )
     return render(
         request,
         "planning/travel.html",
-        {"zones": zs, "grid": grid, "unknown": unknown, "scope": scope, "unknown_text": travel.UNKNOWN_TEXT},
+        {"hubs": hubs, "unknown": unknown, "scope": scope, "unknown_text": travel.UNKNOWN_TEXT},
     )
 
 
@@ -218,7 +252,9 @@ def travel_pair(request: HttpRequest, from_id: int, to_id: int) -> HttpResponse:
             "page_title": f"From {a.name} to {b.name}",
             "history": travel.history(a, b),
             "reverse_url": f"/settings/travel-times/{b.pk}/{a.pk}/",
+            "back_url": f"/settings/travel-times/?hub={a.hub.code}",
             "tz": tz,
             "now_value": travel.minutes(a, b, datetime.now(ZoneInfo(tz))),
+            "back_value": travel.minutes(b, a, datetime.now(ZoneInfo(tz))),
         },
     )

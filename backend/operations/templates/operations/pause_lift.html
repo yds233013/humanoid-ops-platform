@@ -1,10 +1,12 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Lift a pause{% endblock %}
 {% block content %}
-{% page_header title="Lift a pause" back_url="/planning/pause/" back_label="Regional pause" %}{{ where }}{% endpage_header %}
-<section class="card">
-<p>Paused since <time datetime="{{ pause.created_at|date:'c' }}">{{ pause.created_at|local_dt }}</time>: {{ pause.reason }}</p>
-{% if still_active %}{% include "ui/confirm_box.html" with headline="Lift the pause of "|add:where|add:"?" detail="Visits there can be authorized to leave again, each through its own readiness checks. Lifting never authorizes a departure by itself." %}
-{% include "ui/form.html" with form=form submit="Lift pause" cancel_url="/planning/pause/" %}{% else %}{% include "ui/empty.html" with title="Already lifted" text=" This pause was lifted; see the history." %}{% endif %}
+{% page_header title="Lift a pause" back_url="/planning/pause/" back_label="Regional pause" %}{% if pause.zone %}{{ pause.zone.name }}, {{ pause.hub.name }}{% else %}All of {{ pause.hub.name }}{% endif %} <span class="muted">· {{ where }}</span>{% endpage_header %}
+<section class="card" aria-labelledby="lift-h">
+<h2 id="lift-h">{% if still_active %}Paused now{% else %}Already lifted{% endif %}</h2>
+<p class="pb {% if still_active %}paused{% endif %}"><b>{% if still_active %}◆ Paused{% else %}● Lifted{% endif %}</b> since <time datetime="{{ pause.created_at|iso_instant }}">{{ pause.created_at|local_dt }}</time>: {{ pause.reason }}</p>
+{% if still_active %}<p class="muted" data-affected="{{ affected }}">{{ affected }} visit{{ affected|pluralize }} {{ affected|pluralize:"is,are" }} waiting on it. Lifting lets each one be authorized again through its own readiness checks.</p>
+{% include "ui/confirm_box.html" with headline="Lift the pause of "|add:where|add:"?" detail="Lifting never authorizes a departure by itself. The lift and its reason are kept in the audit log." %}
+{% include "ui/form.html" with form=form submit="Lift pause" cancel_url="/planning/pause/" %}{% else %}{% include "ui/empty.html" with title="Already lifted" text=" This pause was lifted; see the history on the Regional pause page." %}{% endif %}
 </section>
 {% endblock %}

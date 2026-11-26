@@ -19,10 +19,12 @@ from django import forms
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import render
+from django.utils import timezone
 
 from accounts.permissions import has_permission
 from operations import pauses
 from operations.models import RegionPause
+from planning.board import pause_banner
 from platform_core.hubscope import hub_scope, other_hub_refusal
 from platform_core.interaction import ConfirmForm, command_page, denied
 from platform_core.models import Hub, Zone
@@ -44,6 +46,16 @@ class LiftForm(ConfirmForm):
     field_order = ["reason", "confirm"]
 
 
+class _Shown:
+    """An active pause as the page shows it: the PauseInfo, the S1 banner and the visits it holds."""
+
+    def __init__(self, info: Any, banner: str, affected: int) -> None:
+        self.info, self.banner, self.affected = info, banner, affected
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.info, name)
+
+
 def _may_view(request: HttpRequest) -> bool:
     return any(has_permission(request.user, p) for p in VIEW_PERMS)
 
@@ -59,15 +71,25 @@ def pause_page(request: HttpRequest) -> HttpResponse:
     zones_by_hub: dict[int, list[Zone]] = {}
     for z in Zone.objects.filter(hub_id__in=[h.pk for h in hubs], active=True).order_by("name"):
         zones_by_hub.setdefault(z.hub_id, []).append(z)
-    rows: list[dict[str, Any]] = [
-        {
-            "hub": h,
-            "zones": zones_by_hub.get(h.pk, []),
-            "active": active.get(h.pk, []),
-            "can_pause": has_permission(request.user, "operations.pause", hub=h.pk),
-        }
-        for h in hubs
-    ]
+    rows: list[dict[str, Any]] = []
+    for h in hubs:
+        mine = active.get(h.pk, [])
+        paused_zones = {p.zone_id for p in mine if p.zone_id is not None}
+        for z in zones_by_hub.get(h.pk, []):
+            z.paused = z.pk in paused_zones  # type: ignore[attr-defined]
+        rows.append(
+            {
+                "hub": h,
+                "zones": zones_by_hub.get(h.pk, []),
+                # v2 03B-3 (S4, S1 wording): each active pause with its banner and how many visits it holds
+                "active": [
+                    _Shown(p, pause_banner(h.name, p), len(pauses.affected_visits(h.pk, p.zone_id)))
+                    for p in mine
+                ],
+                "hub_paused": any(p.zone_id is None for p in mine),
+                "can_pause": has_permission(request.user, "operations.pause", hub=h.pk),
+            }
+        )
     return render(
         request,
         "operations/pause.html",
@@ -95,6 +117,8 @@ def pause_confirm(request: HttpRequest, hub_code: str, zone_code: str | None = N
         if zone is None:
             raise Http404("No such zone")
     affected = pauses.affected_visits(hub.pk, zone.pk if zone else None)
+    today = timezone.localdate()
+    today_count = sum(1 for a in affected if timezone.localtime(a.start).date() == today)
     where = (
         f"zone {zone.name} ({zone.code}) of {hub.name} ({hub.code})" if zone else f"{hub.name} ({hub.code})"
     )
@@ -114,6 +138,7 @@ def pause_confirm(request: HttpRequest, hub_code: str, zone_code: str | None = N
             "zone": zone,
             "where": where,
             "affected": affected,
+            "today_count": today_count,
             "paused_text": pauses.PAUSED_TEXT,
         },
     )
@@ -139,5 +164,10 @@ def lift_confirm(request: HttpRequest, pause_id: int) -> HttpResponse:
         call=lambda actor, d: pauses.lift_pause(actor, pause_id=p.pk, reason=d["reason"]),
         ok=f"The pause of {where} is lifted. Each visit still needs its own departure authorization.",
         success_url="/planning/pause/",
-        context={"pause": p, "where": where, "still_active": not p.lifts.exists()},
+        context={
+            "pause": p,
+            "where": where,
+            "still_active": not p.lifts.exists(),
+            "affected": len(pauses.affected_visits(p.hub_id, p.zone_id)),
+        },
     )

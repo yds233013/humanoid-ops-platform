@@ -1,14 +1,27 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Travel times{% endblock %}
+{% block extra_css %}
+.matrix th,.matrix td{text-align:left;vertical-align:top;white-space:normal}
+.matrix .code{display:block;color:var(--soft);font-weight:400;font-size:var(--fs-xs)}
+.matrix td a{display:inline-flex;flex-direction:column;gap:2px;min-height:44px;justify-content:center;text-decoration:none}
+.matrix td a b{font-variant-numeric:tabular-nums;white-space:nowrap} .matrix td .src{color:var(--soft);font-size:var(--fs-xs)}
+.matrix td.unknown{background:var(--amberbg)} .matrix td.unknown a{color:var(--amber);font-weight:700}
+.matrix td.same{background:var(--neutralbg)}
+.hubgrid h2{display:flex;gap:var(--s2);align-items:baseline;flex-wrap:wrap} .hubgrid h2 .code{color:var(--soft);font-weight:400;font-size:var(--fs-sm)}
+.hubtabs{display:flex;gap:var(--s2);flex-wrap:wrap;margin:0 0 var(--s4)} .hubtabs a{min-height:44px;display:inline-flex;align-items:center}
+@media (max-width:700px){.matrix th,.matrix td{padding:var(--s2) 6px} .matrix th,.matrix td,.matrix td a{font-size:var(--fs-xs)}}
+{% endblock %}
 {% block content %}
-{% page_header title="Travel times" back_url="/settings/hubs/" back_label="Hubs" %}Minutes between zones, one direction per cell (from the row to the column). A missing value is Unknown: a visit that needs it cannot be planned, and nothing is estimated.{% endpage_header %}
-{% if scope.show_filter %}<p class="row">{% for h in scope.hubs %}<a class="btn{% if scope.selected and scope.selected.pk == h.pk %} primary{% endif %}" href="?hub={{ h.code }}">{{ h.name }}</a>{% endfor %}<a class="btn" href="?">All hubs</a></p>{% endif %}
-<section class="card">
-{% if zones %}<p data-unknown="{{ unknown }}">{% if unknown %}▲ {{ unknown }} pair{{ unknown|pluralize }} unknown.{% else %}Every pair has a value.{% endif %}</p>
-<div class="tablewrap"><table><thead><tr><th scope="col">From \ to</th>{% for z in zones %}<th scope="col">{{ z.name }} <span class="muted">{{ z.hub.code }}·{{ z.code }}</span></th>{% endfor %}</tr></thead><tbody>
-{% for row in grid %}<tr><th scope="row">{{ row.from.name }} <span class="muted">{{ row.from.hub.code }}·{{ row.from.code }}</span></th>
-{% for c in row.cells %}<td>{% if c.cell and c.cell.current.known %}<a href="/settings/travel-times/{{ row.from.pk }}/{{ c.to.pk }}/">{{ c.cell.current.minutes }} min</a><div class="muted">{% if c.cell.current.source == "demo" %}demo value{% else %}company value{% endif %} · v{{ c.cell.version }}{% if c.cell.pending %} · {{ c.cell.pending }} pending{% endif %}</div>{% else %}<a class="pb at_risk" href="/settings/travel-times/{{ row.from.pk }}/{{ c.to.pk }}/">▲ Unknown</a>{% if c.cell.pending %}<div class="muted">{{ c.cell.pending }} pending</div>{% endif %}{% endif %}</td>{% endfor %}</tr>{% endfor %}
-</tbody></table></div>
-{% else %}{% include "ui/empty.html" with title="No zones yet" text=" Add zones to a hub first (Settings > Hubs > Zones)." %}{% endif %}
-</section>
+{% page_header title="Travel times" back_url="/settings/hubs/" back_label="Hubs" %}Minutes between the zones of each hub, one direction per cell: from the row's zone to the column's. A missing value is Unknown: a visit that needs it cannot be planned, and nothing is estimated. Open a cell for its history or to set a new version.{% endpage_header %}
+{% if scope.show_filter %}<nav class="hubtabs" aria-label="Hub">{% for h in scope.hubs %}<a class="btn{% if scope.selected and scope.selected.pk == h.pk %} primary{% endif %}" href="?hub={{ h.code }}"{% if scope.selected and scope.selected.pk == h.pk %} aria-current="page"{% endif %}>{{ h.name }}</a>{% endfor %}<a class="btn{% if not scope.selected %} primary{% endif %}" href="?"{% if not scope.selected %} aria-current="page"{% endif %}>All hubs</a></nav>{% endif %}
+<p class="{% if unknown %}pb at_risk{% else %}muted{% endif %}" data-unknown="{{ unknown }}">{% if unknown %}<b><span aria-hidden="true">▲</span> {{ unknown }} pair{{ unknown|pluralize }} unknown.</b> Visits on {{ unknown|pluralize:"that route,those routes" }} cannot be planned until a value is set.{% else %}Every pair has a value.{% endif %}</p>
+{% for g in hubs %}<section class="card hubgrid" aria-labelledby="tt-{{ g.hub.code }}" data-hub="{{ g.hub.code }}">
+<h2 id="tt-{{ g.hub.code }}">{{ g.hub.name }} <span class="code">{{ g.hub.code }}</span>{% if g.unknown %} <span class="status t-warn"><span class="shape" aria-hidden="true">▲</span>{{ g.unknown }} unknown</span>{% endif %}</h2>
+{% if g.zones %}<div class="tablewrap"><table class="matrix"><caption class="sr">Travel minutes at {{ g.hub.name }}, from the row's zone to the column's zone</caption>
+<thead><tr><th scope="col">From \ to</th>{% for z in g.zones %}<th scope="col">{{ z.name }}<span class="code">{{ z.code }}</span></th>{% endfor %}</tr></thead><tbody>
+{% for row in g.grid %}<tr><th scope="row">{{ row.from.name }}<span class="code">{{ row.from.code }}{% if row.from.pk == g.home_zone_id %} · the hub's zone{% endif %}</span></th>
+{% for c in row.cells %}{% if c.cell and c.cell.current.known %}<td{% if c.same %} class="same"{% endif %}><a href="/settings/travel-times/{{ row.from.pk }}/{{ c.to.pk }}/" aria-label="{{ c.cell.current.minutes }} minutes from {{ row.from.name }} to {{ c.to.name }}, {% if c.cell.current.source == 'demo' %}demo value{% else %}company value{% endif %}, version {{ c.cell.version }}"><b>{{ c.cell.current.minutes }} min</b><span class="src">{% if c.cell.current.source == "demo" %}demo value{% else %}company value{% endif %} · v{{ c.cell.version }}{% if c.cell.pending %} · {{ c.cell.pending }} pending{% endif %}</span></a></td>{% else %}<td class="unknown"><a href="/settings/travel-times/{{ row.from.pk }}/{{ c.to.pk }}/" aria-label="Unknown: no travel time from {{ row.from.name }} to {{ c.to.name }}. Set it."><b>▲ Unknown</b><span class="src">{% if c.cell.pending %}{{ c.cell.pending }} pending{% else %}set it{% endif %}</span></a></td>{% endif %}{% endfor %}</tr>{% endfor %}
+</tbody></table></div>{% if not g.home_zone_id %}<p class="pb at_risk"><b><span aria-hidden="true">▲</span> {{ g.hub.name }}'s own zone is unknown.</b> Every trip from it reads "Travel time unknown". <a href="/settings/hubs/{{ g.hub.code }}/zones/home/">Set it</a>.</p>{% endif %}
+{% else %}{% include "ui/empty.html" with title="No zones yet" text=" Add zones to this hub first (Settings > Hubs > Zones)." %}<p><a class="btn" href="/settings/hubs/{{ g.hub.code }}/zones/">Zones of {{ g.hub.name }}</a></p>{% endif %}
+</section>{% empty %}{% include "ui/empty.html" with title="No hubs to show" text=" You hold no role at any hub, so nothing is shown." %}{% endfor %}
 {% endblock %}

@@ -114,6 +114,13 @@ class Slot:
         return f"{local:%a} {local.day} {local:%b}, {local:%H:%M %Z}"
 
     @property
+    def span_label(self) -> str:
+        """``Tue 1 Dec, 18:30–19:30 PST`` in the hub's zone."""
+        zone = ZoneInfo(self.tz)
+        s, e = self.start.astimezone(zone), self.end.astimezone(zone)
+        return f"{s:%a} {s.day} {s:%b}, {s:%H:%M}–{e:%H:%M %Z}"
+
+    @property
     def end_label(self) -> str:
         return f"{self.end.astimezone(ZoneInfo(self.tz)):%H:%M}"
 
@@ -242,21 +249,17 @@ def _combos(opts: popt.PlanOptions, hub_id: int) -> list[tuple[Any, Any, Any, An
     return out
 
 
-def _why(robot: Any, lead: Any, second: Any, vehicle: Any, hub_name: str, plan: p.Plan) -> str:
-    from planning.board import crew_names  # noqa: PLC0415
-
-    where = (
-        "away until verified back at the hub (At risk)" if robot.at_risk else f"at {hub_name}"
-    )  # section 12
+def _why(robot: Any, hub_name: str, plan: p.Plan) -> str:
+    """The one line of why: where the robot is (section 12), that the crew and van are free, and the travel
+    matrix values used (a home with no zone: its recorded minutes)."""
+    where = "Robot away until verified back at the hub" if robot.at_risk else f"Robot at {hub_name}"
     route = plan.travel
     travel = ""
     if route is not None and route.known:
-        travel = f" · travel {route.out.minutes} min out, {route.back.minutes} min back"
+        travel = f"; travel {route.out.minutes} min out, {route.back.minutes} min back"
         if "demo" in (route.out.source, route.back.source):
             travel += " (demo values)"
-    return (
-        f"Robot {robot.code} {where} · {crew_names(lead.obj, second.obj)} free · {vehicle.code} free{travel}"
-    )
+    return f"{where}; crew and van free{travel}"
 
 
 def _target(visit_or_request: Visit | Request) -> dict[str, Any]:
@@ -407,7 +410,7 @@ def next_free(
                 lead=lead.obj,
                 second=second.obj,
                 vehicle=vehicle.code,
-                why=_why(robot, lead, second, vehicle, hub.name, plan),
+                why=_why(robot, hub.name, plan),
                 tz=hub.time_zone,
                 site_tz=t["site"].timezone,
                 travel_versions=(

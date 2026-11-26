@@ -1,20 +1,21 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Travel time{% endblock %}
 {% block content %}
-{% page_header title=page_title back_url="/settings/travel-times/" back_label="Travel times" %}{{ a.hub.name }} · {{ a.code }} → {{ b.hub.name }} · {{ b.code }}. One direction only; <a href="{{ reverse_url }}">the way back</a> is its own value.{% endpage_header %}
+{% page_header title=page_title back_url=back_url back_label="Travel times" %}{{ a.hub.name }} · one direction only, {{ a.name }} <span aria-hidden="true">→</span><span class="sr"> to </span> {{ b.name }} <span class="muted">({{ a.code }} → {{ b.code }})</span>.{% endpage_header %}
 <section class="card" aria-labelledby="now">
 <h2 id="now">In force now</h2>
-<p>{% if now_value.known %}<b>{{ now_value.label }}</b>{% else %}<span class="pb at_risk"><b>▲ {{ now_value.label }}</b></span>{% endif %}</p>
+{% if now_value.known %}<p class="travelnow"><b>{{ now_value.label }}</b> <span class="muted">· version {{ history.0.version }}{% if history.0.version != 1 %}, after {{ history|length|add:"-1" }} earlier{% endif %}</span></p>{% else %}<p class="pb at_risk"><b><span aria-hidden="true">▲</span> {{ now_value.label }}.</b> Visits from {{ a.name }} to {{ b.name }} cannot be planned until a value is set. Nothing is estimated.</p>{% endif %}
+<p class="muted">The way back, <a href="{{ reverse_url }}">{{ b.name }} → {{ a.name }}</a>, is its own value: {% if back_value.known %}{{ back_value.label }}{% else %}unknown{% endif %}.</p>
 </section>
 <section class="card" aria-labelledby="new">
 <h2 id="new">Set a new value</h2>
-<p class="muted">Each change is a new version. Times are in {{ tz }}.</p>
+<p class="muted">Each change is a new version, effective now or later, never earlier: plans already saved keep the value they used. Times are in {{ tz }}.</p>
 {% include "ui/form.html" with form=form submit="Save new version" cancel_url="/settings/travel-times/" %}
 </section>
 <section class="card" aria-labelledby="hist">
 <h2 id="hist">History</h2>
-{% if history %}<div class="tablewrap"><table><thead><tr><th>Version</th><th>Minutes</th><th>Source</th><th>Takes effect</th><th>Set by</th></tr></thead><tbody>
-{% for t in history %}<tr><td>v{{ t.version }}</td><td>{{ t.minutes }}</td><td>{{ t.get_source_display }}</td><td><time datetime="{{ t.effective_from|date:'c' }}">{{ t.effective_from|local_dt }}</time></td><td>{{ t.created_by.get_full_name|default:t.created_by.username }}</td></tr>{% endfor %}
+{% if history %}<div class="tablewrap"><table class="stack"><thead><tr><th scope="col">Version</th><th scope="col">Minutes</th><th scope="col">Source</th><th scope="col">Takes effect</th><th scope="col">Set by</th></tr></thead><tbody>
+{% for t in history %}<tr><td data-label="Version">v{{ t.version }}</td><td data-label="Minutes">{{ t.minutes }} min</td><td data-label="Source">{% if t.source == "demo" %}Demo value{% else %}Company value{% endif %}</td><td data-label="Takes effect"><time datetime="{{ t.effective_from|iso_instant }}">{{ t.effective_from|local_dt }}</time></td><td data-label="Set by">{{ t.created_by.get_full_name|default:t.created_by.username }}</td></tr>{% endfor %}
 </tbody></table></div>{% else %}{% include "ui/empty.html" with title="No value yet" text=" Travel time is unknown: visits on this route cannot be planned until it is set." %}{% endif %}
 </section>
 {% endblock %}

@@ -38,6 +38,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 .vrow .c-time{font-variant-numeric:tabular-nums;white-space:nowrap} .vrow .c-home b{font-weight:600} .vrow .c-home .code{display:block;white-space:nowrap;font-size:var(--fs-xs)} .vrow .none{color:var(--soft)}
 .vrow .c-status{display:flex;flex-wrap:wrap;gap:var(--s1);align-items:center;justify-content:flex-end}
 .legacy{display:block;margin-top:2px;color:var(--amber);font-size:var(--fs-xs);font-weight:600}
+.vrow .c-home .zone{display:table;margin-top:2px}
 .zone{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--line);font-size:var(--fs-xs);color:var(--soft)}
 .vrow .c-kit{display:contents}
 .vrow .lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -59,7 +60,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
   .cards{grid-template-columns:1fr} .bcard .btn{width:100%}
   .hubs-all .compact{display:none} .hubs-all .openhub{display:flex}
   .openhub{justify-content:space-between;align-items:center;padding:var(--s3) var(--s4);min-height:44px;font-weight:600;font-size:var(--fs-sm);text-decoration:none}
-  .hubstats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s2);width:100%} .hubstats div{min-width:0}
+  .hubstats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s2);width:100%} .hubstats div{min-width:0;justify-content:space-between} .hubstats dt{line-height:1.25}
   .vrow{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"time status" "home home" "crew crew" "kit kit"}
 }
 {% endblock %}

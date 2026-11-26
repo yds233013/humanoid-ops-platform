@@ -68,7 +68,7 @@ main{max-width:1180px;margin:0 auto;padding:var(--s4) var(--s4) 64px}
 .slot{display:flex;justify-content:space-between;align-items:center;gap:var(--s2) var(--s4);flex-wrap:wrap;padding:var(--s3) var(--s4);border:1px solid var(--line);border-radius:var(--radius);background:var(--card)}
 .slot p{margin:0} .slot-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 280px}
 .slot-when{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;font-weight:700;font-variant-numeric:tabular-nums}
-.slot-who{font-size:var(--fs-sm)} .slot-why{font-size:var(--fs-xs);color:var(--soft)}
+.slot-who{font-size:var(--fs-sm)} .nw{white-space:nowrap} .slot-why{font-size:var(--fs-xs);color:var(--soft)}
 .slot form{margin:0} .slot button{min-height:44px}
 @media (max-width:700px){.slot form,.slot button{width:100%}}
 
@@ -129,6 +129,7 @@ label{font-size:var(--fs-sm);color:var(--ink)} fieldset{border:1px solid var(--l
 .field{display:flex;flex-direction:column;gap:var(--s1);margin:0 0 var(--s3)} .field .help{color:var(--soft);font-size:var(--fs-xs)} .field .err{color:var(--red);font-size:var(--fs-xs);font-weight:600}
 .field.has-error input,.field.has-error select,.field.has-error textarea{border-color:var(--red)}
 button,.btn{font:inherit;cursor:pointer;border-radius:8px;padding:8px 14px;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600;min-height:38px}
+a.btn{text-decoration:none;display:inline-flex;align-items:center}
 button.primary,.btn.primary{background:var(--head);color:#fff;border-color:var(--head)} button.primary:hover{background:#17406A}
 button.danger{background:var(--red);color:#fff;border-color:var(--red)}
 .row{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center} .row>label{min-width:0;max-width:100%} select{max-width:100%} form.inline{display:inline-flex;gap:var(--s2);align-items:center;flex-wrap:wrap}

@@ -1,15 +1,15 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Pause departures{% endblock %}
 {% block content %}
-{% page_header title="Pause departures" back_url="/planning/pause/" back_label="Regional pause" %}{{ where }}{% endpage_header %}
+{% page_header title="Pause departures" back_url="/planning/pause/" back_label="Regional pause" %}{% if zone %}{{ zone.name }}, {{ hub.name }}{% else %}All of {{ hub.name }}{% endif %} <span class="muted">· {{ where }}</span>{% endpage_header %}
 <section class="card" aria-labelledby="affected">
 <h2 id="affected">What this pause blocks</h2>
-<p data-affected="{{ affected|length }}"><b>This blocks authorization and departure for {{ affected|length }} visit{{ affected|length|pluralize }}</b> that ha{{ affected|length|pluralize:"s,ve" }} not left yet.</p>
-{% if affected %}<div class="tablewrap"><table><thead><tr><th>Visit time</th><th>Home</th><th>Dispatch hub</th><th>Visit</th></tr></thead><tbody>
-{% for a in affected %}<tr><td><time datetime="{{ a.start|date:'c' }}">{{ a.start|local_dt }}</time></td><td>{{ a.site }}</td><td>{{ a.hub_code }}</td><td><a href="/planning/visits/{{ a.code }}/">{{ a.code }}</a> <span class="muted">{{ a.status }}</span></td></tr>{% endfor %}
-</tbody></table></div>{% endif %}
-<p class="muted">Visits can still be planned and show "{{ paused_text }}". Robots already out are not recalled and keep recording.</p>
+<p class="pb paused" data-affected="{{ affected|length }}" data-today="{{ today_count }}"><b>This blocks authorization and departure for {{ affected|length }} visit{{ affected|length|pluralize }}</b> that ha{{ affected|length|pluralize:"s,ve" }} not left yet{% if affected %}, {{ today_count }} of them today{% endif %}.</p>
+{% if affected %}<div class="tablewrap"><table class="stack"><thead><tr><th scope="col">Visit time</th><th scope="col">Home</th><th scope="col">Hub</th><th scope="col">Visit</th></tr></thead><tbody>
+{% for a in affected %}<tr><td data-label="Visit time"><time datetime="{{ a.start|iso_instant }}">{{ a.start|local_dt }}</time></td><td data-label="Home">{{ a.home }} <span class="muted">{{ a.site }}</span></td><td data-label="Hub">{{ a.hub_name|default:a.hub_code }}</td><td data-label="Visit"><a href="/planning/visits/{{ a.code }}/">{{ a.code }}</a> <span class="muted">{{ a.status }}</span></td></tr>{% endfor %}
+</tbody></table></div>{% else %}{% include "ui/empty.html" with title="No visit is waiting to leave there" text=" The pause still applies to any visit planned there later." %}{% endif %}
+<p class="muted">Visits can still be planned and show "{{ paused_text }}". Robots already out are not recalled and keep recording incidents, custody and protective actions.</p>
 </section>
-<section class="card">{% include "ui/confirm_box.html" with headline="Pause departures for "|add:where|add:"?" detail="No new departure authorization is issued and no departure is recorded until the regional ops lead lifts the pause. The pause and its reason are kept in the audit log." %}
+<section class="card" aria-labelledby="confirm-h"><h2 id="confirm-h">Confirm</h2>{% include "ui/confirm_box.html" with headline="Pause departures for "|add:where|add:"?" detail="No departure authorization is issued and no departure is recorded there until the regional ops lead lifts the pause. The pause and its reason are kept in the audit log." %}
 {% include "ui/form.html" with form=form submit="Pause departures" danger=True cancel_url="/planning/pause/" %}</section>
 {% endblock %}
