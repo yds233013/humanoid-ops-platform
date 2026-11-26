@@ -381,7 +381,7 @@ def next_free(
         if start - timedelta(minutes=lead_time) <= now:
             continue  # too soon: inspection and loading would have to start in the past (not counted)
         out.candidates += 1
-        opts = popt.options_at(world, hub.pk, start, end, t_out, t_back)
+        opts = popt.restrict_to_hub(popt.options_at(world, hub.pk, start, end, t_out, t_back), hub.pk)
         combos = _combos(opts, hub.pk)
         if not combos:
             if not spend():

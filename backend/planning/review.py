@@ -91,6 +91,12 @@ class Group:
     elsewhere: int = 0  # options of other hubs: not listed (they can never be picked for this visit)
 
     @property
+    def elsewhere_text(self) -> str:
+        """``12 people at other hubs are not offered`` (03B closure P2)."""
+        kind = {"robot": "robots", "lead": "leads", "second": "seconds", "vehicle": "vehicles"}[self.kind]
+        return popt.elsewhere_line(kind, self.elsewhere) if self.elsewhere else ""
+
+    @property
     def free_shown(self) -> list[Choice]:
         return self.free[:FREE_SHOWN] + [c for c in self.free[FREE_SHOWN:] if c.picked or c.current]
 
@@ -192,7 +198,7 @@ def _groups(
         ("second", "Second", opts.seconds),
         ("vehicle", "Vehicle", opts.vehicles),
     ):
-        g = Group(kind, title)
+        g = Group(kind, title, elsewhere=opts.elsewhere.get(f"{kind}s", 0))
         for o in items:
             risk = 0
             if kind == "robot":
@@ -582,7 +588,7 @@ def build_review(
         why.insert(
             0, {"level": "paused", "sentence": pause_banner(hub, pause), "action": "", "code": "PAUSE"}
         )
-    opts = opts if opts is not None else popt.plan_options(visit)
+    opts = opts if opts is not None else popt.restrict_to_hub(popt.plan_options(visit), visit.hub_id)
     current = _current(rev)
 
     by_code = {
