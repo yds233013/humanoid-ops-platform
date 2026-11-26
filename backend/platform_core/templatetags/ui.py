@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from django import template
 from django.http import HttpRequest
 from django.utils.html import format_html
-from django.utils.safestring import SafeString
+from django.utils.safestring import SafeString, mark_safe
 
 from accounts.permissions import active_roles
 from accounts.roles import PERMISSIONS
@@ -190,6 +190,18 @@ def local_time_tz(value: Any) -> str:
     """Clock time with its zone label from the IANA conversion, never hard-coded: ``14:00 PST`` (v2 03B-2)."""
     dt = _as_datetime(value)
     return "" if dt is None else dt.astimezone(workspace_zone()).strftime("%H:%M %Z")
+
+
+_CODE_TOKEN = re.compile(r"\b([A-Z]{1,4}-\d{1,5})\b")
+
+
+@register.filter
+def codes_nowrap(text: Any) -> SafeString:
+    """Escape ``text`` and keep codes such as NB-201 on one line (a narrow column never splits "NB-" from
+    "201"; v2 03B-2 design review)."""
+    from django.utils.html import escape  # noqa: PLC0415
+
+    return mark_safe(_CODE_TOKEN.sub(r'<span class="nw">\1</span>', str(escape(text))))  # noqa: S308
 
 
 @register.filter

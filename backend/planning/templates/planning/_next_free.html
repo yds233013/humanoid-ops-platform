@@ -2,12 +2,12 @@
 <h3 id="nf-h">Next free times at {{ nf.hub_name }}</h3>
 {% if nf_intro %}<p class="calm">{{ nf_intro }}</p>{% endif %}
 {% if nf.not_set %}<p class="pb at_risk" data-nf-not-set="1"><span aria-hidden="true">▲</span> {{ nf.not_set }}</p>
-{% elif nf.stopped %}<p class="pb blocked" data-nf-stopped="1"><span aria-hidden="true">■</span> <span class="sr">Blocked: </span><b>No time can work yet.</b> {{ nf.stopped }}. Ask an ops lead or an admin to set it on the <a href="/settings/travel-times/">Travel times</a> page; nothing is estimated.</p>
+{% elif nf.stopped %}<p class="pb blocked" data-nf-stopped="1"><span aria-hidden="true">■</span> <span class="sr">Blocked: </span><b>No time can work yet.</b> {% if nf.stopped|slice:"-1:" == "." %}{{ nf.stopped }}{% else %}{{ nf.stopped }}.{% endif %} Ask an ops lead or an admin to set it on the <a href="/settings/travel-times/">Travel times</a> page; nothing is estimated.</p>
 {% elif nf.slots %}<ol class="slots">
 {% for s in nf.slots %}<li class="slot" data-slot="{{ forloop.counter }}" data-slot-status="{{ s.status }}">
 <div class="slot-main">
 <p class="slot-when"><span class="status t-{% if s.status == 'at_risk' %}warn{% else %}info{% endif %}"><span class="shape" aria-hidden="true">{{ s.shape }}</span>{{ s.words }}</span> <time datetime="{{ s.start|iso_instant }}">{{ s.span_label }}</time></p>
-<p class="slot-who">{{ s.crew }} · <span class="nw">Robot {{ s.robot }}</span> · <span class="nw">{{ s.vehicle }}</span></p>
+<p class="slot-who">{{ s.crew }} · <span class="nw">Robot {{ s.robot }}</span> · <span class="nw">Vehicle {{ s.vehicle }}</span></p>
 <p class="slot-why">{{ s.why }}</p></div>
 {% if nf_action == "plan" %}<form method="post" action="/planning/visits/{{ visit.code }}/plan/" data-slot-form="{{ forloop.counter }}">{% csrf_token %}{% form_token %}
 <input type="hidden" name="robot" value="{{ s.robot }}"><input type="hidden" name="lead" value="{{ s.lead.code }}"><input type="hidden" name="second" value="{{ s.second.code }}"><input type="hidden" name="vehicle" value="{{ s.vehicle }}">

@@ -92,7 +92,7 @@ def _world(prefix: str):
     Blocked), Z at S-3 19:00 (R-03; At risk: adults unknown)."""
     w = _zoned(prefix)
     _set(w, w.za, w.za, 15)
-    zones.set_site_zone(w.ops, site_code="S-3", hub_code=w.hub.code, zone_code="ZA")
+    zones.set_site_zone(w.ops, site_code="S-3", hub_code=w.hub.code, zone_code="ZA", reason="SYN: home zone")
     w.x = new_visit(w, site="S-2", h0=7, h1=8)
     plan(w, w.x, robot="R-01")
     w.y = new_visit(w, site="S-1", h0=14, h1=15, travel=None)
@@ -130,8 +130,17 @@ def test_attention_order_status_words_legacy_label_and_the_unknown_zone_under_a_
     # a pause of zone ZA covers Z (its zone) AND X (no zone: fail closed), never Y (zone ZB)
     pauses.pause_region(w.ops, hub_code=w.hub.code, zone_code="ZA", reason="SYN: road closed")
     html = _html(c.get(BOARD))
-    order = re.findall(r'<article class="bcard" data-status="([a-z_]+)" data-visit="([^"]+)"', html)
-    assert order == [("blocked", w.y), ("paused", w.x), ("paused", w.z)], order
+    # 03B-2 design review D-B1: X and Z share one cause at one hub (the pause), so they are ONE card, after
+    # the blocked card, with the visits in the same severity/departure/code order inside it
+    order = re.findall(
+        r'<article class="bcard[^"]*" data-status="([a-z_]+)" data-(?:visit|group)="([^"]+)"', html
+    )
+    assert order == [("blocked", w.y), ("paused", "PAUSE")], order
+    group = re.search(
+        r'<article class="bcard group" data-status="paused" data-group="PAUSE".*?</article>', html, re.S
+    )
+    assert group and 'data-count="2"' in group.group(0)
+    assert re.findall(r'data-group-visit="([^"]+)"', group.group(0)) == [w.x, w.z]
     assert re.search(r'<span class="shape" aria-hidden="true">◆</span>Paused</span>', html)
     review = _html(c.get(f"/planning/visits/{w.x}/?review=1"))
     why = review.split("Why this visit needs attention", 1)[1].split("</ul>", 1)[0]

@@ -259,7 +259,7 @@ def _why(robot: Any, hub_name: str, plan: p.Plan) -> str:
         travel = f"; travel {route.out.minutes} min out, {route.back.minutes} min back"
         if "demo" in (route.out.source, route.back.source):
             travel += " (demo values)"
-    return f"{where}; crew and van free{travel}"
+    return f"{where}; crew and vehicle free{travel}"
 
 
 def _target(visit_or_request: Visit | Request) -> dict[str, Any]:

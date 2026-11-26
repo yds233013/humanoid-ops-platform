@@ -24,6 +24,7 @@ visit code.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -90,7 +91,7 @@ class Row:
     home_code: str  # "H-121"
     start: datetime
     end: datetime
-    depart: datetime
+    depart: datetime | None  # None: the travel time out is unknown, so no leave time is computed (D-B4)
     crew: str  # "Jordan Lee and Amara Okafor", or "" when not chosen
     robot: str  # "NB-024" or ""
     vehicle: str
@@ -120,6 +121,136 @@ class Row:
     @property
     def attention(self) -> bool:
         return self.status in ATTENTION
+
+    @property
+    def leaves(self) -> datetime:
+        """For ordering only: the leave time, or the on-site start when travel is unknown (never shown)."""
+        return self.depart if self.depart is not None else self.start
+
+
+# ------------------------------------------------------------------ grouped attention (design review D-B1)
+@dataclass(frozen=True)
+class Cause:
+    """A cause several visits can share, with ONE place to fix it."""
+
+    key: str
+    words: str  # "charge forecast unknown"
+    fix: str  # "Record battery levels"
+    where: str  # "Hub › Charging"
+    url: str
+    permission: str
+
+
+def _cause(row: Row) -> Cause | None:
+    """The shared cause of a row's main reason, or None when the fix is specific to that visit."""
+    r = row.reasons[0] if row.reasons else None
+    if r is None:
+        return None
+    hub_q = f"?hub={row.hub_code}"
+    if r.code == "CHARGE_UNKNOWN":
+        return Cause(
+            "CHARGE_UNKNOWN", "charge forecast unknown", "Record battery levels", "Hub › Charging",
+            f"/hub/charging/{hub_q}", "hub.record_charging",
+        )  # fmt: skip
+    if r.code == "CHARGE_NEEDS":
+        return Cause(
+            "CHARGE_NEEDS", "robots need charge before they leave", "Plan charging", "Hub › Charging",
+            f"/hub/charging/{hub_q}", "hub.reserve_charger",
+        )  # fmt: skip
+    if r.code.startswith("STOCK:"):
+        item = r.code.split(":", 1)[1]
+        return Cause(
+            r.code,
+            f"kit short ({item})",
+            "Check stock",
+            "Hub › Stock",
+            f"/hub/stock/{hub_q}",
+            "hub.stock_move",
+        )
+    if r.code == "PAUSE":
+        return Cause(
+            "PAUSE", "departures paused", "See the pause", "Dispatch › Pause", "/planning/pause/",
+            "operations.lift_pause",
+        )  # fmt: skip
+    if r.code in ("TRAVEL_UNKNOWN", "ZONE_RETIRED"):
+        return Cause(
+            r.code, "travel time unknown" if r.code == "TRAVEL_UNKNOWN" else "the home's zone is retired",
+            "Set the travel time" if r.code == "TRAVEL_UNKNOWN" else "Move the homes to an active zone",
+            "Settings › Travel times" if r.code == "TRAVEL_UNKNOWN" else "Settings › Hubs › Zones",
+            "/settings/travel-times/" if r.code == "TRAVEL_UNKNOWN" else "/planning/sites/",
+            "planning.set_travel_time" if r.code == "TRAVEL_UNKNOWN" else "planning.manage_sites",
+        )  # fmt: skip
+    return None
+
+
+@dataclass
+class Card:
+    """One Needs attention card: a single visit, or several visits of one hub with the same cause."""
+
+    status: str
+    rows: list[Row]
+    cause: Cause | None = None
+    can_fix: bool = False
+    who_fix: str = ""
+
+    @property
+    def grouped(self) -> bool:
+        return self.cause is not None and len(self.rows) > 1
+
+    @property
+    def first(self) -> Row:
+        return self.rows[0]
+
+    @property
+    def count(self) -> int:
+        return len(self.rows)
+
+    @property
+    def title(self) -> str:
+        return f"{self.count} visits at {self.first.hub_name}: {self.cause.words}" if self.cause else ""
+
+    @property
+    def words(self) -> str:
+        return STATUS[self.status][0]
+
+    @property
+    def shape(self) -> str:
+        return STATUS[self.status][1]
+
+    @property
+    def tone(self) -> str:
+        return STATUS[self.status][2]
+
+    @property
+    def earliest(self) -> Row:
+        return min(self.rows, key=attention_key)
+
+
+def group_cards(rows: list[Row], roles: set[str]) -> list[Card]:
+    """One card per (hub, status, shared cause); visits whose fix is their own keep their own card. Ordered
+    like the rows: severity, then the earliest departure in the card, then visit code (contract 13.4 item
+    5)."""
+    from platform_core.interaction import who_can  # noqa: PLC0415
+
+    cards: list[Card] = []
+    by_key: dict[tuple[int, str, str], Card] = {}
+    for row in sorted(rows, key=attention_key):
+        cause = _cause(row)
+        if cause is None:
+            cards.append(Card(row.status, [row]))
+            continue
+        k = (row.hub_id, row.status, cause.key)
+        if k not in by_key:
+            by_key[k] = Card(
+                row.status,
+                [],
+                cause,
+                bool(roles & PERMISSIONS.get(cause.permission, set())),
+                who_can(cause.permission),
+            )
+            cards.append(by_key[k])
+        by_key[k].rows.append(row)
+    return sorted(cards, key=lambda c: attention_key(c.earliest))
 
 
 @dataclass
@@ -157,6 +288,7 @@ class Board:
     can_plan: bool
     who_plan: str
     charge_off: bool = False
+    cards: list[Card] = field(default_factory=list)
 
     @property
     def visits(self) -> int:
@@ -170,10 +302,16 @@ class Board:
 def legacy_travel_text(out_min: int | None, back_min: int | None) -> str:
     """EM 03B closure (A): a home without a zone keeps the travel minutes recorded on its visit, and every
     screen that shows the travel says so, in the at-risk style (words plus shape)."""
-    return (
-        f"Legacy travel estimate: {out_min if out_min is not None else 'unknown'} min out, "
-        f"{back_min if back_min is not None else 'unknown'} min back (this home has no zone yet)"
-    )
+    return f"Legacy travel estimate: {travel_text(out_min, back_min)} (this home has no zone yet)"
+
+
+def travel_text(out_min: int | None, back_min: int | None) -> str:
+    """ "30 min out, 30 min back"; an unknown leg says so in words, never "unknown min" (D-B9)."""
+    if out_min is None and back_min is None:
+        return "Travel time unknown"
+    out = f"{out_min} min out" if out_min is not None else "Travel time unknown (out)"
+    back = f"{back_min} min back" if back_min is not None else "travel time unknown (back)"
+    return f"{out}, {back}"
 
 
 def pause_banner(hub_name: str, pause: Any) -> str:
@@ -238,7 +376,12 @@ def crew_names(lead: Any, second: Any) -> str:
 def home_name(site: Any) -> str:
     """Names first (spec principle 2): the product stores no customer name, so a home is named by its area."""
     area = str(getattr(site, "zone", "") or "").strip()
-    return f"{area} home" if area else "Home"
+    if not area:
+        return "Home"
+    # a display name that already describes the place is used as it is (D-B2: never "... visit (X) home")
+    if re.search(r"\b(home|house|visit|site)\b|\(", area, re.I):
+        return area
+    return f"{area} home"
 
 
 def _robot_facts(robot_ids: list[int]) -> dict[int, tuple[bool, list[str], Location]]:
@@ -299,8 +442,17 @@ def _stored_reasons(blockers: list[dict[str, str]]) -> list[Reason]:
             continue
         pb = plain_blocker(b)
         level = "blocked" if pb["level"] == "blocked" else "at_risk"
-        out.append(Reason(level, pb["sentence"], pb["code"]))
+        out.append(Reason(level, strip_status_prefix(pb["sentence"]), pb["code"]))
     return out
+
+
+_STATUS_PREFIX = re.compile(r"^(At risk|Blocked|Paused|Available for planning)\s*:\s*", re.I)
+
+
+def strip_status_prefix(text: str) -> str:
+    """The status is shown once, as the chip (words + shape); a sentence never repeats it (D-B5)."""
+    out = _STATUS_PREFIX.sub("", text, count=1)
+    return out[:1].upper() + out[1:] if out else out
 
 
 def _status(row: Row, departed: bool) -> str:
@@ -360,7 +512,11 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
             home_code=v.site.code,
             start=r.on_site_start,
             end=r.on_site_end,
-            depart=r.on_site_start - timedelta(minutes=t_out),
+            depart=(
+                r.on_site_start - timedelta(minutes=r.travel_out_min)
+                if r.travel_out_min is not None
+                else None
+            ),
             crew=crew_names(r.lead, r.second),
             robot=r.robot.code if r.robot else "",
             vehicle=r.vehicle.code if r.vehicle else "",
@@ -387,12 +543,14 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
                 )
             elif f is not None and f.state == charging.NEEDS:
                 reasons.append(
-                    Reason("at_risk", f"Robot {row.robot} needs charge before it leaves.", "CHARGE")
+                    Reason("at_risk", f"Robot {row.robot} needs charge before it leaves.", "CHARGE_NEEDS")
                 )
             elif f is not None and f.state == charging.UNKNOWN:
-                reasons.append(Reason("at_risk", f"Charge forecast unknown for robot {row.robot}.", "CHARGE"))
+                reasons.append(
+                    Reason("at_risk", f"Charge forecast unknown for robot {row.robot}.", "CHARGE_UNKNOWN")
+                )
             for n in shortages.get(v.pk, []):
-                reasons.append(Reason("at_risk", f"{n.reason}.", "STOCK"))
+                reasons.append(Reason("at_risk", f"{n.reason}.", f"STOCK:{n.item_name}"))
             for p in pauses_by_hub.get(v.hub_id, []):
                 if _pause_covers(p, zone.id if zone is not None else None):
                     reasons.append(Reason("paused", pause_banner(hub.name, p), "PAUSE"))
@@ -424,6 +582,7 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
         )
     attention = sorted((x for x in rows if x.attention), key=attention_key)
     roles = set(scope.roles)
+    cards = group_cards(attention, roles)
     return Board(
         at=at,
         day=day,
@@ -437,10 +596,11 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
         can_plan=bool(roles & PERMISSIONS["planning.plan"]),
         who_plan=role_words("planning.plan"),
         charge_off=not charge_on,
+        cards=cards,
     )
 
 
 def attention_key(row: Row) -> tuple[int, datetime, str]:
     """Contract 13.4 item 5: severity (blocked, paused, at risk), then departure proximity, then visit
     code."""
-    return (SEVERITY[row.status], row.depart, row.code)
+    return (SEVERITY[row.status], row.leaves, row.code)

@@ -118,7 +118,10 @@ def test_next_free_equals_the_brute_force_oracle():
     assert s0.words == "Available for planning" and s0.shape == "●"
     assert not got.exhausted and got.evaluations <= nf.BUDGET
     # the one line of why: names, codes, the travel matrix values (demo values), never a departure word
-    assert s0.why == f"Robot at {w.hub.name}; crew and van free; travel 25 min out, 35 min back (demo values)"
+    assert (
+        s0.why
+        == f"Robot at {w.hub.name}; crew and vehicle free; travel 25 min out, 35 min back (demo values)"
+    )
     assert s0.span_label.startswith("Wed 9 Dec, 08:00–09:00 ")
     assert not re.search(r"(?i)clear|approv|depart", s0.why)
     # the label is in the hub's zone with the IANA abbreviation (no hard-coded zone)
@@ -189,7 +192,7 @@ def test_at_risk_slots_rank_after_available_ones():
     risky = nf.next_free(target, now=now)
     assert risky.slots and {s.status for s in risky.slots} == {nf.AT_RISK}
     assert {s.robot for s in risky.slots} == {"R-01"} and risky.slots[0].words == "At risk"
-    assert risky.slots[0].why.startswith("Robot away until verified back at the hub; crew and van free")
+    assert risky.slots[0].why.startswith("Robot away until verified back at the hub; crew and vehicle free")
     assert [_key(s) for s in risky.slots] == _brute_force(target, now, (dtime(8), dtime(12)), 1)
 
 

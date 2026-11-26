@@ -32,7 +32,14 @@ from operations import pauses
 from planning import options as popt
 from planning import services as p
 from planning import travel, zones
-from planning.board import crew_names, home_name, legacy_travel_text, pause_banner, person_name
+from planning.board import (
+    crew_names,
+    home_name,
+    legacy_travel_text,
+    pause_banner,
+    person_name,
+    strip_status_prefix,
+)
 from planning.models import Visit, VisitRevision
 from planning.plain import plain_blocker, plain_blockers
 
@@ -71,6 +78,7 @@ class Choice:
     reason: str = ""
     current: bool = False
     picked: bool = False
+    risk: int = 0  # 0 = free; higher = more or worse risks (at the hub beats away; D-B6)
 
 
 @dataclass
@@ -80,6 +88,7 @@ class Group:
     free: list[Choice] = field(default_factory=list)
     at_risk: list[Choice] = field(default_factory=list)
     not_possible: list[Choice] = field(default_factory=list)
+    elsewhere: int = 0  # options of other hubs: not listed (they can never be picked for this visit)
 
     @property
     def free_shown(self) -> list[Choice]:
@@ -122,6 +131,9 @@ class Review:
     hub_name: str = ""
     new_start: str = ""
     new_end: str = ""
+    blocker: dict[str, str] | None = None  # D-B8: a blocker no robot, crew, vehicle or time can fix
+    auto: bool = False  # the proposal is the preselected best option (D-B6), not the viewer's own pick
+    keep_url: str = ""  # "Keep the current plan"
 
     @property
     def proposed(self) -> bool:
@@ -131,25 +143,32 @@ class Review:
     def nothing_fits(self) -> bool:
         """Spec S2 "No option works": some part of the plan (robot, lead, second or vehicle) has no free or
         at-risk option for this time. The page then offers the next free times (S3)."""
-        return any(not (g.free or g.at_risk) for g in self.groups)
+        return self.blocker is None and any(not (g.free or g.at_risk) for g in self.groups)
 
 
 # ------------------------------------------------------------------ options
-def _robot_line(o: popt.Option, hub_name: str, charge_on: bool) -> tuple[str, str]:
-    """("Robot NB-031 · at Oakland hub · charge enough", group) for one planner option."""
+RISK_WEIGHT = {"away": 2, "needs charge": 2, "charge forecast unknown": 1}
+ELSEWHERE = ("at another hub", "away on another hub's run", "on its way to another hub")
+
+
+def _robot_line(o: popt.Option, hub_name: str, charge_on: bool) -> tuple[str, str, int]:
+    """("Robot NB-031 · at Oakland hub · charge enough", group, risk score) for one planner option."""
     parts = [f"Robot {o.code}"]
     base, _, extra = o.note.partition(" · ")
+    risk = 0
     if o.status == popt.FREE:
         parts.append("away until verified back at the hub" if o.at_risk else f"at {hub_name}")
+        risk += RISK_WEIGHT["away"] if o.at_risk else 0
         if extra:
             parts.append(extra)
+            risk += RISK_WEIGHT.get(extra, 1)
         elif charge_on:
             parts.append("charge enough")
-        group = "at_risk" if (o.at_risk or extra) else "free"
+        group = "at_risk" if risk else "free"
     else:
         parts.append(base)
         group = "not_possible"
-    return " · ".join(parts), group
+    return " · ".join(parts), group, risk
 
 
 def _person_line(o: popt.Option) -> tuple[str, str]:
@@ -175,21 +194,79 @@ def _groups(
     ):
         g = Group(kind, title)
         for o in items:
+            risk = 0
             if kind == "robot":
-                line, bucket = _robot_line(o, hub_name, opts.charge_on)
+                line, bucket, risk = _robot_line(o, hub_name, opts.charge_on)
             elif kind == "vehicle":
                 line, bucket = _vehicle_line(o)
             else:
                 line, bucket = _person_line(o)
-            c = Choice(o.code, line, o.note if bucket == "not_possible" else "", o.code == current[kind])
+            if bucket == "not_possible" and o.code != current[kind] and o.note.startswith(ELSEWHERE):
+                g.elsewhere += 1  # another hub's robot or vehicle: never a choice here, not listed
+                continue
+            c = Choice(
+                o.code, line, o.note if bucket == "not_possible" else "", o.code == current[kind], risk=risk
+            )
             c.picked = o.code == picks.get(kind)
             getattr(g, bucket).append(c)
+        g.at_risk.sort(
+            key=lambda c: (c.risk, c.code)
+        )  # fewer and less severe risks first: at the hub beats away
         out.append(g)
     return out
 
 
 def _best(g: Group) -> str:
     return g.free[0].code if g.free else (g.at_risk[0].code if g.at_risk else "")
+
+
+def _rank(g: Group, code: str) -> int | None:
+    """0 for a free option, its risk score when at risk, None when not possible (or none chosen)."""
+    if not code:
+        return None
+    for c in g.free:
+        if c.code == code:
+            return 0
+    for c in g.at_risk:
+        if c.code == code:
+            return c.risk
+    return None
+
+
+UNFIXABLE = {"TRAVEL_UNKNOWN", "ZONE_RETIRED"}
+
+
+def _blocker(visit: Visit, live: p.Plan, hub: str) -> dict[str, str] | None:
+    """D-B8: ONE message for a blocker that no robot, crew, vehicle or time can fix: what, why, who can fix
+    it."""
+    codes = {b.get("code") for b in live.blockers if b.get("level") == "blocked"}
+    zone = zones.zone_of(visit)
+    place = zone.name if zone is not None else "this home's zone"
+    if "ZONE_RETIRED" in codes:
+        return {
+            "code": "ZONE_RETIRED",
+            "what": f"{place} is a retired zone, so no new visit can use it",
+            "why": "A retired zone keeps its history but is never offered again, whatever robot, crew or "
+            "time is chosen",
+            "who": "The ops lead can move this home to an active zone on the customer page",
+            "url": f"/planning/sites/{visit.site.code}/",
+            "link": "Open the customer page",
+            "permission": "planning.manage_sites",
+        }
+    if "TRAVEL_UNKNOWN" in codes:
+        origin = origin_zone(visit)
+        start = origin.name if origin is not None else hub
+        return {
+            "code": "TRAVEL_UNKNOWN",
+            "what": f"Travel time unknown between {start} and {place}",
+            "why": "Without an approved travel time nothing is estimated, so no robot, crew, vehicle or "
+            "time can make this visit plannable",
+            "who": "An admin or the ops lead can set it in Settings › Travel times",
+            "url": "/settings/travel-times/",
+            "link": "Set the travel time",
+            "permission": "planning.set_travel_time",
+        }
+    return None
 
 
 # ------------------------------------------------------------------ the checks
@@ -209,6 +286,22 @@ def _robot_reasons(blockers: list[dict[str, str]]) -> list[str]:
 
 def _sentences(blockers: list[dict[str, str]], codes: set[str]) -> list[str]:
     return [plain_blocker(b)["sentence"] for b in blockers if b.get("code") in codes]
+
+
+def _route_text(rt: travel.Route) -> str:
+    """ "25 min out, 25 min back · version 2 (demo value)": the pair's own version number, not a row id
+    (D-B3)."""
+    from planning.models import TravelTime  # noqa: PLC0415
+
+    ids = [x for x in (rt.out.version_id, rt.back.version_id) if x is not None]
+    versions: dict[int | None, int] = dict(TravelTime.objects.filter(pk__in=ids).values_list("pk", "version"))
+    v_out, v_back = versions.get(rt.out.version_id), versions.get(rt.back.version_id)
+    sources = {travel.SOURCE_WORDS.get(x.source, x.source) for x in (rt.out, rt.back)}
+    source = " and ".join(sorted(sources))
+    legs = f"{rt.out.minutes} min out, {rt.back.minutes} min back"
+    if v_out == v_back:
+        return f"{legs} · version {v_out} ({source}), from the travel matrix."
+    return f"{legs} · versions {v_out} out and {v_back} back ({source}), from the travel matrix."
 
 
 def origin_zone(visit: Visit) -> Any:
@@ -295,7 +388,8 @@ def checks_for(
     veh = _sentences(b, {"VEHICLE_MISSING", "VEHICLE_CAPACITY_UNKNOWN", "VEHICLE_RESTRAINT_UNKNOWN"})
     if vehicle is not None and vehicle.hub_id != visit.hub_id:
         veh.append(
-            f"{vehicle.code} belongs to another hub, so the plan would be refused. Pick a vehicle at {hub}."
+            f"Vehicle {vehicle.code} belongs to another hub, so the plan would be refused. "
+            f"Pick a vehicle at {hub}."
         )
     out.append(
         Check("vehicle", "Vehicle", FAIL, " ".join(veh))
@@ -330,8 +424,8 @@ def checks_for(
         else ""
     )
     origin = origin_zone(visit)
-    tv = travel.minutes(origin, zone, start) if zone is not None and origin is not None else None
-    if not recorded:
+    rt = travel.route(visit.hub_id, zone, start, start) if zone is not None and origin is not None else None
+    if not recorded and zone is None:
         out.append(
             Check(
                 "travel",
@@ -340,16 +434,8 @@ def checks_for(
                 "Travel time unknown, and none is recorded on the visit. Enter it.",
             )
         )
-    elif tv is not None and tv.minutes is not None:
-        source = "demo value" if tv.source == "demo" else "company value"
-        out.append(
-            Check(
-                "travel",
-                "Travel time",
-                PASS,
-                f"{tv.minutes} min from the travel matrix (version {tv.version_id}, {source}).",
-            )
-        )
+    elif rt is not None and rt.known:
+        out.append(Check("travel", "Travel time", PASS, _route_text(rt)))
     elif zone is None:
         # a home without a zone keeps the minutes recorded on the visit, as before 03B (03B-1 rule); the EM
         # (03B closure) wants it said, in the at-risk style
@@ -486,7 +572,12 @@ def build_review(
     live = live if live is not None else p.live_feasibility(visit)
     zone = zones.zone_of(visit)
     pause = pauses.active_for(visit.hub_id, zone.id if zone is not None else None)
-    why = [dict(pb) for pb in plain_blockers(live.blockers)] + _planning_risks(visit)
+    why = [
+        {**pb, "sentence": strip_status_prefix(pb["sentence"])} for pb in plain_blockers(live.blockers)
+    ] + _planning_risks(visit)
+    blocker = _blocker(visit, live, hub)
+    if blocker is not None:  # the one message replaces its own line in the list (D-B8)
+        why = [x for x in why if x.get("code") != blocker["code"]]
     if pause is not None:
         why.insert(
             0, {"level": "paused", "sentence": pause_banner(hub, pause), "action": "", "code": "PAUSE"}
@@ -510,15 +601,13 @@ def build_review(
         elif asked:
             picks[g.kind] = current[g.kind]
         else:
-            # no choice made yet: keep what is free; replace what is at risk with a free option when there is
-            # one, and what is not possible with the best option (v2 03B-3: the best option is preselected, so
-            # resolving an attention item is card -> Review options -> Save plan)
-            free = current[g.kind] and any(c.code == current[g.kind] for c in g.free)
-            risky = current[g.kind] and any(c.code == current[g.kind] for c in g.at_risk)
-            if free or (risky and not g.free):
-                picks[g.kind] = current[g.kind]
-            else:
-                picks[g.kind] = _best(g) or current[g.kind]
+            # no choice made yet (D-B6): keep the current option unless a strictly better one exists (free
+            # beats at risk; fewer and less severe risks win), so resolving an attention item is card ->
+            # Review options -> Save plan
+            best = _best(g)
+            mine, theirs = _rank(g, current[g.kind]), _rank(g, best)
+            keep = mine is not None and (theirs is None or mine <= theirs)
+            picks[g.kind] = current[g.kind] if keep or not best or blocker is not None else best
     if picks.get("second") and picks.get("second") == picks.get("lead") and not asked:
         alt = next((c.code for c in groups[2].free if c.code != picks["lead"]), "")
         picks["second"] = alt or picks["second"]
@@ -545,6 +634,7 @@ def build_review(
     checks: list[Check] = []
     v_text, v_key = "", ""
     v_reasons: list[str] = []
+    auto = bool(changes) and not asked
     if changes:
         robot, lead, second, vehicle = (
             by_code[k].get(picks[k]) for k in ("robot", "lead", "second", "vehicle")
@@ -581,6 +671,11 @@ def build_review(
         v_text, v_reasons = verdict(v_key, plan.blockers)
         if v_key == "blocked":
             v_reasons = [c.text for c in checks if c.result == FAIL]
+        if auto and v_key == "blocked":
+            # the preselection would not help: fall back to the current plan, with nothing proposed
+            picks = dict(current)
+            groups = _groups(opts, picks, current, hub)
+            changes, checks, v_key, v_text, v_reasons, auto = [], [], "", "", [], False
     return Review(
         why=why,
         groups=groups,
@@ -595,6 +690,9 @@ def build_review(
         hub_name=hub,
         new_start=new_start_raw if new_start else "",
         new_end=new_end_raw if new_end else "",
+        blocker=blocker,
+        auto=auto,
+        keep_url="?review=1&" + "&".join(f"{k}={v}" for k, v in current.items()),
     )
 
 
@@ -604,7 +702,7 @@ def _label(kind: str, code: str, by_code: dict[str, dict[str, Any]]) -> str:
     obj = by_code[kind].get(code)
     if kind in ("lead", "second") and obj is not None:
         return f"{person_name(obj)} ({code})"
-    return f"Robot {code}" if kind == "robot" else code
+    return f"Robot {code}" if kind == "robot" else f"Vehicle {code}"
 
 
 def _span(s: datetime, e: datetime) -> str:
@@ -636,8 +734,8 @@ def what_changed(visit: Visit, revision_no: int) -> dict[str, Any] | None:
         ("Crew", crew_names(prev.lead, prev.second) or "None", crew_names(cur.lead, cur.second) or "None"),
         (
             "Vehicle",
-            prev.vehicle.code if prev.vehicle else "None",
-            cur.vehicle.code if cur.vehicle else "None",
+            f"Vehicle {prev.vehicle.code}" if prev.vehicle else "None",
+            f"Vehicle {cur.vehicle.code}" if cur.vehicle else "None",
         ),
         ("On site", _span(prev.on_site_start, prev.on_site_end), _span(cur.on_site_start, cur.on_site_end)),
     ):

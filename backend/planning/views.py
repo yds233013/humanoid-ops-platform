@@ -19,7 +19,7 @@ from accounts.roles import PERMISSIONS
 from fleet.models import Robot
 from hub import charging
 from planning import services as p
-from planning.board import home_name, legacy_travel_text
+from planning.board import home_name, legacy_travel_text, person_name, travel_text
 from planning.forms import (
     AdultsForm,
     AssessmentForm,
@@ -87,6 +87,7 @@ def board(request: HttpRequest, at: datetime) -> HttpResponse:
             "b": data,
             "scope": scope,
             "attention": data.attention if show_all else data.attention[: b.ATTENTION_LIMIT],
+            "cards": data.cards if show_all else data.cards[: b.ATTENTION_LIMIT],
             "show_all": show_all,
             "day_label": _day_label(day_key, day),
             "day_iso": day.isoformat(),
@@ -191,7 +192,11 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
 
             # v2 03B-2 (spec S2): advisory only; saving runs the guarded plan command again
             review = build_review(v, request.GET, live=card["live"], opts=options)
-        if review is not None and (review.nothing_fits or request.GET.get("next") == "1"):
+        if (
+            review is not None
+            and review.blocker is None
+            and (review.nothing_fits or request.GET.get("next") == "1")
+        ):
             # v2 03B-3 (spec S2 "No option works", S3): the next free times at the visit's hub. Read only;
             # choosing one posts to the guarded plan command.
             from planning.next_free import next_free  # noqa: PLC0415
@@ -217,9 +222,18 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "revisions": v.revisions.select_related(
                 "robot", "lead__user", "second__user", "vehicle"
             ).order_by("-revision_no"),
-            "reservations": Reservation.objects.filter(revision__visit=v)
-            .select_related("resource", "revision")
-            .order_by("released_at", "starts_at"),
+            "reservations": reservation_rows(v),
+            "travel_line": travel_text(card["rev"].travel_out_min, card["rev"].travel_back_min),
+            "leave_at": (
+                card["rev"].on_site_start - timedelta(minutes=card["rev"].travel_out_min)
+                if card["rev"].travel_out_min is not None
+                else None
+            ),
+            "can_fix_blocker": bool(
+                review is not None
+                and review.blocker is not None
+                and has_permission(request.user, review.blocker["permission"])
+            ),
             "options": options,
             # v2 02B: the assigned robot's charge forecast (planning information, never a departure decision)
             "charge": charging.visit_forecasts([v.pk]).get(v.pk) if charging.forecast_configured() else None,
@@ -255,14 +269,61 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             ),
             "nf_action": "plan",
             "nf_intro": (
-                "No free robot, crew and vehicle for this time. These times work at "
-                f"{v.hub.name}; each was checked with the same plan check that runs when you save."
+                "No free robot, crew and vehicle for this time. Each time below was checked with the same "
+                "plan check that runs when you save."
                 if review is not None and review.nothing_fits
                 else ""
             ),
             "q_hub": f"hub={request.GET['hub']}" if request.GET.get("hub") else "",
         },
     )
+
+
+# Reservation purposes in the board's words (D-B7)
+PURPOSE_WORDS = {
+    "inspection": "Pre-visit inspection",
+    "loading": "Loading",
+    "travel_out": "Travel to the home",
+    "on_site": "On site",
+    "travel_back": "Travel back to the hub",
+    "unloading": "Unloading",
+    "charging": "Charging and turnaround",
+    "trip": "Vehicle trip",
+    "field_shift": "Crew shift",
+}
+
+
+def reservation_rows(v: Visit) -> list[dict[str, Any]]:
+    """Names first, codes quieter (D-B7): "Grace Chen (P-212)", "Robot NB-201", "Vehicle VAN-5". One read."""
+    out = []
+    qs = (
+        Reservation.objects.filter(revision__visit=v)
+        .select_related("resource__person__user", "resource__robot", "resource__vehicle", "revision")
+        .order_by("released_at", "starts_at")
+    )
+    for r in qs:
+        res = r.resource
+        if res.kind == "person" and res.person is not None:
+            name, code = person_name(res.person), res.person.code
+        elif res.kind == "robot" and res.robot is not None:
+            name, code = f"Robot {res.robot.code}", ""
+        elif res.vehicle is not None:
+            name, code = f"Vehicle {res.vehicle.code}", ""
+        else:
+            name, code = str(res), ""
+        out.append(
+            {
+                "name": name,
+                "code": code,
+                "purpose": PURPOSE_WORDS.get(r.purpose, r.get_purpose_display()),
+                "starts_at": r.starts_at,
+                "ends_at": r.ends_at,
+                "revision": r.revision.revision_no,
+                "released_at": r.released_at,
+                "released_reason": r.released_reason,
+            }
+        )
+    return out
 
 
 def cannot_change_text(hub: Any) -> str:

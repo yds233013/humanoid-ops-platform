@@ -135,7 +135,16 @@ def test_attention_on_the_page_puts_blocked_before_paused(w, monkeypatch):
     )
     monkeypatch.setattr(op_pauses, "board_summary", lambda ids: {hub.pk: [pause]})
     html = _html(_client(w.ops).get(BOARD))
-    assert _attention(html) == [v_blocked_early, v_blocked_late, v_paused_early, v_paused_late]
+    # blocked cards first; the two paused visits share one cause at one hub, so they are ONE card (D-B1)
+    assert _attention(html) == [v_blocked_early, v_blocked_late]
+    group = re.search(
+        r'<article class="bcard group" data-status="paused" data-group="PAUSE".*?</article>', html, re.S
+    )
+    assert group and re.findall(r'data-group-visit="([^"]+)"', group.group(0)) == [
+        v_paused_early,
+        v_paused_late,
+    ]
+    assert html.index('data-visit="' + v_blocked_late) < html.index('data-group="PAUSE"')
     # the pause banner: what is paused since when, why, and what is still possible
     banner = re.search(r'<p class="pause"[^>]*>(.*?)</p>', html, re.S)
     assert banner and "Departures from" in banner.group(1) and "Storm warning" in banner.group(1)
@@ -161,7 +170,7 @@ def test_status_words_and_shapes(w):
     # status is never colour alone, and nothing on the board reads as permission to leave
     for words in ("Approved to leave", "Cleared to depart", "Ready to go", "Ready to leave"):
         assert words not in html
-    assert "Planning is not departure." in html
+    assert "Planning is not departure:" in html
 
 
 def test_rows_lead_with_names_and_quiet_codes(w):
@@ -319,6 +328,7 @@ def test_save_goes_through_the_guarded_plan_command_and_says_not_cleared(w, monk
     assert r.redirect_chain[-1][0].endswith(f"/planning/visits/{code}/?changed=3#changed")
     assert "Plan saved. Planning feasible: not cleared to depart." in html
     changed = html.split('id="changed"', 1)[1].split("</section>", 1)[0]
+    changed = re.sub(r"<[^>]+>", "", changed)  # codes are wrapped so they never split across lines
     assert "What changed" in changed and "Robot R-01" in changed and f"Robot {form['robot']}" in changed
     assert "Planning feasible: not cleared to depart." in changed
 
@@ -421,3 +431,181 @@ def test_times_carry_the_iana_zone_label(w, settings):
     summer = _html(_client(w.ops).get("/planning/board/?day=2026-07-08"))
     assert "No visits planned for Wed 8 Jul" in summer
     assert pb.day_bounds(DAY)[0].utcoffset() == timedelta(hours=-8)
+
+
+# ================================================================== design review 2026-11-26 (D-B1 .. D-B10)
+def _visible(html: str) -> str:
+    """The text a sighted person reads: tags and screen-reader-only spans removed."""
+    html = re.sub(r'<span class="sr">.*?</span>', "", html, flags=re.S)
+    html = re.sub(r"<(style|script|head)\b.*?</\1>", "", html, flags=re.S)
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+
+
+def test_db1_same_cause_same_hub_is_one_card_with_the_count(w):
+    from tests.fleet_world import set_setting
+
+    set_setting("ops_soc_fresh_min", "60")  # the forecast is on; no battery level is recorded: unknown
+    codes = []
+    for h0, robot, vehicle in ((8, "R-01", "VAN-1"), (12, "R-02", "VAN-2"), (16, "R-03", "VAN-1")):
+        codes.append(_visit(w, h0))
+        plan(w, codes[-1], robot=robot, vehicle=vehicle)
+    lone = _visit(w, 18)  # requested, nothing chosen: Blocked, its own card
+    html = _html(_client(w.ops).get(BOARD))
+    cards = re.findall(
+        r'<article class="bcard[^"]*" data-status="([a-z_]+)" data-(?:visit|group)="([^"]+)"', html
+    )
+    assert cards == [("blocked", lone), ("at_risk", "CHARGE_UNKNOWN")], cards  # severity order kept
+    group = re.search(r'<article class="bcard group".*?</article>', html, re.S).group(0)
+    assert 'data-count="3"' in group and "3 visits at" in group and "charge forecast unknown" in group
+    assert re.findall(r'data-group-visit="([^"]+)"', group) == codes  # departure order inside the card
+    # ONE action: the place to fix it, for whoever may do it
+    actions = re.findall(r'data-action="([a-z-]+)"', group)
+    assert (
+        actions == ["fix"] and 'href="/hub/charging/?hub=HUB-1"' in group and "Record battery levels" in group
+    )
+    assert "Need attention</span>" in html and 'data-count="attention"><span class="n">4</span>' in html
+
+
+def test_db2_a_place_name_is_never_doubled():
+    from types import SimpleNamespace as NS
+
+    assert pb.home_name(NS(zone="Piedmont")) == "Piedmont home"
+    assert (
+        pb.home_name(NS(zone="Fictional practice visit (Emeryville)"))
+        == "Fictional practice visit (Emeryville)"
+    )
+    assert pb.home_name(NS(zone="Lakeside house")) == "Lakeside house"
+    assert pb.home_name(NS(zone="")) == "Home"
+    assert "home home" not in pb.home_name(NS(zone="Hill home")).lower()
+
+
+def test_db3_travel_line_shows_the_pair_version_number():
+    from planning.models import TravelTime
+    from tests.test_v2_03b_zones_travel import _set, _zoned
+
+    w = _zoned("bv_")
+    _set(w, w.za, w.zb, 20)  # version 2 of hub side -> hills
+    code = _visit(w, 10)
+    plan(w, code)
+    html = _html(_client(w.ops).get(f"/planning/visits/{code}/?robot=R-02&lead=P-1&second=P-2&vehicle=VAN-1"))
+    line = re.search(r'<li class="ck-([a-z]+)" data-check="travel".*?</li>', html, re.S)
+    assert line and line.group(1) == "pass", line
+    text = _visible(line.group(0))
+    assert "20 min out, 35 min back" in text and "versions 2 out and 1 back (demo value)" in text
+    ids = set(TravelTime.objects.values_list("pk", flat=True))
+    assert not any(f"version {i} " in text for i in ids if i > 2)  # never a row id
+
+
+def test_db4_no_leave_time_is_computed_from_an_unknown_travel_time(w):
+    code = _visit(w, 10)
+    unknown = str(
+        ps.request_visit(
+            w.ops, site_code="S-1", on_site_start=at(DAY, 16), on_site_end=at(DAY, 17), travel_out_min=None,
+            travel_back_min=35, tasks=["T-04"], required_scopes=["presence"], hub_code="HUB-1",
+        )["entity_id"]
+    )  # fmt: skip
+    html = _html(_client(w.ops).get(BOARD))
+    card = re.search(
+        rf'<article class="bcard" data-status="[a-z_]+" data-visit="{unknown}">.*?</article>', html, re.S
+    )
+    assert card and "Leave time unknown (travel time unknown)" in card.group(0)
+    assert "leaves the hub" not in card.group(0) and "16:00</time>" not in card.group(0).split("where")[1]
+    known = re.search(
+        rf'<article class="bcard" data-status="[a-z_]+" data-visit="{code}">.*?</article>', html, re.S
+    )
+    assert known and "leaves the hub" in known.group(0) and ">09:30</time>" in known.group(0)
+    page = _visible(_html(_client(w.ops).get(f"/planning/visits/{unknown}/")))
+    assert "Leave time unknown (travel time unknown)" in page and "leaves the hub" not in page
+    assert "unknown min" not in page
+
+
+def test_db9_travel_words_never_say_unknown_min():
+    assert pb.travel_text(None, 35) == "Travel time unknown (out), 35 min back"
+    assert pb.travel_text(30, 30) == "30 min out, 30 min back"
+    assert pb.travel_text(None, None) == "Travel time unknown"
+    assert "unknown min" not in pb.legacy_travel_text(None, 35)
+
+
+def test_db7_reservations_lead_with_names_and_board_words(w):
+    code = _visit(w, 10)
+    plan(w, code)
+    html = _html(_client(w.ops).get(f"/planning/visits/{code}/"))
+    table = html.split("<h2>Reservations</h2>", 1)[1].split("</table>", 1)[0]
+    assert '<b>Jordan Lee</b> <span class="code">(P-1)</span>' in table
+    assert "<b>Robot R-01</b>" in table and "<b>Vehicle VAN-1</b>" in table
+    assert "Person P-1" not in table and "Vehicle trip" in table and "Travel to the home" in table
+    assert "Crew shift" in table
+
+
+def test_db8_a_blocker_no_option_can_fix_is_one_message():
+    from tests.test_v2_03b_zones_travel import _zoned
+
+    w = _zoned("bk_", pair=False)  # the home is in a zone with no approved travel time from the hub
+    code = _visit(w, 10)
+    html = _html(_client(w.ops).get(f"/planning/visits/{code}/?review=1"))
+    assert html.count("data-blocker=") == 1 and 'data-blocker="TRAVEL_UNKNOWN"' in html
+    panel = html.split('id="review"', 1)[1].split('id="by-hand"', 1)[0]
+    review = _visible(panel)
+    assert review.count("Travel time unknown") == 1  # one clear message, not repeated in the list
+    assert "Settings › Travel times" in review and 'data-action="fix-blocker"' in html
+    assert "<summary>Options (none can fix this)</summary>" in html and 'data-options-folded="1"' in html
+    assert "data-next-free=" not in panel and "These times work" not in panel and ".." not in review
+    assert 'data-save-form="1"' not in html
+
+
+def test_db5_db6_away_robot_best_option_preselected_and_saved_in_one_post(app_role_conn, monkeypatch):
+    from tests.execution_world import to_site
+    from tests.test_v2_03a_planning import NEXT
+    from tests.test_v2_03a_planning import _visit as visit_at
+    from tests.test_v2_03a_transfers import _xworld
+
+    w = _xworld("bo_")
+    with app_role_conn.cursor() as cur:
+        to_site(cur, w)  # R-01 is away on a run of this hub
+    code = visit_at(w)
+    assert plan(w, code, robot="R-01", lead="P-1", second="P-2", vehicle="VAN-2")["feasibility"] == "feasible"
+    c = _client(w.ops)
+    html = _html(c.get(f"/planning/visits/{code}/?review=1"))
+    why = _visible(html.split("Why this visit needs attention", 1)[1].split("</ul>", 1)[0])
+    assert "away" in why and not re.search(
+        r"(At risk|Blocked|Paused)\s*:", why
+    )  # D-B5: the chip says it once
+    # D-B6: the robot at the hub beats the away one; it is preselected and already checked
+    assert 'data-auto="1"' in html and "Best option, ready to save" in html
+    form = _save_form(html)
+    assert form["robot"] in ("R-02", "R-03") and 'data-keep="1"' in html
+    checks = dict(re.findall(r'data-check="([a-z]+)" data-result="([a-z]+)"', html))
+    assert checks["location"] == "pass"
+    calls: list[str] = []
+    real = ps.plan_visit
+
+    def spy(actor: Any, **kw: Any) -> dict[str, Any]:
+        calls.append(kw["robot_code"])
+        return real(actor, **kw)
+
+    monkeypatch.setattr(ps, "plan_visit", spy)
+    r = c.post(form.pop("_action"), form)  # ONE press of Save plan
+    assert r.status_code == 302 and calls == [form["robot"]]
+    rev = Visit.objects.get(code=code).current_revision
+    assert rev.robot.code == form["robot"] and rev.feasibility == "feasible"
+    assert NEXT  # the visit is tomorrow, outside the run's window
+
+
+def test_db10_narrow_order_puts_summary_and_attention_before_the_filters(w):
+    _visit(w, 10)
+    html = _html(_client(w.ops).get(BOARD))
+    main = html.split("<main>", 1)[1]
+    pos = {k: main.index(v) for k, v in {
+        "title": "<h1>Dispatch</h1>", "summary": 'data-summary="1"', "attention": 'id="attention"',
+        "filters": 'id="filters"', "hubs": 'id="hubs"',
+    }.items()}  # fmt: skip
+    assert pos["title"] < pos["summary"] < pos["attention"] < pos["filters"] < pos["hubs"], pos
+    # the planning note is one line with "More"; the day and hub are one compact control at the top
+    note = re.search(r'<details class="planline".*?</summary>', html, re.S).group(0)
+    assert "Planning is not departure:" in note and "More" in note
+    assert 'href="#filters" data-jump="filters"' in html
+    css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert (
+        ".planline summary{" in css
+        and "min-height:44px" in css.split(".planline summary{", 1)[1].split("}", 1)[0]
+    )
