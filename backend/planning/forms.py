@@ -213,7 +213,9 @@ class BookForm(forms.Form):
         self.fields["site"].choices = [("", "Choose a home")] + [  # type: ignore[attr-defined]
             (s.code, home_text(s)) for s in Site.objects.order_by("code")
         ]
-        add_owner_hub_field(self, "The hub the visit is dispatched from: its robot and van come from there.")
+        add_owner_hub_field(
+            self, "The hub the visit is dispatched from: its robot and vehicle come from there."
+        )
 
     def clean(self) -> dict[str, Any]:
         data: dict[str, Any] = super().clean() or {}

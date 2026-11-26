@@ -221,3 +221,192 @@ def test_a_forged_cross_hub_robot_or_vehicle_is_still_refused_by_the_plan_comman
     assert r.status_code == 200 and len(calls) == 1  # it reached the ONE guarded plan command
     assert re.search(rf"{code}[^<]*another hub", r.content.decode()), "the refusal names the hub rule"
     assert Visit.objects.get(pk=v.pk).current_revision_id == before  # nothing changed
+
+
+# ================================================================== P2: Issues scoped BEFORE the page limit
+@pytest.fixture
+def rs():
+    """The 03A read-scope world: HUB-1 (R-01 departed, an incident on its run) and HB (RB-1 with an incident,
+    P-9), plus a second HUB-1 incident on R-02 so HUB-1 issues sort before and between HB's."""
+    from execution.models import Incident
+    from fleet import services as fs
+    from tests.execution_world import raw_incident
+    from tests.test_v2_03a_transfers import _app_conn, _xworld
+
+    w = _xworld("ci_")  # as tests/test_v2_03a_read_scope.py's world
+    fs.register_robot(w.ops, code="RB-1", serial="ci_SN-B1", hub_code="HB")
+    ps.register_person(w.ops, username=w.field_b.username, code="P-9", hub_code="HB")
+    with _app_conn() as conn:
+        raw_incident(conn, w)  # on R-01's run (visit of HUB-1)
+        raw_incident(conn, w, robot_id=fs._robot("RB-1").pk)  # RB-1, no run
+        raw_incident(conn, w, robot_id=fs._robot("R-02").pk)
+    assert Incident.objects.count() == 3
+    return w
+
+
+def _api_pages(user, monkeypatch, size: int) -> list[list[tuple[str, str]]]:
+    import json
+
+    from operations import views as ov
+
+    monkeypatch.setattr(ov, "PAGE_SIZE", size)
+    c = _client(user)
+    pages, cursor = [], None
+    for _ in range(50):
+        body = json.loads(c.get("/api/ops/exceptions", {"cursor": cursor} if cursor else {}).content)
+        pages.append([(x["code"], x["entity_ref"]) for x in body["items"]])
+        cursor = body["next_cursor"]
+        if not cursor:
+            return pages
+    raise AssertionError("pages never ended")
+
+
+def test_issue_pages_are_full_and_exact_for_a_hub_scoped_viewer(rs, monkeypatch):
+    from operations import scope
+    from operations.exceptions import open_exceptions
+    from operations.snapshot import read_snapshot
+
+    with read_snapshot() as at:
+        everything = open_exceptions(at).items
+    hb = {rs.hub_b.pk}
+    expect = [(x.code, x.entity_ref) for x in scope.keep_issues(everything, hb)]
+    assert len(expect) >= 3 and len(expect) < len(everything)
+    # before the fix, HUB-1 rows were filtered away AFTER the limit of each page: some pages came out short
+    before = [scope.keep_issues(everything[i : i + 2], hb) for i in range(0, len(everything), 2)]
+    assert any(len(p) < 2 for p in before[:-1]), [len(p) for p in before]
+    pages = _api_pages(rs.field_b, monkeypatch, 2)
+    assert all(len(p) == 2 for p in pages[:-1]) and 1 <= len(pages[-1]) <= 2, pages
+    assert [x for p in pages for x in p] == expect  # nothing lost, nothing repeated, nothing of HUB-1
+    # the regional viewer still pages through everything, unchanged
+    assert [x for p in _api_pages(rs.ops, monkeypatch, 2) for x in p] == [
+        (x.code, x.entity_ref) for x in everything
+    ]
+
+
+def test_scoped_coverage_counts_the_viewers_hubs(rs):
+    from operations.exceptions import open_exceptions
+    from operations.snapshot import read_snapshot
+    from tests.test_operations_exceptions import configure
+
+    configure(ops_readiness_lookahead_min=60 * 24 * 60)
+    with read_snapshot() as at:
+        regional = open_exceptions(at).readiness_coverage
+        a = open_exceptions(at, hub_ids={rs.hub_a.pk}).readiness_coverage
+        b = open_exceptions(at, hub_ids={rs.hub_b.pk}).readiness_coverage
+    assert a["qualifying"] + b["qualifying"] == regional["qualifying"]
+    assert b["qualifying"] == 0 and b["complete"] is True
+
+
+def test_scoped_issue_statements_are_constant(rs, monkeypatch):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    import platform_core.interaction as ia
+    from fleet import services as fs
+    from tests.execution_world import raw_incident
+    from tests.test_v2_03a_transfers import _app_conn
+
+    monkeypatch.setattr(ia.secrets, "randbelow", lambda n: 1)  # no opportunistic token clean-up in the counts
+    c = _client(rs.field_b)
+
+    def count(path: str) -> int:
+        c.get(path)  # warm
+        with CaptureQueriesContext(connection) as q:
+            assert c.get(path).status_code == 200
+        return len(q)
+
+    small = {p: count(p) for p in ("/ops/exceptions/", "/api/ops/exceptions")}
+    with _app_conn() as conn:  # more rows at the other hub and at this one
+        raw_incident(conn, rs, robot_id=fs._robot("R-03").pk)
+        raw_incident(conn, rs, robot_id=fs._robot("RB-1").pk)
+    big = {p: count(p) for p in ("/ops/exceptions/", "/api/ops/exceptions")}
+    print(f"scoped Issues statements: {small} -> {big}")
+    assert small == big
+
+
+# ================================================================== P2: compact phone header
+def test_the_phone_header_folds_the_nav_but_never_the_safety_badge_or_main_messages():
+    from pathlib import Path
+
+    from fleet.models import DeploymentSetting
+    from tests.conftest import make_user
+
+    DeploymentSetting.objects.update_or_create(key="demo_mode", hub=None, defaults={"value": "true"})
+    ops = make_user("hdr_ops", "ops_lead")
+    html = _client(ops).get("/planning/board/").content.decode()
+    header = html[html.index('<header class="site-header">') : html.index("</header>")]
+    # a real button controls the folded list; without JavaScript nothing folds (the .js class gates it)
+    assert re.search(
+        r'<button type="button" class="navbtn" aria-expanded="false" aria-controls="main-nav"', header
+    )
+    assert 'id="main-nav"' in header and "classList.add('js')" in html
+    # the demo badge stays in the header row itself, outside the folded nav and the user menu
+    badge = header.index("data-demo-badge")
+    assert not (header.index('<nav class="primary-nav"') < badge < header.index("</nav>"))
+    assert badge < header.index('<details class="usermenu"')
+    css = (Path(__file__).resolve().parents[1] / "templates" / "base.html").read_text()
+    rules = re.sub(r"/\*.*?\*/", "", css, flags=re.S)  # rules only, not comments
+    phone = rules.split(".navbtn{display:none}")[1].split("{% block extra_css %}")[0]
+    folded = re.findall(r"([^{}]*)\{display:none\}", phone)
+    hidden = " ".join(folded)
+    for safe in (".demo-badge", ".banner", ".msg", ".toast", ".pb", "main", ".notice"):
+        assert safe not in hidden, (safe, folded)
+    assert "min-height:44px" in phone and ".subnav a{min-height:44px" in phone
+
+
+# ================================================================== P3: varied next free slots
+def test_next_free_prefers_slots_that_differ():
+    """A long opening day with one free crew: three consecutive half-hours would be near-identical; the
+    varied rule shows slots at least two hours apart, still earliest first and in rank order."""
+    from fleet.models import DeploymentSetting
+
+    w = _world("cv_")
+    DeploymentSetting.objects.filter(key="hub_operating_hours", hub=w.hub).update(value="08:00-18:00")
+    got = nf.next_free(w.target, now=at(DAY, 5))
+    assert len(got.slots) == 3 and not got.exhausted
+    s = got.slots
+    assert all(not nf.near_identical(a, b) for i, a in enumerate(s) for b in s[i + 1 :]), [x.label for x in s]
+    assert [x.key for x in s] == sorted(x.key for x in s)
+    # the first slot is still the earliest Available one (nothing better is skipped for variety)
+    first = nf.next_free(w.target, now=at(DAY, 5), limit=1).slots[0]
+    assert s[0].start == first.start and s[0].robot == first.robot
+    assert got.evaluations <= nf.BUDGET
+
+
+def test_variety_never_shows_fewer_slots():
+    """Only near-identical slots exist (a 2.5-hour day, one crew): they fill the list in rank order."""
+    from fleet.models import DeploymentSetting
+
+    w = _world("cw_")
+    DeploymentSetting.objects.filter(key="hub_operating_hours", hub=w.hub).update(value="08:00-10:30")
+    got = nf.next_free(w.target, now=at(DAY, 5))
+    assert len(got.slots) == 3
+    assert [x.key for x in got.slots] == sorted(x.key for x in got.slots)
+
+
+# ================================================================== P3: terminology ("Vehicle", never a leading "Van")
+def test_no_line_leads_with_van_on_the_dispatch_pages(monkeypatch):
+    from tests.test_v2_03b_design import _lines
+
+    w = _no_vehicle_fits("ct_")
+    monkeypatch.setattr(nf, "_now", lambda: at(DAY, 5))
+    c = _client(w.ops)
+    base = {"site": "S-1", "day": DAY.isoformat(), "start": "08:00", "end": "09:00", "tasks": "T-04",
+            "scopes": "presence"}  # fmt: skip
+    pages = {
+        "board": c.get(f"/planning/board/?day={DAY.isoformat()}"),
+        "week": c.get(f"/planning/?week={DAY.isoformat()}"),
+        "visit": c.get(f"/planning/visits/{w.a}/"),
+        "review": c.get(f"/planning/visits/{w.target.code}/?review=1"),
+        "book": c.post("/planning/book/", {**base, "find": "1"}),
+    }
+    leading = re.compile(r"^(?:VAN-?\w*|Vans?)\b")
+    for name, r in pages.items():
+        assert r.status_code == 200, name
+        html = r.content.decode()
+        bad = [x for x in _lines(html) if leading.match(x)]
+        assert not bad, (name, bad)
+        text = re.sub(r"<[^>]+>", " ", re.sub(r"<(style|script)\b.*?</\1>", "", html, flags=re.S))
+        assert not re.search(r"\b[Vv]ans?\b", text), name  # the word is "vehicle"
+    week = pages["week"].content.decode()
+    assert "Vehicle VAN-1" in week and "Robot R-01" in week

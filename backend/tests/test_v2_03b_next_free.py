@@ -94,7 +94,25 @@ def _brute_force(visit: Visit, now: datetime, hours: tuple[dtime, dtime], days: 
                         valid.append((1 if risky else 0, start, r.code, lead.code, second.code, v.code))
         if valid:
             best.append(min(valid))
-    return sorted(best)[:3]
+    return _varied(sorted(best))
+
+
+def _varied(ranked: list[tuple], limit: int = 3) -> list[tuple]:
+    """03B closure P3, independently: walk the ranked slots, skip one with the same crew on the same local day
+    starting under 120 minutes from a slot already taken, then fill in rank order; shown in rank order."""
+
+    def near(a: tuple, b: tuple) -> bool:
+        same_day = a[1].astimezone(ZoneInfo(TZ)).date() == b[1].astimezone(ZoneInfo(TZ)).date()
+        return a[3:5] == b[3:5] and same_day and abs((a[1] - b[1]).total_seconds()) < 120 * 60
+
+    chosen: list[tuple] = []
+    for x in ranked:
+        if len(chosen) < limit and not any(near(x, c) for c in chosen):
+            chosen.append(x)
+    for x in ranked:
+        if len(chosen) < limit and x not in chosen:
+            chosen.append(x)
+    return sorted(chosen)
 
 
 def _key(s: nf.Slot) -> tuple:
@@ -109,8 +127,9 @@ def test_next_free_equals_the_brute_force_oracle():
     expect = _brute_force(w.target, now, (dtime(8), dtime(11)), 2)
     assert [_key(s) for s in got.slots] == expect, (got.slots, expect)
     # DAY has no free crew pair inside the hours (visit A keeps P-1 and P-2 until after 11:00): the first slots
-    # are the next day, from opening time, with the codes in order
-    assert [s.start for s in got.slots] == [at(NEXT, 8), at(NEXT, 8, 30), at(NEXT, 9)]
+    # are the next day, from opening time, with the codes in order; 03B closure P3: the same crew, so 10:00
+    # (two hours later) is preferred to 09:00, and 08:30 fills the third place
+    assert [s.start for s in got.slots] == [at(NEXT, 8), at(NEXT, 8, 30), at(NEXT, 10)]
     s0 = got.slots[0]
     assert (s0.robot, s0.lead.code, s0.second.code, s0.vehicle, s0.status) == (
         "R-01", "P-1", "P-2", "VAN-1", nf.FREE

@@ -13,7 +13,7 @@
       <b>{{ c.visit.code }}</b> · {{ c.visit.site|home_label }}<br>
       {{ c.start|local_time }} to {{ c.end|local_time }}<br>
       <span class="badge {{ c.state }}">{{ c.label }}</span>
-      <div class="muted">{{ c.visit|visit_status }}{% if c.rev.robot %} · {{ c.rev.robot.code }}{% endif %}{% if c.rev.vehicle %} · {{ c.rev.vehicle.code }}{% endif %}</div>
+      <div class="muted">{{ c.visit|visit_status }}{% if c.rev.robot %} · Robot {{ c.rev.robot.code }}{% endif %}{% if c.rev.vehicle %} · Vehicle {{ c.rev.vehicle.code }}{% endif %}</div>
     </a>
   {% empty %}<div class="muted" style="padding:6px">-</div>{% endfor %}
   </div>

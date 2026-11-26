@@ -1648,7 +1648,7 @@ def hub_lines(s: Summary) -> list[str]:
         vans = Vehicle.objects.filter(hub=hub, robot_capacity__isnull=False).count()
         people = Person.objects.filter(hub=hub).count()
         out.append(
-            f"{hub.name} ({hub.code}): {robots} robots, {vans} crew van{'s' if vans != 1 else ''}, "
+            f"{hub.name} ({hub.code}): {robots} robots, {vans} crew vehicle{'s' if vans != 1 else ''}, "
             f"{people} people; zones {zones}."
         )
     if s.transferred:

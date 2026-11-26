@@ -25,7 +25,15 @@ The search (13.4 item 4):
   overlap. Facts about the home itself (assessment, consent, a regional pause) do not depend on the time;
   they are reported once in ``home_notes`` and the plan command still applies them.
 * Ranking: slots with no at-risk item ("Available for planning") first, then "At risk" slots (robot away on
-  a same-hub run, section 12); within each, earliest first, then robot code, crew codes, vehicle code.
+  a same-hub run, section 12); within each, earliest first, then robot code, crew codes, vehicle code. Each
+  candidate time gives at most one slot: its first combination, in that code order, that evaluate accepts.
+* Variety (03B closure, P3): two slots are NEAR-IDENTICAL when they have the same lead and second, on the
+  same local day at the hub, starting less than ``BLOCK_MIN`` (120) minutes apart. The slots shown are
+  chosen by walking the ranked slots and taking each one that is not near-identical to a slot already
+  taken; if fewer than ``limit`` are taken that way, the rest are filled from the remaining slots in rank
+  order (never fewer slots than before). They are then shown in rank order. To find varied slots, the search
+  goes on after ``limit`` Available slots for at most ``DIVERSITY_EXTRA`` (60) more evaluations, within the
+  budget; running out there is not reported as an exhausted search.
 * Outstanding checks (03B closure, P1): every shown slot carries ``SLOT_LABEL`` and, before anyone saves it,
   the checks that still run later for that slot, from the same facts the review panel uses: the robot's
   charge forecast at the slot's departure (``hub.charging``), the home's assessment and consent on that date
@@ -61,6 +69,8 @@ from platform_core.models import Hub
 
 STEP_MIN = 30
 BUDGET = 200
+BLOCK_MIN = 120  # P3: same crew, same day, starts closer than this = near-identical
+DIVERSITY_EXTRA = 60  # P3: evaluations spent looking for varied slots after ``limit`` Available ones
 TRIES_PER_TIME = 3
 FREE, AT_RISK = "available", "at_risk"
 STATUS_WORDS = {FREE: ("Available for planning", "●"), AT_RISK: ("At risk", "▲")}
@@ -197,6 +207,35 @@ class NextFreeResult:
             f"No free time in the next {self.days} day{'s' if self.days != 1 else ''} at {self.hub_name}. "
             "Widen the search or add crew time."
         )
+
+
+def near_identical(a: Slot, b: Slot) -> bool:
+    """P3: the same crew (lead and second), the same local day at the hub, starts < BLOCK_MIN apart."""
+    zone = ZoneInfo(a.tz)
+    return (
+        getattr(a.lead, "code", "") == getattr(b.lead, "code", "")
+        and getattr(a.second, "code", "") == getattr(b.second, "code", "")
+        and a.start.astimezone(zone).date() == b.start.astimezone(zone).date()
+        and abs((a.start - b.start).total_seconds()) < BLOCK_MIN * 60
+    )
+
+
+def pick_varied(slots: list[Slot], limit: int) -> list[Slot]:
+    """P3 (documented rule in the module docstring): ranked walk, skipping near-identical slots, then filled
+    in rank order; returned in rank order."""
+    ranked = sorted(slots, key=lambda s: s.key)
+    chosen: list[Slot] = []
+    for s in ranked:
+        if len(chosen) >= limit:
+            break
+        if not any(near_identical(s, c) for c in chosen):
+            chosen.append(s)
+    for s in ranked:
+        if len(chosen) >= limit:
+            break
+        if s not in chosen:
+            chosen.append(s)
+    return sorted(chosen, key=lambda s: s.key)
 
 
 def _now() -> datetime:
@@ -365,8 +404,14 @@ def next_free(
     seen_home: list[str] = []
     found: list[Slot] = []
     free_count = 0
+    extra_from: int | None = None  # P3: evaluations when ``limit`` Available slots were first found
+    varied_done = False
 
     def spend() -> bool:
+        if extra_from is not None and (
+            out.evaluations >= budget or out.evaluations - extra_from >= DIVERSITY_EXTRA
+        ):
+            return False  # enough slots already: looking for variety ends quietly
         if out.evaluations >= budget:
             out.exhausted = True
             return False
@@ -374,7 +419,11 @@ def next_free(
         return True
 
     for start in starts:
-        if free_count >= limit or out.stopped or out.exhausted:
+        if varied_done or out.stopped or out.exhausted:
+            break
+        if extra_from is not None and (
+            out.evaluations >= budget or out.evaluations - extra_from >= DIVERSITY_EXTRA
+        ):
             break
         end = start + span
         lead_time = t_out + max((v[0] for v in world.loads.values()), default=0) + insp
@@ -447,7 +496,14 @@ def next_free(
         if slot_found is not None:
             found.append(slot_found)
             free_count += slot_found.status == FREE
-    out.slots = sorted(found, key=lambda s: s.key)[:limit]
+            if free_count >= limit:
+                extra_from = out.evaluations if extra_from is None else extra_from
+                free = [x for x in found if x.status == FREE]
+                varied = pick_varied(free, limit)
+                varied_done = len(varied) >= limit and all(
+                    not near_identical(a, b) for i, a in enumerate(varied) for b in varied[i + 1 :]
+                )
+    out.slots = pick_varied(found, limit)
     out.home_notes = seen_home
     if out.slots:
         outstanding_checks(out.slots, hub, probe.zone_id)
