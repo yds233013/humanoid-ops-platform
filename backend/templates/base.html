@@ -54,6 +54,24 @@ main{max-width:1180px;margin:0 auto;padding:var(--s4) var(--s4) 64px}
 .chip-warn,.badge.p2,.badge.review,.badge.expired,.badge.draft,.badge.synthetic,.badge.unverified,.badge.recovered,.badge.paused,.badge.unclassified,.badge.reported,.badge.unknown{background:var(--amberbg);color:var(--amber);border-color:var(--amberline)}
 .chip-bad,.badge.no,.badge.p1,.badge.attn,.badge.blocked,.badge.incomplete,.badge.revoked,.badge.invalidated,.badge.withdrawn,.badge.cancelled,.badge.unaccounted,.badge.no_go,.badge.unresolved,.badge.held,.badge.notback{background:var(--redbg);color:var(--red);border-color:var(--redline)}
 
+/* ---- 03B status words + shape (spec principle 5): a status chip and a status line. Existing token pairs only:
+   ● Available for planning (info), ▲ At risk and ◆ Paused (warn), ■ Blocked (bad). Never colour alone. ---- */
+.status{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-size:var(--fs-xs);font-weight:700;border:1px solid var(--line);background:var(--neutralbg);color:var(--ink);white-space:nowrap}
+.status .shape{font-size:.75rem;line-height:1}
+.status.t-bad{background:var(--redbg);color:var(--red);border-color:var(--redline)} .status.t-warn{background:var(--amberbg);color:var(--amber);border-color:var(--amberline)} .status.t-info{background:var(--bluebg);color:var(--blue);border-color:var(--blueline)}
+.pb{display:block;margin:var(--s2) 0;padding:var(--s2) var(--s3);border-radius:8px;border:1px solid var(--line);background:var(--neutralbg);color:var(--ink);font-size:var(--fs-sm)}
+.pb.at_risk,.pb.paused{background:var(--amberbg);border-color:var(--amberline);color:var(--amber)} .pb.blocked{background:var(--redbg);border-color:var(--redline);color:var(--red)}
+.pb a{color:inherit;font-weight:700}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* next free times (S3): one row per slot, the action on the right; stacked under 700px */
+.slots{list-style:none;margin:var(--s2) 0 var(--s3);padding:0;display:flex;flex-direction:column;gap:var(--s2)}
+.slot{display:flex;justify-content:space-between;align-items:center;gap:var(--s2) var(--s4);flex-wrap:wrap;padding:var(--s3) var(--s4);border:1px solid var(--line);border-radius:var(--radius);background:var(--card)}
+.slot p{margin:0} .slot-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 280px}
+.slot-when{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;font-weight:700;font-variant-numeric:tabular-nums}
+.slot-who{font-size:var(--fs-sm)} .slot-why{font-size:var(--fs-xs);color:var(--soft)}
+.slot form{margin:0} .slot button{min-height:44px}
+@media (max-width:700px){.slot form,.slot button{width:100%}}
+
 /* ---- Cards, notices, empty state ---- */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s4) var(--s5) var(--s4);margin:0 0 var(--s4)}
 .card>h2:first-child{margin-bottom:var(--s3)}

@@ -168,5 +168,5 @@ def add_owner_hub_field(form: Any, help_text: str = "The hub this belongs to.") 
     hubs = list(Hub.objects.order_by("code"))
     if len(hubs) > 1:
         form.fields["hub"] = forms.ChoiceField(
-            label="Hub", choices=[(h.code, f"{h.code} {h.name}") for h in hubs], help_text=help_text
+            label="Hub", choices=[(h.code, f"{h.name} ({h.code})") for h in hubs], help_text=help_text
         )

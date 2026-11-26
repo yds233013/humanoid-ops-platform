@@ -1,0 +1,26 @@
+{% load ui %}<section class="nextfree" id="next-free" aria-labelledby="nf-h" data-next-free="{% if nf.slots %}{{ nf.slots|length }}{% elif nf.stopped %}stopped{% elif nf.not_set %}not-set{% else %}none{% endif %}">
+<h3 id="nf-h">Next free times at {{ nf.hub_name }}</h3>
+{% if nf_intro %}<p class="calm">{{ nf_intro }}</p>{% endif %}
+{% if nf.not_set %}<p class="pb at_risk" data-nf-not-set="1"><span aria-hidden="true">▲</span> {{ nf.not_set }}</p>
+{% elif nf.stopped %}<p class="pb blocked" data-nf-stopped="1"><span aria-hidden="true">■</span> <span class="sr">Blocked: </span><b>No time can work yet.</b> {{ nf.stopped }}. Ask an ops lead or an admin to set it on the <a href="/settings/travel-times/">Travel times</a> page; nothing is estimated.</p>
+{% elif nf.slots %}<ol class="slots">
+{% for s in nf.slots %}<li class="slot" data-slot="{{ forloop.counter }}" data-slot-status="{{ s.status }}">
+<div class="slot-main">
+<p class="slot-when"><span class="status t-{% if s.status == 'at_risk' %}warn{% else %}info{% endif %}"><span class="shape" aria-hidden="true">{{ s.shape }}</span>{{ s.words }}</span> <time datetime="{{ s.start|iso_instant }}">{{ s.label }}</time><span class="muted">–{{ s.end_label }}</span></p>
+<p class="slot-who">{{ s.crew }} · Robot {{ s.robot }} · {{ s.vehicle }}</p>
+<p class="slot-why">{{ s.why }}</p></div>
+{% if nf_action == "plan" %}<form method="post" action="/planning/visits/{{ visit.code }}/plan/" data-slot-form="{{ forloop.counter }}">{% csrf_token %}{% form_token %}
+<input type="hidden" name="robot" value="{{ s.robot }}"><input type="hidden" name="lead" value="{{ s.lead.code }}"><input type="hidden" name="second" value="{{ s.second.code }}"><input type="hidden" name="vehicle" value="{{ s.vehicle }}">
+<input type="hidden" name="start" value="{{ s.values.start }}"><input type="hidden" name="end" value="{{ s.values.end }}"><input type="hidden" name="reason" value="Moved to the next free time">{% if q_hub %}<input type="hidden" name="hub" value="{{ request.GET.hub }}">{% endif %}
+<button type="submit"{% if forloop.first %} class="primary"{% endif %}>Use this time<span class="sr">: {{ s.label }}</span></button></form>
+{% elif nf_action == "book" %}<form method="post" action="{{ book_action }}" data-slot-form="{{ forloop.counter }}">{% csrf_token %}{% form_token %}
+{% for k, v in book_hidden.items %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}{% for sc in book_scopes %}<input type="hidden" name="scopes" value="{{ sc }}">{% endfor %}
+<input type="hidden" name="day" value="{{ s.values.day }}"><input type="hidden" name="start" value="{{ s.values.start_time }}"><input type="hidden" name="end" value="{{ s.values.end_time }}">
+<input type="hidden" name="slot_robot" value="{{ s.robot }}"><input type="hidden" name="slot_lead" value="{{ s.lead.code }}"><input type="hidden" name="slot_second" value="{{ s.second.code }}"><input type="hidden" name="slot_vehicle" value="{{ s.vehicle }}">
+<button type="submit"{% if forloop.first %} class="primary"{% endif %}>Book this time<span class="sr">: {{ s.label }}</span></button></form>{% endif %}
+</li>{% endfor %}</ol>
+<p class="muted" data-not-departure="1">Planning only: a free time is not cleared to depart. Saving runs every plan check again, and departure is approved separately.</p>
+{% else %}<div class="empty" data-empty="next-free"><b>{{ nf.empty_text }}</b></div>{% endif %}
+{% if nf.exhausted %}<p class="muted" data-nf-exhausted="1">The search stopped after checking {{ nf.evaluations }} options, the most one search checks. Later times were not looked at.</p>{% endif %}
+{% if nf.home_notes %}<div data-nf-home="1"><p class="calm">Whatever time you pick, this home still needs:</p><ul class="plainlist">{% for t in nf.home_notes %}<li>{{ t }}</li>{% endfor %}</ul></div>{% endif %}
+</section>
