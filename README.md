@@ -1,215 +1,182 @@
 # Humanoid Robotics Operations Platform
 
-An internal operations platform for a small fleet of home humanoid robots. It coordinates and records operations. It does **not** control robots, implement emergency stops, or certify physical safety.
+An operations platform for a company that sends home humanoid robots out to customers' homes. It helps the people
+who run the fleet decide what can go out today, record what actually happened, and keep a trustworthy history.
 
-**Status:** Slices 0-7 built, tested and closed: foundation, fleet core, visit planning and scheduling, deployment readiness and departure authorization, field execution and incident response, operations command center, scaling and capacity model, production guardrail hardening (closure note `docs/07c_slice7_closure_note.md`). Field Operations Playbook v1.1: `docs/08_field_operations_playbook_v1.1.md`. Data is synthetic only; no production deployment is approved.
+It **records and coordinates operations. It does not control robots**, implement emergency stops, or certify
+physical safety. Every company, person, robot, home and value in this repository and in the demo is **fictional**.
 
-**v2 Phase 01 (product foundation and onboarding): closed as an engineering milestone** at `13dd04e`
-(`docs/evidence/01d_closure_note.md`). Released for **fictional demonstrations only**, not validated for real robot
-operations; the five-person usability study is unverified.
+**Status:** v2 release candidate (Phases 00 to 05). It has been checked by its development team only. It has **not**
+been used with real robots, real homes or real crews, and **usability with independent people is UNVERIFIED**. See
+[Project status and limitations](#project-status-and-limitations).
 
-**Demo (Phase 02, released 2026-11-25, tag `v2-phase02-release`):** https://web-phase02rc.up.railway.app —
-"Northbay Home Robotics", a fictional 50-robot company with one hub and three crews, rebuilt every day at 12:00 UTC
-(the site shows a short "demo is being refreshed" page and signs everyone out while it rebuilds; visitor changes are
-not kept). Ask the owner for the demo logins. It shows a hub day (journey J8): charging needs, maintenance due soon,
-overdue and unknown with the maintenance gate on, inspections due, one "Kit short" visit and restock tasks, work
-orders, held robots, and fleet health with a predictor log. All rules and thresholds there are labelled demo values.
-Two **fictional practice visits** (home `PRACTICE`, 00:30 today) are run and closed at build time, with their real
-timestamps, so the logs have departures; they show the pipeline works and prove nothing about prediction or
-reliability (`docs/12_v2_phase02_release.md`, section 7). **Synthetic data only; no real-world robot validation.**
-Previous demo (Phase 01, kept as the fallback): https://web-northbay.up.railway.app
-Legacy demo (v1 screens, unchanged): https://web-production-3a92454a.up.railway.app
+## What problem it solves
 
-## Quick start
+A home-robot company has robots at one or more hubs, crews with vans, and customers who book visits. Before a robot
+leaves, many things must be true at the same time: the robot is not on hold, its inspections and maintenance are
+current, it is charged, the crew is qualified, the household has consented, the van has the right kit, and nothing
+in the region has been paused. After it leaves, someone must know where it is, who has it, and what went wrong.
 
-Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), make.
+Spreadsheets and chat threads lose track of this. The platform keeps one record of it, checks every rule in the
+database (not only on the screen), and never shows a robot as "cleared" from data it has not checked.
+
+## Who uses it
+
+| Person | Main screens | What they do |
+|---|---|---|
+| **Ops lead** (primary user) | Today, Briefing, Dispatch board, Departure readiness, Issues | Sees what needs attention, plans visits, approves departures, triages problems, closes trips |
+| **Hub technician** | Hub work queue, Charging, Stock, Transfers | Charges robots, counts kits, works hub tasks, moves robots between hubs |
+| **Field crew** (lead and second) | My visits, the field run page on a phone | Records the departure, arrival, site check, session and return, also with no signal |
+| **Safety reviewer, engineering lead** | Policies, rules, holds, incidents | Approve policies and rules (two people, never the author), set severity, release holds |
+| **Admin** | Settings | Sets up the workspace, hubs and people; grants roles; approves nothing operational |
+
+## Main capabilities
+
+- **Multi-hub fleet and readiness.** Robots, vans, people, chargers, stock and visits each belong to a hub. A robot's
+  location comes from its custody history. Holds, inspections and maintenance block planning and departure, in the
+  database. Each visit has a readiness checklist with explained blockers. Unknown values block; they are never
+  guessed.
+- **Planning and the dispatch board.** Book a visit, get a suggested robot, crew and van, and see the next free time.
+  The board groups today's problems by cause and hub and offers a two-click fix. Zones and an approved travel-time
+  matrix drive travel times; a missing travel time blocks the visit.
+- **Departure authorization and custody.** "Approved to leave" is a separate, time-limited decision by the ops lead.
+  It records the exact versions it was based on, and any later change (a hold, a new inspection, a reschedule)
+  invalidates it. Departure is its own record. From then on, one append-only custody chain says where the robot is
+  and who has it.
+- **Field execution with the offline phone screen.** The crew's run page works on a phone with no signal. Steps
+  that only record facts, and protective steps (pause, stop, report a problem), are saved on the phone and sent
+  later. Steps that unlock work (depart, start, resume, hand over, recover) need a live connection. Nothing shows as
+  done until the server confirms it.
+- **Incidents, interruptions and regional pause.** Every incident places a blocking hold on the robot in the same
+  transaction. An unresolved interruption blocks the robot's next departure. The regional ops lead can pause new
+  departures for a hub or a zone; the database refuses authorization and departure while the pause is active.
+- **Charging.** Chargers are bookable hub resources. Battery levels are typed in by people (there is no
+  telemetry). Visits whose robot will not have enough charge are marked At risk.
+- **Hub transfers.** Robots, vans and stock move between hubs through an audited transfer that the receiving hub
+  must accept. A transfer never clears a hold, and it invalidates any earlier departure approval.
+- **Operations briefing.** A read-only page that answers four questions per hub (which robots are unavailable and
+  why, which visits are at risk, which incidents need attention, what to do first) from fixed rules, with a link
+  to the source of every line. It is not an AI and it cannot act.
+- **Audit.** Every state change goes through one command path that writes an append-only audit row in the same
+  transaction. Each visit has a dossier that rebuilds its full history.
+
+## Screenshots
+
+All screenshots are from the fictional demo workspace, taken in a real browser by the development team.
+
+| | |
+|---|---|
+| **Dispatch board** (ops lead, desktop) <br> ![Dispatch board](docs/evidence/03b_design_review/board_today_1024.png) | **Operations briefing** (ops lead, desktop) <br> ![Operations briefing](docs/evidence/04_briefing/briefing_1024.png) |
+| **Field run page offline** (crew, 375 px): a step saved on the phone, and "Needs a connection. Do not start." on an online-only step <br> ![Offline step saved](docs/evidence/03d_design_review/02_offline_saved_and_class_a_disabled_375.png) | **Protective report saved offline** (crew, 375 px): "Robot must not operate" stays until the server confirms <br> ![Protective report](docs/evidence/03d_design_review/05_protective_saved_offline_375.png) |
+| **Regional pause** (ops lead) <br> ![Regional pause](docs/evidence/03b_design_review/pause_1024.png) | **Plan review before saving** (ops lead) <br> ![Plan review](docs/evidence/03b_design_review/review_V0105_1024.png) |
+
+More screenshots: `docs/evidence/03b_design_review/`, `docs/evidence/03d_design_review/` (21 states of the phone
+screen at three widths) and `docs/evidence/04_briefing/`.
+
+## Demo
+
+- **Public demo:** https://web-phase02rc.up.railway.app. This is the **Phase 02 release** (one hub). The demo link
+  will be updated at release, after the v2 release approval.
+- The demo is "Northbay Home Robotics", a fictional company. It is rebuilt every day at 12:00 UTC; during the
+  rebuild (under a minute) the site shows "The demo is being refreshed" and signs everyone out. Changes made by
+  visitors are not kept.
+- **Demo accounts:** there is one login per role (ops lead, hub technician, crew members, safety reviewer, and so
+  on). Credentials are shared separately by the project owner; they are not in this repository.
+- A guided 5 to 7 minute tour: [docs/demo_walkthrough.md](docs/demo_walkthrough.md).
+
+## Run it locally
+
+Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), make. Settings come from environment variables; the
+development values are in `.env.example` (copy it to `.env` to override). Never reuse them anywhere shared.
 
 ```bash
-docker compose up --build          # Postgres 16 + migrations + synthetic users + app on :8000
-curl localhost:8000/api/health      # {"status":"ok"}
+make db        # PostgreSQL 16 in Docker on localhost:5440, with the ops_owner and ops_app roles
+make migrate   # apply migrations as the schema owner (ops_owner)
 ```
 
-For development on the host:
+Then load data, choosing **one** of these two (the demo builder only runs on an empty database):
 
 ```bash
-make db          # Postgres 16 in Docker on localhost:5440
-make migrate     # migrations, run as the schema owner
-make seed        # synthetic dev users dev_admin, dev_ops_lead, ... (password in .env.example)
-make run         # the app, run as the restricted runtime role
-make ci          # lint + type check + migration check + tests (what CI runs)
+# A) The demo workspace: three fictional hubs, about 100 robots, visits around today's date
+set -a; source .env.example; set +a
+cd backend && DJANGO_DB_IDENTITY=owner uv run python manage.py build_demo_workspace && cd ..
+
+# B) The small development seed (dev_admin, dev_ops_lead, ... plus a few robots and visits)
+make seed
 ```
 
-## Layout
+The demo builder prints the login names. Every login uses the `DEV_SEED_PASSWORD` value from your environment.
+
+```bash
+make run       # the app on http://127.0.0.1:8000, connected as the restricted runtime role (ops_app)
+```
+
+`docker compose up --build` runs the database, migrations, the development seed and the app in containers instead.
+`curl localhost:8000/healthz` reports the database and migration state.
+
+## Tests
+
+Tests run against a real PostgreSQL (the `make db` container), including tests that connect as the restricted
+runtime role and try to bypass the rules with direct SQL.
+
+```bash
+uv --directory backend run playwright install chromium   # once: the real-browser tests need Chromium
+make test      # the full suite
+make ci        # what CI runs: lint, format check, type check, migration check, tests
+```
+
+To run part of the suite, from `backend/` with the environment loaded (`set -a; source ../.env.example; set +a`):
+
+```bash
+DJANGO_DB_IDENTITY=owner uv run pytest tests/test_v2_03c_sync.py   # one file
+DJANGO_DB_IDENTITY=owner uv run pytest -m "not browser"            # skip the Chromium tests
+DJANGO_DB_IDENTITY=owner uv run pytest -m perf -s tests/test_v2_05_scale.py   # 500-robot p95 benchmark (slow)
+```
+
+Markers: `browser` (Playwright and Chromium), `perf` (time budgets, skipped unless you pass `-m perf`), `xlsx`
+(capacity workbook check, needs LibreOffice). GitHub Actions runs `.github/workflows/ci.yml` on every push and
+`.github/workflows/perf.yml` on demand.
+
+## Repository layout
 
 | Path | What |
 |---|---|
-| `backend/config` | Django settings (all from environment variables), URLs |
-| `backend/platform_core` | `run_command` (the only way to change state), audit events, idempotency keys, database security migration |
-| `backend/accounts` | Roles, time-bounded role grants, permission checks, `grant_role` / `revoke_role` commands, login API |
-| `backend/tests` | Tests against real Postgres: commands, database privileges, concurrency |
-| `docker/postgres/init` | Creates the owner and runtime database roles |
-| `docs/` | Approval package, design addendum |
+| `backend/config` | Django settings (all from environment variables) and URLs |
+| `backend/platform_core` | `run_command` (the one path for state changes), audit events, idempotency keys, hubs, zones, workspace setup, shared UI components |
+| `backend/accounts` | Roles, hub-scoped role grants, permission checks, login |
+| `backend/fleet` | Robots, configurations, holds, inspections, maintenance rules, robot location, hub transfers |
+| `backend/planning` | Homes, consent, crews and vans, visits, reservations, Suggest, next free time, travel matrix, dispatch board |
+| `backend/readiness` | Readiness policies, evidence, the checklist, departure authorization and departure |
+| `backend/execution` | Field runs, custody, site checks, sessions, interruptions, incidents, the offline field protocol and phone screen |
+| `backend/hub` | Hub work queue, charging, stock, transfer pages |
+| `backend/operations` | Today, Briefing, Issues, timeline, metrics, fleet health, close-out, regional pause, the demo workspace builder |
+| `backend/capacity` | Capacity forecast report |
+| `backend/deploy` | Start script, database bootstrap, demo refresh, backup and restore check |
+| `backend/tests` | Test suite (real PostgreSQL; `tests/browser` uses Chromium) |
+| `docs/` | Contracts, closure notes and evidence, runbook |
 
-## How a change happens
+## Further reading
 
-`run_command(actor, name, permission=..., payload=..., handler=..., idempotency_key=...)` runs these steps in order:
+- [Architecture](docs/architecture.md): layers, database enforcement, the command boundary, hubs, lock order, the
+  offline protocol, performance, deployment.
+- [Demo walkthrough](docs/demo_walkthrough.md): a guided scenario, role by role.
+- [Release notes v2 (DRAFT)](docs/release_notes_v2.md): what each phase added, verified scale, known limitations.
+- [Runbook](docs/runbook_deploy_backup_rollback.md): deploy, health check, backup, restore, rollback, demo refresh.
+- Contracts: `docs/09_v2_phase00_contract.md` to `docs/13_v2_phase03_contract.md`. Evidence: `docs/evidence/`.
 
-1. Is the actor authenticated? If not: **401**, nothing written.
-2. Does the actor hold an active role grant for the permission? If not: **403**, and only a `denied` audit row is written.
-3. One transaction:
-   1. claim the idempotency key;
-   2. run the handler;
-   3. write the audit row;
-   4. store the response.
+## Project status and limitations
 
-Any error rolls back everything, the audit row included. A retry with the same key returns the stored response (`replayed: true`). The same key with a different payload returns **409**.
+- **Fictional data only.** No value is a real robot specification, maintenance interval, travel time, price or
+  safety approval. Demo approvals are on `synthetic_demo` records, and production mode refuses every one of them.
+- **No real-world validation.** Nothing has been used with real robots, homes or crews.
+- **Usability is UNVERIFIED.** All walkthroughs were done by the development team, not by independent users.
+- **Scale:** a synthetic benchmark of 500 robots, 5 hubs and 5,000 visits met its time budgets in CI. A 500-robot
+  synthetic benchmark does not establish production capacity for 500 physical robots.
+- **No telemetry.** Battery levels and robot state are entered by people.
+- **Offline is for the field run page only**, and only for steps that record facts or make things safer. Photos and
+  signatures are not supported.
+- **No live customer messaging, no automatic safety approvals, no AI.** The briefing is fixed rules.
+- **Not production-ready:** production needs real approved procedures, inspection templates, maintenance rules and
+  hold-release policies that do not exist yet (Settings > Production readiness lists them).
 
-## Database security boundary
-
-- **`ops_owner`** owns the schema and runs migrations. It's never used by the running app.
-- **`ops_app`** is the runtime role:
-  - It may read and write application tables.
-  - It may only **insert** into `platform_core_auditevent`.
-  - It owns nothing, so it can't disable triggers, alter or drop tables, or create tables.
-- **A trigger rejects UPDATE, DELETE and TRUNCATE** on the audit table for everyone.
-- **The owner can disable that trigger.** Superusers and the schema owner are a separate, documented trust boundary, used only for migrations, and by the test runner's teardown. See `tests/conftest.py`.
-
-## Slice 1: fleet core
-
-Open http://localhost:8000 after `docker compose up --build`. Log in as `dev_ops_lead` (or any `dev_<role>`); the password is `DEV_SEED_PASSWORD` in `.env.example`.
-
-- **Robots:** register, and move through lifecycle (commissioning, validation, in service, retired). Transitions are checked by the database.
-- **Configuration:** immutable manifests, approvable patterns (hardware + release + firmware), versioned capability profiles. A blank field means *unknown* and blocks planning.
-- **Holds:** robot or pattern scope, from any source. Release needs every policy slot filled by valid approvals on the **current** configuration. Approvals are append-only and can be withdrawn.
-- **Inspections:** the result is computed and re-checked by the database. An observed robot-condition failure always holds the robot, even if the inspection is incomplete. Visit items (8–12) block only the visit.
-- **Fleet eligibility:** "Eligible for planning, not cleared to depart". Never shown as green. Departure authorization is a later slice.
-- **Locking:** one order everywhere: role grants, then patterns, then robots (`platform_core/locks.py`). Permissions are re-checked inside the transaction.
-
-**Implementation constraints worth knowing** (enforced in `fleet/migrations/0002`–`0004`):
-
-- **Placing a hold never needs an approved policy.** A hold with no release rule is created with no slots and can't be released until a policy provides one. Draft policies block *release* only.
-- **Every hold row is stamped with `created_txid = pg_current_xact_id()`.** The trigger forces it, and it's immutable. A failed robot-condition inspection must reference a hold whose `source_type = 'inspection'`, whose `source_ref` is that inspection's code, and which was created in the **same transaction**.
-- **One hold per inspection:** unique index `uniq_inspection_hold_per_inspection`.
-- **Permissions are re-checked on idempotent replays.**
-
-Demo data: R-01 and R-04 eligible; R-02 held by a failed inspection; R-03 held by an incident and waiting on the founder; R-05 on an engineering-only build. The hold policy is deliberately a **draft**: no safety approval is faked.
-
-## Slice 2: visit planning and scheduling
-
-Open http://localhost:8000/planning/ for the week planner, visit pages and sites.
-
-- **Sites:** opaque codes with a coarse zone, IANA timezone and CRM reference. No names or addresses.
-  - Assessments are versioned and need a second person to approve.
-  - Consent is verified per pseudonymous participant: form version, scope (presence / recording / remote view), evidence reference. Withdrawal takes effect immediately.
-  - An unknown adult count means **Requires review**.
-- **Crew and vans:** qualifications must cover the **whole** activity. A vehicle with unknown capacity or restraint kit can't carry a robot.
-- **Feasibility:** "Planning feasible", "Blocked" or "Requires review", each with explained blockers.
-  - Unknown durations block planning: travel, loading, inspection, charging.
-  - **Never** permission to depart.
-- **Reservations:** a robot is booked separately for inspection, loading, travel, on site, unloading and charging. Crew and van are booked from inspection to unloading.
-  - Overlaps are rejected **by PostgreSQL** (a btree_gist exclusion constraint on `[start, end)`), even with app locks bypassed.
-  - Back-to-back bookings are fine.
-- **Revisions:** plan, reschedule and cancel are atomic. Every change is a new revision. A refused reschedule leaves the confirmed plan untouched. Confirm re-checks everything live.
-- **Time:** stored in UTC. Site-local times that don't exist (spring forward) or are ambiguous (fall back) are refused, not guessed.
-- **Locks:** see `docs/02_lock_graph.md`.
-
-Demo: V-0001 confirmed; V-0002 blocked (crew and van conflict); V-0003 requires review (restricted home); V-0004 blocked (consent withdrawn).
-
-## Slice 3: deployment readiness and departure authorization
-
-Open http://localhost:8000/readiness/ for upcoming visits, the per-visit checklist and readiness policies.
-Contract: `docs/03_readiness_contract.md`. Lock order: `docs/02_lock_graph.md`.
-
-- **Readiness policy:** versioned requirements (evidence kinds and maximum age, required equipment, recovery
-  plan, authorization lifetime). It needs an engineering-lead and a safety-reviewer approval, and its author
-  can't approve it. **One active policy:** the newest fully approved version. If it's withdrawn there is
-  none until a newer one is approved. There's never a fallback to an older one.
-- **Evidence:** pre-departure inspection (a real fleet inspection), equipment check, battery check, plus a
-  recovery plan. Each is bound to the visit's current plan revision and the robot's current configuration.
-  Evidence can be voided, never edited.
-- **Readiness check:** read-only. It re-checks planning live (consent, holds, crew qualifications, van,
-  bookings), the policy, evidence freshness, battery against the robot's minimum, equipment and the recovery
-  plan. It gives explained blockers. Unknown values block.
-- **Departure authorization:** a separate, time-limited decision. It records the exact versions it was
-  decided on (site, robot, configuration, crew, visit, policy). Any later change invalidates it: a hold,
-  withdrawn consent, a configuration change, a qualification change, a reschedule, new evidence, or a policy
-  change.
-- **Departure:** its own immutable record. Under locks it re-checks every version and re-runs the full
-  readiness check. One authorization, one departure. One visit, one departure. The database also enforces
-  both for direct SQL. A departed visit can't be re-planned.
-- **Demo vs production:** a `synthetic_demo` policy only works while `demo_mode` is on. Production refuses it.
-  Settings changes are serialized against authorization and departure by a database-enforced advisory lock.
-- **Never shown as clearance:** the UI never says "cleared to depart". Demo pages carry a "SYNTHETIC DEMO,
-  not real-world clearance" banner.
-
-Demo: V-0001 has an approved synthetic policy, fresh evidence and a recovery plan, so it is "Ready to request
-authorization". Evidence goes stale on the policy's clock (battery after 2 h).
-
-## Slice 4: field execution and incident response
-
-Open http://localhost:8000/execution/ for execution runs, incidents and incident policies; each visit has a dossier
-at `/execution/visits/<code>/dossier/`. Contract: `docs/04_field_execution_contract.md`.
-
-The platform records what authorized people report after departure. It does not move, stop or operate robots.
-
-- **Execution run:** opened by the database in the same transaction as the departure. It can't be created any
-  other way, even by direct SQL.
-- **Custody:** one append-only history per robot (hub, vehicle, site, unaccounted). The departure creates an
-  *administrative assignment, not verified* until the crew verify the physical handoff. Every move names a
-  custodian and an identified receiver. A robot can't be in two places.
-- **Site check:** Go / No-Go is computed (custody at the site, consents cover the adults present, every condition
-  ok); a No-Go is recorded, never hidden. Work sessions start and resume only on a current Go.
-- **Incidents:** every incident places a blocking robot hold **in the same transaction**, with or without an
-  approved incident policy, also when reported late, after the visit, or with no run. Severity, status and
-  escalation are separate, append-only decisions. Resolving or closing an incident never releases the hold; that
-  stays with the fleet hold-release workflow.
-- **Return:** the vehicle coming back is not the robot coming back. A trip closes only after a hub receipt, a
-  post-visit inspection and a reconciled return. A robot left on site or unaccounted keeps the trip open.
-- **A departed visit has happened:** it can't be cancelled, rescheduled or released afterwards. A robot can't be
-  authorized again until its run is closed and it is back at the hub.
-
-Demo: `make seed` adds a synthetic site-check template and a synthetic_demo incident policy (demo mode only).
-Authorize and record V-0001's departure on the readiness page, then work the run on `/execution/`.
-
-## Slice 7: production guardrails
-
-Contract: `docs/07a_production_guardrails_contract.md` (SQL signatures and change log:
-`docs/07b_s7_sql_signatures.md`). Slice 7 makes the gates that matter in production refuse anything that is
-only demo data. Every rule is enforced in the database too, so direct SQL can't skip it.
-
-- **Approved inspection checklists (X-1):** in production a pre-departure inspection counts only on a checklist
-  template that engineering and safety both approved for that purpose. A synthetic template never authorizes a
-  production departure.
-- **Periodic inspection expiry (X-3):** each configuration needs one approved inspection interval. A robot whose
-  periodic inspection is overdue, missing, or whose interval is unknown can't be planned or authorized, and the
-  inspection must still be valid at the planned unloading end. No interval value is built in.
-- **Qualified inspectors (X-8):** both signers of an inspection must hold a current `readiness_inspector`
-  qualification. Revoking one blocks departures that relied on that inspection.
-- **Hold release policy (G-01):** releasing a hold in production needs an approved hold policy, bound when the
-  hold is placed. Holds placed under a policy that can no longer be used are re-based through an approval flow.
-- **Escalation deadlines (X-4):** owner-approved deadlines per incident level make overdue escalations visible
-  in the command center. Nothing is paged or emailed.
-- **Daily close-out (X-10):** `/ops/closeout/` lists, read-only, the runs still open for the day (custody not
-  verified, post-visit inspection outstanding, return not reconciled). It is not a sign-off.
-
-**Production blockers.** The overview (`/ops/`) shows this panel in both modes ("Would block in production" in
-demo). In production the same rows are also top-priority items in the exceptions inbox:
-
-| Code | Meaning |
-|---|---|
-| `HOLD_POLICY_NOT_APPROVED` | No approved hold-release policy, so no hold can be released in production |
-| `HOLD_UNRELEASABLE` | A hold whose bound policy can't release it (needs re-basing) |
-| `INSPECTION_TEMPLATE_NOT_APPROVED` | A configuration in use has no checklist template approved for production |
-| `PERIODIC_INTERVAL_NOT_APPROVED` | A configuration in use has no approved periodic inspection interval |
-| `ESCALATION_DEADLINES_NOT_APPROVED` | No owner-approved escalation deadline set for the active incident policy |
-
-Demo: `make seed` also runs `seed_guardrails`, which refuses to run outside demo mode and creates only
-`synthetic_demo` rules, templates and synthetic-labelled grants. A production-mode check after seeding still shows
-every blocker above. No migration or seed creates a production approval.
-
-## Not built yet (by design)
-
-- Maintenance, teleoperation, analytics. Real procedures and hardware-specific safety evidence (production policies need `approved_procedure` sources that don't exist yet).
-- Task, site and vehicle hold scopes. They arrive with their domains.
-- SSO: local accounts for now. The identity provider is unknown (blocker B-09).
-- Deployment: no target environment yet.
+The full list is in [docs/release_notes_v2.md](docs/release_notes_v2.md#known-limitations).
