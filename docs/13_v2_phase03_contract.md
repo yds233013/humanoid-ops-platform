@@ -953,7 +953,7 @@ one exception is the first-batch item 15.7.
 ### 15.1 What runs on the phone
 - **Progressive enhancement** of the existing run page (`/execution/runs/<code>/`). Without JavaScript or a service
   worker it works online exactly as today.
-- **One service worker** (`/sw.js`, scope `/execution/`). It caches the run page shell, its static assets and a JSON
+- **One service worker** (`/execution/sw.js`, scope `/execution/`; see 15.12). It caches the run page shell, its static assets and a JSON
   snapshot of the run (`GET /api/field/runs/<code>/snapshot`, read-only).
   - The snapshot holds only previously authorized, minimal data: the step labels, the current state, and the crew
     names on the run.
@@ -1137,3 +1137,8 @@ failure injection, clean install, upgrade from Phase 02, backup/restore, no high
 the two product-debt fixes) → 07 README, architecture doc, 5–7 min walkthrough, release notes, public demo, tag v2.0.0
 after acceptance. Never cut: DB safety, authorization, offline durability, account isolation, acceptance, migration
 check, release rehearsal.
+
+### 15.12 As-built paths (lead, 2026-11-26)
+The code serves `/execution/sw.js` (scope `/execution/`), `/field/queue.js` and `/field/run.js` from
+`backend/execution/field_static/`, plus the signed-out offline shell `/execution/field-shell/`. These replace the
+`/sw.js` and `/static/field/queue.js` names in 15.1.
