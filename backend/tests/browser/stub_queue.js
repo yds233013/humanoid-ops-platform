@@ -173,6 +173,7 @@ export async function syncOnce(run, { fetchImpl } = {}) {
       Object.assign(r, { state: "local", reason_code: res.outcome === "held" ? "HELD" : "RETRY", message: res.message || "" });
     }
   }
+  batch.forEach((b) => { if (d.commands[b.key].state === "sending") d.commands[b.key].state = "local"; }); // no result: resend later
   const qq = d.queues[qid(d, run)];
   if (qq && typeof body.last_decided_seq === "number") qq.last_decided_seq = body.last_decided_seq;
   save(d);
