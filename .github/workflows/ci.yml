@@ -44,6 +44,8 @@ jobs:
       - run: uv run mypy .
       - run: uv run python manage.py makemigrations --check --dry-run
       - run: uv run python manage.py migrate --noinput
+      - name: Install Chromium for the browser-marked tests (v2 03D offline queue)
+        run: uv run playwright install --with-deps chromium
       - run: uv run pytest
 
   xlsx:
