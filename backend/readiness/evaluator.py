@@ -96,6 +96,9 @@ PERIODIC_INSPECTION_DUE_BEFORE_RETURN = "PERIODIC_INSPECTION_DUE_BEFORE_RETURN" 
 INSPECTOR_NOT_QUALIFIED = "INSPECTOR_NOT_QUALIFIED"  # X-8
 # v2 02C "Maintenance up to date": the maintenance calendar due time is not after the planned unloading end.
 MAINTENANCE_DUE_BEFORE_RETURN = "MAINTENANCE_DUE_BEFORE_RETURN"
+# v2 03B-4: the home moved to another zone after the visit was planned (the visit keeps its saved zone until
+# it is planned again; operations_pause_gate_problem refuses authorization and departure until then)
+PLANNING_HOME_ZONE_CHANGED = "PLANNING_HOME_ZONE_CHANGED"
 
 BLOCKER_CODES = (
     VISIT_NOT_CONFIRMED,
@@ -122,6 +125,7 @@ BLOCKER_CODES = (
     PERIODIC_INSPECTION_DUE_BEFORE_RETURN,
     INSPECTOR_NOT_QUALIFIED,
     MAINTENANCE_DUE_BEFORE_RETURN,
+    PLANNING_HOME_ZONE_CHANGED,
 )
 
 
@@ -408,6 +412,13 @@ def _gate_planning(w: _World, b: _Blockers) -> Plan | None:
     # planning eligibility check instead of being computed a second time there.
     # v2 03B-1: no pause label here (pinned statement budget); the database gates refuse under a pause
     plan = live_feasibility(w.visit, periodic=w.periodic, maintenance=w.maintenance, pause_check=False)
+    # v2 03B-4: no statement (the home is loaded with the visit)
+    if w.visit.zone_id != w.visit.site.zone_ref_id:
+        b.add(
+            PLANNING_HOME_ZONE_CHANGED,
+            f"The home {w.visit.site.code} moved to another zone after this visit was planned",
+            "Plan the visit again so its zone, travel time and pauses are checked",
+        )
     if plan.feasibility != "feasible":
         for x in plan.blockers:
             b.add(PLANNING_PREFIX + x["code"], x["message"], x["action"], level=x.get("level", "blocked"))
