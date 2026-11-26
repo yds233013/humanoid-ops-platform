@@ -115,6 +115,7 @@ _BLOCKER_WORDS = {
     "PLANNING_SITE_NOT_ELIGIBLE": "The home was assessed as not eligible",
     "PLANNING_UNKNOWN_TRAVEL": "Travel time is not entered",
     "PLANNING_NOT_FEASIBLE": "The visit plan does not work as it stands",
+    "PLANNING_HOME_ZONE_CHANGED": "The home moved to another zone; plan the visit again",  # v2 03B-4
 }
 _FALLBACK_WORDS = {"PLANNING_": "The visit plan has an open problem"}
 DEFAULT_WORDS = "A checklist item is not complete"

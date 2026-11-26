@@ -738,6 +738,8 @@ SQL_COVERAGE: dict[str, Any] = {
     # v2 03B-1: a zoned visit with no matrix value has no recorded minutes; a pause is re-proven by the gate
     "PLANNING_TRAVEL_UNKNOWN": "travel time is unknown",
     "PLANNING_PAUSED": "Paused: cannot leave until lifted",
+    # v2 03B-4: a home moved after the visit was planned (operations_pause_gate_problem)
+    "PLANNING_HOME_ZONE_CHANGED": "after this visit was planned",
     "PLANNING_ZONE_RETIRED": (
         GAP,
         "a planning rule for NEW decisions only (a saved plan keeps its recorded minutes); not a departure gate",

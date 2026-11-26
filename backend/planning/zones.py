@@ -7,7 +7,9 @@ Setup commands (run_command, admin or ops lead; the database enforces the rules 
 planning/0013):
   * ``create_zone`` / ``retire_zone``: a retired zone keeps its history and cannot be used for new visits;
   * ``set_hub_home_zone``: the zone the hub's vans leave from and return to (``hub_origin_zone``);
-  * ``set_site_zone``: the zone of a home. A visit takes its home's zone when it is booked or re-planned.
+  * ``set_site_zone``: the zone of a home, with a reason, through the guarded database function
+    planning_set_site_zone (v2 03B-4; the regional ops lead only). A visit takes its home's zone when it is
+    booked or re-planned.
 """
 
 from __future__ import annotations
@@ -18,8 +20,9 @@ from typing import Any
 from django.db import transaction
 
 from planning.models import Site, Visit
-from platform_core.commands import Conflict, Invalid, Outcome, run_command
+from platform_core.commands import Conflict, Invalid, Outcome, guarded_function, run_command
 from platform_core.hubscope import owner_hub
+from platform_core.middleware import current_request_id
 from platform_core.models import Hub, Zone
 
 ZONE_CODE = re.compile(r"^[A-Z0-9][A-Z0-9-]{0,11}$")
@@ -131,23 +134,40 @@ def set_hub_home_zone(actor: Any, *, hub_code: str, zone_code: str | None) -> di
 
 
 def set_site_zone(
-    actor: Any, *, site_code: str, hub_code: str | None, zone_code: str | None
+    actor: Any, *, site_code: str, hub_code: str | None, zone_code: str | None, reason: str
 ) -> dict[str, Any]:
-    """The zone of a home (None = unknown). Visits booked or re-planned afterwards take it."""
+    """Move a home to a zone (None = unknown), with a reason. Only through the guarded database function
+    planning_set_site_zone (v2 03B-4, planning/0014): the regional ops lead, settings lock then the hub rows,
+    one audit row, refused while it would take an open visit of the home out from under an active pause. The
+    home's guard version moves, so a departure authorization issued before the change no longer departs.
+    Visits keep the zone they were planned with until they are planned again; a re-plan takes the new zone,
+    and authorization and departure are refused until then."""
+    zone = _zone(_hub(hub_code or ""), zone_code) if zone_code else None
 
     def handler() -> Outcome:
-        z = _zone(_hub(hub_code or ""), zone_code) if zone_code else None
-        site = Site.objects.select_for_update().filter(code=site_code).first()
+        site = Site.objects.filter(code=site_code).first()
         if site is None:
             raise Invalid(f"No home {site_code}")
-        site.zone_ref = z
-        site.save(update_fields=["zone_ref"])
-        return Outcome("site", site.code, {"zone": z.code if z else None, "hub": z.hub.code if z else None})
+        version = guarded_function(
+            "SELECT planning_set_site_zone(%s, %s, %s, %s, %s)",
+            [actor.pk, site.pk, zone.pk if zone else None, reason, current_request_id.get()],
+        )
+        return Outcome(
+            "site",
+            site.code,
+            {
+                "zone": zone.code if zone else None,
+                "hub": zone.hub.code if zone else None,
+                "site_version": version,
+            },
+            audited=True,
+        )
 
     return run_command(
         actor,
         "planning.set_site_zone",
         permission="planning.manage_sites",
-        payload={"site": site_code, "hub": hub_code, "zone": zone_code},
+        payload={"site": site_code, "hub": hub_code, "zone": zone_code, "reason": reason},
         handler=handler,
+        hub=zone.hub_id if zone else None,
     )

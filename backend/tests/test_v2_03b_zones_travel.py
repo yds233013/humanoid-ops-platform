@@ -72,7 +72,7 @@ def _zoned(prefix: str, *, base: bool = True, pair: bool = True):
     if pair:
         _set(w, w.za, w.zb, 25)
         _set(w, w.zb, w.za, 35)
-    zones.set_site_zone(w.ops, site_code="S-1", hub_code=w.hub.code, zone_code="ZB")
+    zones.set_site_zone(w.ops, site_code="S-1", hub_code=w.hub.code, zone_code="ZB", reason="SYN: home zone")
     return w
 
 
@@ -110,7 +110,8 @@ def test_a_visit_takes_its_homes_zone_and_a_forged_zone_is_ignored_or_refused():
     v.refresh_from_db()
     assert v.zone_id == w.zb.pk
     # a home without a zone: the visit's zone is unknown, and shown as such
-    zones.set_site_zone(w.ops, site_code="S-2", hub_code=None, zone_code=None)
+    with pytest.raises(Conflict, match="already in that zone"):  # S-2 has no zone (03B-4: a no-op is refused)
+        zones.set_site_zone(w.ops, site_code="S-2", hub_code=None, zone_code=None, reason="SYN: home zone")
     v2 = Visit.objects.get(code=new_visit(w, site="S-2"))
     assert v2.zone_id is None and zones.zone_of(v2) is None
     assert zones.zone_label(None) == "Unknown zone"
@@ -141,7 +142,9 @@ def test_a_retired_zone_keeps_its_history_and_cannot_be_used_for_new_visits():
         plan(w, old, robot="R-02")
     # it cannot be given to a home or be the hub's zone, and never comes back
     with pytest.raises(Conflict, match="retired"):
-        zones.set_site_zone(w.ops, site_code="S-2", hub_code=w.hub.code, zone_code="ZB")
+        zones.set_site_zone(
+            w.ops, site_code="S-2", hub_code=w.hub.code, zone_code="ZB", reason="SYN: home zone"
+        )
     with pytest.raises(Conflict, match="retired"):
         zones.set_hub_home_zone(w.ops, hub_code=w.hub.code, zone_code="ZB")
     with _app_conn() as conn, conn.cursor() as cur:
@@ -306,7 +309,7 @@ def test_a_visit_planned_before_its_home_had_a_zone_keeps_its_recorded_minutes()
     za = Zone.objects.create(hub=hub, code="ZA", name="A")
     zones.set_hub_home_zone(w.ops, hub_code=hub.code, zone_code="ZA")
     travel.set_travel_time(w.ops, from_zone_id=za.pk, to_zone_id=za.pk, minutes=55, source="demo")
-    zones.set_site_zone(w.ops, site_code="S-1", hub_code=hub.code, zone_code="ZA")
+    zones.set_site_zone(w.ops, site_code="S-1", hub_code=hub.code, zone_code="ZA", reason="SYN: home zone")
     v = Visit.objects.get(code=code)
     assert v.zone_id is None  # unchanged until it is planned again
     live = ps.live_feasibility(v)

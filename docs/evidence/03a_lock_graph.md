@@ -74,6 +74,7 @@ lock"; 13.4 wins and is what is built (operations/0011). **H** = a `platform_cor
 | **Departure gate** (trigger `readiness_pause_gate` on `readiness_departureevent`) | `record_departure`'s order (grants S -> **Sh** -> site S -> pattern S -> robot U -> persons S -> vehicle S -> visit U -> trip U, then the C3 trigger re-locks them) -> **Sh** -> visit **S** -> hubs **S** -> check | execution/0007, operations/0011 |
 | **Visit hub or zone change** (trigger `visit_pause_scope_lock`, BEFORE UPDATE OF hub_id, zone_id when either changes) | the updater's locks (plan_visit: grants S -> **Sh** -> site S -> pattern S -> robot U -> persons U -> vehicle U -> visit U) -> **Sh** -> old and new hub, old and new zone's hub **S**, ascending | operations/0011 |
 | **Travel time** `planning_set_travel_time` | actor pre-check -> from zone **S** -> to zone **S** -> grants **S** -> pair advisory lock (transaction, `hashtextextended('planning_travel_time:<from>:<to>')`) -> INSERT + audit | planning/0013 |
+| **Home zone change** `planning_set_site_zone` (03B-4) | actor pre-check (no lock) -> **Sh** -> the home (`planning_site`) **U** -> hubs of the old zone, the new zone and the open visits' dispatch hubs **S**, ascending -> grants **S** (`hub_actor_has_at`) -> pause check in a fresh statement -> UPDATE (bumps the home's version) + audit | planning/0014 |
 
 ### 4.1 Reconciliation with sections 1 and 2
 
@@ -96,6 +97,14 @@ lock"; 13.4 wins and is what is built (operations/0011). **H** = a `platform_cor
   **S**; a pause takes no visit. So a change of a visit's hub or zone and a pause are ordered on the hub row, and
   the gates read the visit's hub and zone after the visit lock: a changed visit is always checked against the
   pauses of its current hub and zone (13.4 item 2, "visit changes").
+- **Home zone change (03B-4).** Settings first, then the home, then the hub rows. The home is the first guard row of
+  the global order and the hubs come after every guard row, as in the gates, so nothing that holds a hub row ever
+  waits for a guard row (taking the hubs before the home could deadlock with a gate that holds the home **S** and
+  queues for a hub behind a waiting pause). It holds the home **U** and the hubs **S**: a pause or lift (hub **U**)
+  waits for it or it waits for them, and re-reads the pauses after its hub locks; an authorization or departure
+  (home **S**, then hubs **S**) waits for it on the home row, or it waits for them. The gates also refuse a visit
+  whose saved zone differs from its home's current zone (`operations_pause_gate_problem`, planning/0014), and the
+  home's new version invalidates every earlier authorization at departure.
 - **Travel time.** It locks only zone rows (**S**, ordered against a zone retirement, which takes the zone **U**)
   and its pair lock; it holds no hub or guard row, so it is outside every cycle above.
 
@@ -113,6 +122,12 @@ took the hub row waits for the gate's transaction to finish.
 | | departure (paused before commit) | the pause waits, then commits; the departure stands (a pause never erases one) | `...[departure]` |
 | lift vs authorization | lift (hub U held, uncommitted) | `readiness_issue_authorization` (direct SQL) waits at its gate, then is issued | `test_a_lift_and_an_authorization_are_ordered_both_ways[lift]` |
 | | the authorization gate step (`operations_pause_gate_problem`, held by the owner, refusing under the active pause) | the lift waits, then commits; a new authorization is then issued | `...[authorization]` |
+| home zone change vs pause | pause of the home's zone (hub U held) | `planning_set_site_zone` (ops_app) waits on the hub row, then is refused (it would take the visit out from under the pause) | `tests/test_v2_03b_site_zone.py::test_a_zone_change_and_a_pause_are_ordered_both_ways[pause]` |
+| | zone change (home U, hub S held) | a pause of the new zone waits, then commits; the re-planned visit is refused at authorization | `...[zone_change]` |
+| home zone change vs authorization | zone change (home U held) | `authorize_departure` waits on the home row, then is refused (plan the visit again); nothing issued | `test_a_zone_change_and_an_authorization_are_ordered_both_ways[zone_change]` |
+| | authorization (stopped before commit, home S held) | the zone change waits, then commits; that authorization is refused at departure (home version) | `...[authorization]` |
+| home zone change vs departure | zone change (home U held) | `record_departure` waits on the home row, then is refused; nothing departs | `test_a_zone_change_and_a_departure_are_ordered_both_ways[zone_change]` |
+| | departure (stopped before commit, home S held) | the zone change waits, then commits; the departure stands | `...[departure]` |
 
 In the lift-vs-authorization "authorization first" order the authorization side is its gate step, held open by
 the owner, as in the 03A transfer race: a real authorization under the active pause raises at that step, and

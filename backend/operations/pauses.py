@@ -5,6 +5,9 @@ FROZEN read accessors (03B-2's board uses them):
     active_for(hub_id, zone_id) -> PauseInfo | None        operations_active_pause, one statement
     board_summary(hub_ids) -> dict[hub_id, list[PauseInfo]]  every active pause of those hubs, one statement
 
+``with_pause(visits)`` (v2 03B-4) annotates a Visit queryset with the pause covering each visit, read in the
+same statement as the visits (no statement added), and ``pause_of(visit)`` reads it back as a PauseInfo.
+
 A pause stops new departure authorizations and departures (database gates, operations/0011). Planning stays
 allowed and shows PAUSED_TEXT. Robots already out keep recording everything; nothing is recalled.
 
@@ -16,11 +19,14 @@ shown before confirming a pause.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from django.db import connection
+from django.db.models import QuerySet, TextField
+from django.db.models.expressions import RawSQL
 
 from platform_core.commands import Invalid, Outcome, guarded_function, run_command
 from platform_core.middleware import current_request_id
@@ -114,6 +120,48 @@ def board_summary(hub_ids: list[int] | set[int] | None) -> dict[int, list[PauseI
             info = _info(row)
             out.setdefault(info.hub_id, []).append(info)
     return out
+
+
+# ------------------------------------------------------------------ the pause of each visit, in its read
+# The same rule as the gates (operations_active_pause on the visit's dispatch hub and saved destination zone),
+# as one JSON value per visit; no value once the visit has departed (a pause never touches a departure).
+VISIT_PAUSE_SQL = (
+    "(SELECT json_build_object('pause_id', p.id, 'scope', a.scope, 'reason', p.reason, "
+    "'since', p.created_at, 'hub_id', p.hub_id, 'zone_id', p.zone_id, 'hub_name', h.name, "
+    "'hub_code', h.code, 'zone_name', z.name, 'zone_code', z.code, 'time_zone', h.time_zone)::text "
+    "FROM operations_active_pause(planning_visit.hub_id, planning_visit.zone_id) a "
+    "JOIN operations_region_pause p ON p.id = a.pause_id "
+    "JOIN platform_core_hub h ON h.id = p.hub_id LEFT JOIN platform_core_zone z ON z.id = p.zone_id "
+    "WHERE NOT EXISTS (SELECT 1 FROM readiness_departureevent d WHERE d.visit_id = planning_visit.id) "
+    "ORDER BY a.since, a.pause_id LIMIT 1)"
+)
+PAUSE_ANNOTATION = "active_pause_json"
+
+
+def with_pause(visits: QuerySet[Any]) -> QuerySet[Any]:
+    """``visits`` (a planning Visit queryset) with the active pause of each visit in the same statement."""
+    return visits.annotate(**{PAUSE_ANNOTATION: RawSQL(VISIT_PAUSE_SQL, [], output_field=TextField())})
+
+
+def pause_of(visit: Any) -> PauseInfo | None:
+    """The pause read by ``with_pause`` for this visit, or None. No statement."""
+    raw = getattr(visit, PAUSE_ANNOTATION, None)
+    if not raw:
+        return None
+    d = json.loads(raw)
+    return PauseInfo(
+        int(d["pause_id"]),
+        str(d["scope"]),
+        str(d["reason"]),
+        datetime.fromisoformat(d["since"]),
+        int(d["hub_id"]),
+        int(d["zone_id"]) if d["zone_id"] is not None else None,
+        d["hub_name"],
+        d["hub_code"],
+        d["zone_name"],
+        d["zone_code"],
+        d["time_zone"] or "",
+    )
 
 
 def history(hub_ids: list[int] | set[int] | None, limit: int = 20) -> list[dict[str, Any]]:
