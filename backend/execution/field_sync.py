@@ -17,7 +17,7 @@ Order of processing (each step only when the one before passed):
    details, no device report and no command-history write.
 5. **Device report** (``field_ledger.report_device``): the device's last reported unsent count.
 6. **Per command, each in its OWN database transaction**, in request order:
-   ``with field_ledger.claim(key, identity) as c`` takes the run row lock, then
+   ``with field_ledger.claim(key, identity) as c`` takes the per-run field sync lock (execution/0010), then
    replay (``c.stored``) -> sequence decision (``held`` / ledger rejection) -> class and channel
    (``UNKNOWN_COMMAND``, ``ONLINE_ONLY``, ``WRONG_CHANNEL``) -> phone time bounds -> ``field_commands.apply``
    -> ``c.confirm`` or ``c.reject``. Classification and bounds are decided inside the claim so a rejected
