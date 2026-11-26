@@ -47,6 +47,53 @@ def hub_origin_zone(hub: Hub | int | None) -> Zone | None:
     return Zone.objects.filter(pk__in=Hub.objects.filter(pk=hub).values("home_zone_id")).first()
 
 
+def home_zone_changed(visit: Visit) -> bool:
+    """True when the visit's home is no longer in the zone the visit was planned with (13.5: a visit's zone is
+    its home's zone at plan time; a re-plan takes the home's zone). The ONE predicate behind the readiness
+    blocker PLANNING_HOME_ZONE_CHANGED, the readiness page's planning header, the planner and the board. No
+    statement when ``visit.site`` is loaded."""
+    return visit.zone_id != visit.site.zone_ref_id
+
+
+def home_zone_change_text(visit: Visit) -> str:
+    """What changed, naming the zones: "Home H-1 was put in zone Lake Merritt (LM) after this visit was
+    planned". "" when nothing changed. No statement when ``zone`` and ``site__zone_ref`` are loaded."""
+    if not home_zone_changed(visit):
+        return ""
+    site = visit.site
+    now = site.zone_ref if site.zone_ref_id is not None else None
+    then = visit.zone if visit.zone_id is not None else None
+    if then is None:
+        return f"Home {site.code} was put in zone {zone_label(now)} after this visit was planned"
+    if now is None:
+        return (
+            f"Home {site.code} no longer has a zone; it was in zone {zone_label(then)} when this visit "
+            "was planned"
+        )
+    return (
+        f"Home {site.code} moved from zone {zone_label(then)} to zone {zone_label(now)} after this visit "
+        "was planned"
+    )
+
+
+HOME_ZONE_CHANGED_ACTION = "Plan the visit again so its zone, travel time and pauses are checked."
+
+
+def home_zone_change_blocker(visit: Visit) -> dict[str, str] | None:
+    """The home-zone change as a planning blocker (code HOME_ZONE_CHANGED, Blocked) for the planner and the
+    board, naming the zones; None when the home is still in the visit's zone. The readiness gate reports the
+    same fact as PLANNING_HOME_ZONE_CHANGED."""
+    text = home_zone_change_text(visit)
+    if not text:
+        return None
+    return {
+        "code": "HOME_ZONE_CHANGED",
+        "level": "blocked",
+        "message": f"{text}.",
+        "action": HOME_ZONE_CHANGED_ACTION,
+    }
+
+
 def zone_label(zone: Zone | None, hub: Hub | None = None) -> str:
     """``Downtown (DT)``, ``Downtown (DT), Oakland hub`` with a hub, or ``Unknown zone``."""
     if zone is None:

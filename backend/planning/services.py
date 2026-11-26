@@ -5,6 +5,7 @@ means "cleared to depart". Unknown physical facts (travel, loading, inspection o
 vehicle capacity, restraint kit, adult count) are blockers or review items, never estimated.
 """
 
+import copy
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -1051,6 +1052,19 @@ def request_visit(
     return run_command(
         actor, "planning.request_visit", permission="planning.plan", payload=payload, handler=handler, hub=hub
     )
+
+
+def as_replanned(visit: Visit) -> Visit:
+    """The visit as a NEW planning decision on it sees it: with its home's current zone (13.5; ``plan_visit``
+    sets ``visit.zone`` to the home's zone before it checks). The visit itself when nothing changed; else an
+    unsaved copy, never written. Advisory checks (the review panel) use it so they check what the save checks.
+    No statement when ``visit.site`` (and ``site__zone_ref``) are loaded."""
+    site = visit.site
+    if visit.zone_id == site.zone_ref_id:
+        return visit
+    planned = copy.copy(visit)
+    planned.zone = site.zone_ref if site.zone_ref_id is not None else None
+    return planned
 
 
 def new_route(visit: Visit, start: datetime, end: datetime) -> Any:

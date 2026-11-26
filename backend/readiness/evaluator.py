@@ -54,6 +54,7 @@ from fleet.location import from_row as location_from_row
 from fleet.models import ConfigurationManifest, Inspection, ManifestPattern, Robot
 from planning.models import Person, Reservation, Resource, Visit, VisitRevision
 from planning.services import Plan, inspection_signer_problem, live_feasibility
+from planning.zones import home_zone_changed
 from readiness.evidence import current_policy, latest_ever_approved_policy, policy_status
 from readiness.models import DepartureEvent, ReadinessEvidence, ReadinessPolicy, RecoveryPlan
 
@@ -418,7 +419,7 @@ def _gate_planning(w: _World, b: _Blockers) -> Plan | None:
     # v2 03B-1: no pause label here (pinned statement budget); the database gates refuse under a pause
     plan = live_feasibility(w.visit, periodic=w.periodic, maintenance=w.maintenance, pause_check=False)
     # v2 03B-4: no statement (the home is loaded with the visit)
-    if w.visit.zone_id != w.visit.site.zone_ref_id:
+    if home_zone_changed(w.visit):
         b.add(
             PLANNING_HOME_ZONE_CHANGED,
             f"The home {w.visit.site.code} moved to another zone after this visit was planned",

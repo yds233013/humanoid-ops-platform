@@ -343,6 +343,7 @@ def robot_hubs(robot_ids: list[int]) -> dict[int, int]:
 
 # ------------------------------------------------------------------ question 2: visits
 _TODAY_CHARGE = ("Needs charge before departure", "Charge forecast unknown")
+_TODAY_ZONE_MOVED = today._BLOCKER_WORDS["PLANNING_HOME_ZONE_CHANGED"].rstrip(".")
 
 
 def _board_source(code: str) -> str:
@@ -381,6 +382,8 @@ def visit_reasons(row: pboard.Row, trow: today.VisitRow | None) -> list[Reason]:
             if w in _TODAY_CHARGE and codes & {"CHARGE", "CHARGE_NEEDS", "CHARGE_UNKNOWN"}:
                 continue
             if w.endswith("is on hold") and "ROBOT_NOT_ELIGIBLE" in codes:
+                continue
+            if w == _TODAY_ZONE_MOVED and "HOME_ZONE_CHANGED" in codes:  # the board names the zones
                 continue
             out.append(Reason("", w + ".", "Departure readiness checklist", code="READINESS"))
     return out

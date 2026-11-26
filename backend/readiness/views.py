@@ -41,7 +41,7 @@ from platform_core.templatetags.ui import local_dt
 from readiness import commands as rc
 from readiness import evidence as rx
 from readiness.authorization import authorization_status
-from readiness.evaluator import ReadinessResult, evaluate_readiness
+from readiness.evaluator import PLANNING_HOME_ZONE_CHANGED, ReadinessResult, evaluate_readiness
 from readiness.forms import InspectionForm
 from readiness.models import (
     EVIDENCE_KINDS,
@@ -146,14 +146,21 @@ def _auth_row(a: DepartureAuthorization, tz: str) -> dict[str, Any]:
     }
 
 
-def _planning(v: Visit) -> tuple[str, str, list[dict[str, Any]]]:
-    """(css state, label, blockers) for the planning side, checked now."""
+def _planning(v: Visit, result: ReadinessResult) -> tuple[str, str, list[dict[str, Any]]]:
+    """(css state, label, blockers) for the planning side, checked now. The planning gate's own
+    PLANNING_HOME_ZONE_CHANGED (``planning.zones.home_zone_changed``, not part of live_feasibility) counts
+    too, so the header never says "Planning feasible" while its "Planning still feasible now" check is
+    Blocked."""
     if v.status == "cancelled":
         return "blocked", "Cancelled", []
     if v.current_revision is None:
         return "review", "Not planned", []
     live = planning_services.live_feasibility(v)
-    return live.feasibility, planning_services.LABELS[live.feasibility], list(live.blockers)
+    state, blockers = live.feasibility, list(live.blockers)
+    moved = [b for b in result.blockers if b.get("code") == PLANNING_HOME_ZONE_CHANGED]
+    if moved:
+        state, blockers = "blocked", moved + blockers
+    return state, planning_services.LABELS[state], blockers
 
 
 def _gates(result: ReadinessResult) -> list[dict[str, Any]]:
@@ -233,7 +240,7 @@ def _summary(v: Visit, *, live_planning: bool = True) -> dict[str, Any]:
     if v.status == "cancelled" or v.current_revision is None:
         live_planning = True  # _planning's own wording for these
     result = evaluate_readiness(v)
-    p_state, p_label, p_blockers = _planning(v) if live_planning else _planning_from(result)
+    p_state, p_label, p_blockers = _planning(v, result) if live_planning else _planning_from(result)
     latest = v.authorizations.order_by("-issued_at", "-pk").first()
     auth = _auth_row(latest, tz) if latest is not None else None
     r = v.current_revision
