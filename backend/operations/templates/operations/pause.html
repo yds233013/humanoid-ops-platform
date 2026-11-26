@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Regional pause{% endblock %}
+{% block content %}
+{% page_header title="Regional pause" back_url="/planning/" back_label="Dispatch" %}Stop new departures for a hub or one of its zones. Visits can still be planned; nothing is recalled and robots already out keep recording.{% endpage_header %}
+<section class="card" aria-labelledby="pause-now">
+<h2 id="pause-now">Paused now</h2>
+{% if any_active %}<ul class="plainlist">
+{% for r in rows %}{% for p in r.active %}<li class="pb paused" data-pause="{{ p.pause_id }}"><b>◆ Paused</b> Departures {% if p.scope == "hub" %}from{% else %}to{% endif %} {{ p.where }} are paused since <time datetime="{{ p.since|date:'c' }}">{{ p.since|local_dt }}</time>: {{ p.reason }}
+<div class="muted">{{ paused_text }}. Planning can go ahead.</div>
+{% if can_lift %}<a class="btn" href="/planning/pause/lift/{{ p.pause_id }}/">Lift this pause</a>{% else %}<div class="muted">{% refusal_note "operations.lift_pause" %}</div>{% endif %}</li>{% endfor %}{% endfor %}
+</ul>{% else %}{% include "ui/empty.html" with title="Nothing is paused" text=" No hub or zone you can see is paused." %}{% endif %}
+</section>
+{% for r in rows %}<section class="card" aria-labelledby="hub-{{ r.hub.code }}">
+<h2 id="hub-{{ r.hub.code }}">{{ r.hub.name }} <span class="muted">({{ r.hub.code }})</span></h2>
+{% if r.can_pause %}<ul class="plainlist">
+<li><a class="btn" href="/planning/pause/{{ r.hub.code }}/">Pause departures from {{ r.hub.name }}</a> <span class="muted">every zone of this hub, and visits dispatched from it</span></li>
+{% for z in r.zones %}<li><a class="btn" href="/planning/pause/{{ r.hub.code }}/{{ z.code }}/">Pause zone {{ z.name }}</a> <span class="muted">({{ z.code }})</span></li>{% empty %}<li class="muted">This hub has no zones yet. A whole-hub pause still works.</li>{% endfor %}
+</ul>{% else %}<p class="muted">You can't pause departures at {{ r.hub.name }}. Ask a regional ops lead or someone with the safety pause permission there.</p>{% endif %}
+</section>{% empty %}{% include "ui/empty.html" with title="No hubs" text=" You hold no role at any hub, so nothing is shown." %}{% endfor %}
+<section class="card" aria-labelledby="pause-history">
+<h2 id="pause-history">History</h2>
+{% if history %}<div class="tablewrap"><table><thead><tr><th>When</th><th>What</th><th>Where</th><th>Reason</th><th>By</th></tr></thead><tbody>
+{% for h in history %}<tr><td><time datetime="{{ h.at|date:'c' }}">{{ h.at|local_dt }}</time></td><td>{% if h.kind == "pause" %}◆ Paused{% else %}● Lifted{% endif %}</td><td>{{ h.hub_name }} <span class="muted">({{ h.hub_code }})</span>{% if h.zone_code %}, zone {{ h.zone_name }} <span class="muted">({{ h.zone_code }})</span>{% endif %}</td><td>{{ h.reason }}</td><td>{{ h.actor }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}{% include "ui/empty.html" with title="No pauses yet" text=" Every pause and lift is listed here and kept in the audit log." %}{% endif %}
+</section>
+{% endblock %}

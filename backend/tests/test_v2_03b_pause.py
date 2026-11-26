@@ -643,3 +643,47 @@ def test_a_lift_and_an_authorization_are_ordered_both_ways(first):
         with _app_conn() as conn, conn.cursor() as cur:
             issue(cur, live_args(w))
         assert DepartureAuthorization.objects.count() == 1
+
+
+# ================================================================== S4 pages
+def _token(html: str) -> str:
+    import re
+
+    m = re.search(r'name="_form_token" value="([^"]+)"', html)
+    assert m, "no form token"
+    return m.group(1)
+
+
+def test_the_pause_pages_preview_the_affected_visits_then_pause_and_lift():
+    w = _zone_world("pp_")
+    c = Client()
+    c.force_login(w.ops)
+    html = c.get("/planning/pause/").content.decode()
+    assert "Nothing is paused" in html and "Pause zone Hills" in html and "Main hub" in html
+    page = c.get(f"/planning/pause/{w.hub.code}/ZB/").content.decode()
+    assert 'data-affected="1"' in page and "This blocks authorization and departure for 1 visit" in page
+    assert w.visit in page
+    r = c.post(
+        f"/planning/pause/{w.hub.code}/ZB/", {"reason": "SYN: road closed", "_form_token": _token(page)}
+    )
+    assert r.status_code == 400 and not RegionPause.objects.exists()  # the confirmation tick is required
+    page = r.content.decode()
+    r = c.post(
+        f"/planning/pause/{w.hub.code}/ZB/",
+        {"reason": "SYN: road closed", "confirm": "on", "_form_token": _token(page)},
+    )
+    assert r.status_code == 302, r.content.decode()[:500]
+    p = RegionPause.objects.get(kind="pause")
+    assert (p.zone_id, p.reason) == (w.zb.pk, "SYN: road closed")
+    html = c.get("/planning/pause/").content.decode()
+    assert "◆ Paused" in html and "zone Hills (ZB) of Main hub (HUB-1)" in html and "SYN: road closed" in html
+    lift = c.get(f"/planning/pause/lift/{p.pk}/").content.decode()
+    r = c.post(
+        f"/planning/pause/lift/{p.pk}/", {"reason": "SYN: open", "confirm": "on", "_form_token": _token(lift)}
+    )
+    assert r.status_code == 302 and RegionPause.objects.filter(kind="lift", pause=p).exists()
+    # a hub technician sees the page but no pause action, and the confirm page refuses
+    tech = make_user("pp_tech", "hub_technician")
+    c2 = Client()
+    c2.force_login(tech)
+    assert c2.get(f"/planning/pause/{w.hub.code}/").status_code == 403

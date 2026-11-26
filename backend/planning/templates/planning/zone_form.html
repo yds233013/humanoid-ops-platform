@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% page_header title=title back_url=zones_url back_label="Zones" %}Setup records a fact. It approves nothing.{% endpage_header %}
+<section class="card">{% include "ui/form.html" with form=form submit=submit cancel_url="/settings/hubs/"|add:hub.code|add:"/zones/" %}</section>
+{% endblock %}

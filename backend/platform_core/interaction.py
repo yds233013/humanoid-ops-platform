@@ -47,6 +47,7 @@ ROLE_WORDS = {
     "safety_reviewer": "the safety reviewer",
     "founder": "the founder",
     "hub_technician": "the hub technician",
+    "safety_pause": "someone with the safety pause permission",  # v2 03B-1
 }
 
 

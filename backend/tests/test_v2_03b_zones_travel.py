@@ -338,3 +338,36 @@ def test_a_saved_plan_records_its_matrix_version_and_a_changed_plan_is_checked_f
     r2 = _rev(code)
     assert r2.pk != r1.pk and (r2.travel_out_min, r2.travel_version_id) == (40, out2)
     assert (r2.travel_back_min, r2.travel_back_version_id) == (35, back1)
+
+
+# ================================================================== S5 pages
+def test_the_zone_and_travel_pages_show_unknown_cells_and_history():
+    from django.test import Client
+
+    w = _zoned("tg_", pair=False)
+    _set(w, w.za, w.zb, 25)
+    c = Client()
+    c.force_login(w.ops)
+    zl = c.get(f"/settings/hubs/{w.hub.code}/zones/").content.decode()
+    assert "Hub side" in zl and "the hub's own zone" in zl and "Hills" in zl
+    grid = c.get("/settings/travel-times/").content.decode()
+    assert "25 min" in grid and "demo value · v1" in grid
+    assert "▲ Unknown" in grid and 'data-unknown="3"' in grid  # ZA->ZA, ZB->ZA, ZB->ZB
+    pair = c.get(f"/settings/travel-times/{w.za.pk}/{w.zb.pk}/").content.decode()
+    assert "v1" in pair and "25 min (demo value)" in pair
+    back = c.get(f"/settings/travel-times/{w.zb.pk}/{w.za.pk}/").content.decode()
+    assert "Travel time unknown" in back
+    import re
+
+    token = re.search(r'name="_form_token" value="([^"]+)"', back).group(1)
+    r = c.post(
+        f"/settings/travel-times/{w.zb.pk}/{w.za.pk}/",
+        {"minutes": "35", "source": "company", "effective_from": "", "_form_token": token},
+    )
+    assert r.status_code == 302, r.content.decode()[:400]
+    assert travel.minutes(w.zb, w.za, at(DAY, 10)).minutes == 35
+    tech = make_user("tg_tech")
+    RoleGrant.objects.create(user=tech, role="hub_technician", hub=w.hub)
+    c2 = Client()
+    c2.force_login(tech)
+    assert c2.get("/settings/travel-times/").status_code == 403
