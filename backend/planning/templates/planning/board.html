@@ -103,9 +103,9 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
   <h3>{{ r.home }} <span class="code">{{ r.home_code }} · {{ r.code }}</span></h3>
   <p class="where">{{ r.hub_name }} · leaves the hub <time datetime="{{ r.depart|iso_instant }}">{{ r.depart|local_time }}</time></p>
   <p class="reason" data-reason="1">{{ r.reason }}</p>
-  <div class="next">{% if b.can_plan %}<a class="btn primary" href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options</a>
+  <div class="next">{% if b.can_plan %}<a class="btn primary" href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options<span class="sr"> for {{ r.home }}, {{ r.code }}</span></a>
   <span class="who" data-who="1">You can act on this (ops lead).</span>
-  {% else %}<a class="btn" href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options</a>
+  {% else %}<a class="btn" href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options<span class="sr"> for {{ r.home }}, {{ r.code }}</span></a>
   <span class="who" data-who="1">Only an {{ b.who_plan }} can change it.</span>{% endif %}</div>
 </article></li>{% endfor %}
 </ol>

@@ -428,6 +428,30 @@ def _parse_local(raw: str, tzname: str) -> datetime | None:
         return None
 
 
+def _planning_risks(visit: Visit) -> list[dict[str, str]]:
+    """The at-risk facts the board adds to the plan check (charge forecast, v2 02B; stock, v2 02D), so the
+    panel and the board give the same reasons. Planning information only: departure keeps its own checks."""
+    from hub import charging, stock  # noqa: PLC0415
+
+    out: list[dict[str, str]] = []
+    robot = visit.current_revision.robot if visit.current_revision else None
+    if robot is not None and charging.forecast_configured():
+        f = charging.visit_forecasts([visit.pk]).get(visit.pk)
+        if f is not None and f.state != charging.ENOUGH:
+            words = "needs charge before it leaves" if f.state == charging.NEEDS else "has no charge forecast"
+            out.append(
+                {
+                    "level": "blocked" if f.cannot_in_time else "at_risk",
+                    "sentence": f"Robot {robot.code} {words}: {f.reason}.",
+                    "action": "Departure still needs the battery check.",
+                    "code": "CHARGE",
+                }
+            )
+    for n in stock.visit_shortages(hub_ids=[visit.hub_id]).get(visit.pk, []):
+        out.append({"level": "at_risk", "sentence": f"{n.reason}.", "action": "", "code": "STOCK"})
+    return out
+
+
 def verdict(feasibility: str, blockers: list[dict[str, str]]) -> tuple[str, list[str]]:
     """The result line after (or before) a save: never anything that reads as permission to leave."""
     if feasibility == "feasible":
@@ -454,7 +478,7 @@ def build_review(
     live = live if live is not None else p.live_feasibility(visit)
     zone = zones.zone_of(visit)
     pause = pauses.active_for(visit.hub_id, zone.id if zone is not None else None)
-    why = [dict(pb) for pb in plain_blockers(live.blockers)]
+    why = [dict(pb) for pb in plain_blockers(live.blockers)] + _planning_risks(visit)
     if pause is not None:
         why.insert(
             0, {"level": "paused", "sentence": pause_banner(hub, pause), "action": "", "code": "PAUSE"}

@@ -19,6 +19,8 @@
 .verdict.v-blocked{border-color:var(--redline);background:var(--redbg);color:var(--red)} .verdict.v-review{border-color:var(--amberline);background:var(--amberbg);color:var(--amber)}
 .changed{border-color:var(--blueline)} .save{margin-top:var(--s3)} .save input[name=reason]{max-width:420px;width:100%}
 .btn{text-decoration:none;display:inline-flex;align-items:center;min-height:44px}
+details.fold>summary{padding:11px 0;line-height:22px} .review button,.review input[type=datetime-local],.save input,#by-hand button,#by-hand input,#by-hand select{min-height:44px}
+.page-head .back{display:inline-flex;align-items:center;min-height:44px;margin-bottom:0}
 @media (max-width:700px){.groups{grid-template-columns:1fr} .review .btn,.review button{width:100%;justify-content:center} .diff th[scope=row]{width:auto}}
 {% endblock %}
 {% block content %}
