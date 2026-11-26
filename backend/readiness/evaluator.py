@@ -87,6 +87,8 @@ RECOVERY_PLAN_MISSING = "RECOVERY_PLAN_MISSING"
 RECOVERY_ONCALL_NOT_ENGINEER = "RECOVERY_ONCALL_NOT_ENGINEER"  # level "review"
 EXPIRY_NOT_POSITIVE = "EXPIRY_NOT_POSITIVE"
 ROBOT_NOT_AT_HUB = "ROBOT_NOT_AT_HUB"  # Slice 4 contract C3
+# v2 03D (contract 15.7): an unresolved operator interruption from an earlier run (same SQL gate)
+ROBOT_INTERRUPTION_UNRESOLVED = "ROBOT_INTERRUPTION_UNRESOLVED"
 # Slice 7 (docs/07a_production_guardrails_contract.md)
 INSPECTION_TEMPLATE_NOT_APPROVED = "INSPECTION_TEMPLATE_NOT_APPROVED"  # X-1 R1-2 (production)
 POLICY_LACKS_INSPECTION = "POLICY_LACKS_INSPECTION"  # X-1 R1-6 (production)
@@ -118,6 +120,7 @@ BLOCKER_CODES = (
     RECOVERY_ONCALL_NOT_ENGINEER,
     EXPIRY_NOT_POSITIVE,
     ROBOT_NOT_AT_HUB,
+    ROBOT_INTERRUPTION_UNRESOLVED,
     INSPECTION_TEMPLATE_NOT_APPROVED,
     POLICY_LACKS_INSPECTION,
     PERIODIC_INSPECTION_INTERVAL_UNKNOWN,
@@ -394,10 +397,12 @@ def _gate_custody(w: _World, b: _Blockers) -> None:
     execution run. Same SQL definition the authorization and departure triggers use."""
     if w.robot is None:
         return
-    from execution.custody import departure_problem  # execution depends on readiness, not the reverse
+    from execution.custody import departure_problem, unresolved_interruption  # execution depends on readiness
 
     problem = departure_problem(w.robot.pk)
-    if problem:
+    if (unresolved := unresolved_interruption(problem)) is not None:  # v2 03D, contract 15.7
+        b.add(ROBOT_INTERRUPTION_UNRESOLVED, unresolved.message, unresolved.action)
+    elif problem:
         b.add(
             ROBOT_NOT_AT_HUB,
             problem[:1].upper() + problem[1:],

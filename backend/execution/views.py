@@ -37,7 +37,14 @@ from execution import policy as pol
 from execution import reconciliation as recon
 from execution import sessions as ses
 from execution import site_checks as sck
-from execution.custody import Custody, current_custody, open_run_id
+from execution.custody import (
+    ROBOT_INTERRUPTION_UNRESOLVED,
+    Custody,
+    current_custody,
+    departure_problem,
+    open_run_id,
+    unresolved_interruption,
+)
 from execution.dossier import visit_dossier
 from execution.models import (
     CUSTODY_KINDS,
@@ -593,6 +600,13 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
     )
     title, text = NEXT_STEPS[step]
     base = _base(request)
+    # v2 03D (contract 15.7): a closed run whose robot still has an unresolved interruption says why the robot
+    # cannot leave again (the same SQL gate readiness reads; one statement, closed runs only)
+    departure_notice = None
+    if summary["closed"]:
+        unresolved = unresolved_interruption(departure_problem(run.robot_id))
+        if unresolved is not None:
+            departure_notice = {"code": ROBOT_INTERRUPTION_UNRESOLVED, "message": unresolved.message}
     # v2 03C-3 (contract 14.1): what the phone last REPORTED, for the ops lead; never shown as live
     device_report = field_sync.last_device_report(run) if base["is_ops_lead"] else None
     return render(
@@ -601,6 +615,7 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
         {
             **summary,
             "device_report": device_report,
+            "departure_notice": departure_notice,
             "tz": tz,
             "custody_rows": custody,
             "unverified": unverified,

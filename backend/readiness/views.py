@@ -187,6 +187,7 @@ BLOCKER_PERMISSION: list[tuple[tuple[str, ...], str]] = [
     (("EVIDENCE_", "BATTERY_", "EQUIPMENT_"), "readiness.record_evidence"),
     (("RECOVERY_",), "readiness.record_recovery_plan"),
     (("ROBOT_NOT_AT_HUB",), "readiness.record_departure"),
+    (("ROBOT_INTERRUPTION_UNRESOLVED",), "execution.triage_incident"),  # v2 03D, contract 15.7
 ]
 
 

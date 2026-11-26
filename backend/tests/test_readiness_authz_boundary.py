@@ -700,6 +700,8 @@ SQL_COVERAGE: dict[str, Any] = {
     "RECOVERY_ONCALL_NOT_ENGINEER": (GAP, "review item (role of the on-call person), never a blocker"),
     "EXPIRY_NOT_POSITIVE": "expires_at must be in the future",
     "ROBOT_NOT_AT_HUB": "is not at hub",  # Slice 4 C3: execution_robot_departure_problem (table trigger)
+    # v2 03D (contract 15.7): an unresolved operator interruption from an earlier run (execution/0011)
+    "ROBOT_INTERRUPTION_UNRESOLVED": "has an unresolved interruption (%s); it must be resolved first",
     "PLANNING_SITE_NOT_ASSESSED": "no approved, current site assessment covers the visit date",
     "PLANNING_SITE_NOT_ELIGIBLE": "the site was assessed as not eligible",
     "PLANNING_SITE_RESTRICTED": "the site assessment has restrictions",
