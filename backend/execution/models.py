@@ -616,3 +616,154 @@ class EscalationDeadlineSetWithdrawal(models.Model):
 
     def __str__(self) -> str:
         return f"withdrawn deadline set {self.deadline_set_id}"
+
+
+# ------------------------------------------------------------------------------------------------------------
+# v2 03C-1: the field-command ledger (docs/13_v2_phase03_contract.md 14.3, 14.5, 14.8; field_ledger.py).
+# All three tables are append-only, ops_app has SELECT only, and they are written only by the SECURITY
+# DEFINER functions of execution/0009 (execution_field_record, _abandon and _report_device).
+
+FIELD_CHANNELS = [("ordinary", "Ordinary"), ("protective", "Protective")]
+FIELD_OUTCOMES = [("confirmed", "Confirmed"), ("rejected", "Rejected"), ("abandoned", "Abandoned")]
+FIELD_TIME_FLAGS = [
+    ("ok", "Phone time within bounds"),
+    ("missing", "No phone time"),
+    ("out_of_range", "Phone clock out of range"),
+    ("", "Not applicable (abandonment)"),
+]
+
+
+class FieldCommand(models.Model):
+    """One durable decision about one field command (or an abandonment barrier).
+
+    ``key`` and ``identity_digest`` are the command's immutable identity (14.8 item 2). ``sent_seq`` is the
+    sequence the device sent; ``seq`` is the sequence this row DECIDES (null when it decides none: protective
+    commands and rejections that do not take a sequence). Unique (run, generation, seq) where seq is set, so
+    one sequence of one generation is decided once. An ``abandoned`` row is the barrier of its generation (one
+    per generation) and opens the next generation (FieldGeneration)."""
+
+    key = models.UUIDField(unique=True)
+    # NULL only on an abandonment barrier (it has no device identity)
+    identity_digest = models.CharField(max_length=64, null=True, blank=True)  # noqa: DJ001
+    actor = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    device_id = models.CharField(max_length=64, blank=True)
+    run = models.ForeignKey(ExecutionRun, on_delete=models.PROTECT, related_name="field_commands")
+    channel = models.CharField(max_length=12, choices=FIELD_CHANNELS)
+    generation = models.PositiveIntegerField(null=True, blank=True)
+    seq = models.PositiveIntegerField(null=True, blank=True)
+    sent_seq = models.PositiveIntegerField(null=True, blank=True)
+    command = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict)
+    device_observed_at = models.DateTimeField(null=True, blank=True)
+    device_time_flag = models.CharField(max_length=16, choices=FIELD_TIME_FLAGS, blank=True)
+    causal = models.JSONField(null=True, blank=True)
+    received_at = models.DateTimeField()
+    decided_at = models.DateTimeField()
+    outcome = models.CharField(max_length=10, choices=FIELD_OUTCOMES)
+    reason_code = models.CharField(max_length=40, blank=True)
+    message = models.TextField(blank=True)
+    result = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = "execution_field_command"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "generation", "seq"],
+                condition=Q(seq__isnull=False),
+                name="uniq_field_command_run_generation_seq",
+            ),
+            models.UniqueConstraint(
+                fields=["run", "generation"],
+                condition=Q(outcome="abandoned"),
+                name="uniq_field_command_one_barrier_per_generation",
+            ),
+            models.CheckConstraint(condition=_in("channel", FIELD_CHANNELS), name="field_command_channel"),
+            models.CheckConstraint(condition=_in("outcome", FIELD_OUTCOMES), name="field_command_outcome"),
+            models.CheckConstraint(
+                condition=_in("device_time_flag", FIELD_TIME_FLAGS), name="field_command_time_flag"
+            ),
+            # protective: no sequence; ordinary: a generation and a sent sequence, both from 1
+            models.CheckConstraint(
+                condition=(
+                    Q(channel="protective", seq__isnull=True, sent_seq__isnull=True)
+                    | Q(channel="ordinary", generation__gte=1, sent_seq__gte=1)
+                ),
+                name="field_command_channel_sequence",
+            ),
+            models.CheckConstraint(
+                condition=Q(seq__isnull=True) | Q(seq=models.F("sent_seq")), name="field_command_seq_is_sent"
+            ),
+            # an ordinary confirmation always decides its sequence; an abandonment is a barrier at its seq
+            models.CheckConstraint(
+                condition=~Q(outcome="confirmed", channel="ordinary") | Q(seq__isnull=False),
+                name="field_command_confirmed_decides_seq",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        outcome="abandoned",
+                        channel="ordinary",
+                        seq__isnull=False,
+                        identity_digest__isnull=True,
+                    )
+                    | (~Q(outcome="abandoned") & Q(identity_digest__regex=r"^[0-9a-f]{64}$"))
+                ),
+                name="field_command_identity",
+            ),
+            models.CheckConstraint(
+                condition=Q(outcome="confirmed", reason_code="")
+                | (~Q(outcome="confirmed") & ~Q(reason_code="")),
+                name="field_command_reason_code",
+            ),
+            models.CheckConstraint(
+                condition=Q(decided_at__gte=models.F("received_at")),
+                name="field_command_decided_after_received",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.key} {self.outcome}"
+
+
+class FieldGeneration(models.Model):
+    """Generation g >= 2 of a run's ordinary stream, opened by the abandonment barrier of generation g - 1.
+    Generation 1 is implicit (no row). The current generation of a run is the highest row, else 1."""
+
+    run = models.ForeignKey(ExecutionRun, on_delete=models.PROTECT, related_name="+")
+    generation = models.PositiveIntegerField()
+    barrier = models.OneToOneField(FieldCommand, on_delete=models.PROTECT, related_name="+")
+    opened_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    opened_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "execution_field_generation"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "generation"], name="uniq_field_generation_run_generation"
+            ),
+            models.CheckConstraint(condition=Q(generation__gte=2), name="field_generation_from_two"),
+        ]
+
+    def __str__(self) -> str:
+        return f"run {self.run_id} generation {self.generation}"
+
+
+class FieldDeviceReport(models.Model):
+    """The unsent-step count a device last reported for a run (10.F: "last reported unsent count"). The newest
+    row wins."""
+
+    device_id = models.CharField(max_length=64)
+    run = models.ForeignKey(ExecutionRun, on_delete=models.PROTECT, related_name="+")
+    actor = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    unsent_count = models.PositiveIntegerField()
+    reported_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "execution_field_device_report"
+        ordering = ["id"]
+        indexes = [models.Index(fields=["run", "reported_at"], name="field_device_report_run_idx")]
+
+    def __str__(self) -> str:
+        return f"{self.device_id} run {self.run_id}: {self.unsent_count}"
