@@ -86,6 +86,17 @@ APP_FUNCTIONS: dict[str, str] = {
     "operations_lift_pause(bigint,bigint,text,text)": "regional ops lead only",
     # v2 03B-4: a home's zone (tests/test_v2_03b_site_zone.py)
     "planning_set_site_zone(bigint,bigint,bigint,text,text)": "regional ops lead only, with a reason",
+    # v2 03C-1: the field-command ledger (tests/test_v2_03c_ledger.py)
+    "execution_field_record(bigint,bigint,uuid,text,text,text,integer,integer,text,jsonb,"
+    "timestamp with time zone,text,jsonb,text,text,text,jsonb)": (
+        "crew of the run or the ops lead, with a current field grant at the run's hub"
+    ),
+    "execution_field_abandon(bigint,bigint,integer,integer,text,text)": (
+        "crew of the run or the ops lead, with a current field grant at the run's hub"
+    ),
+    "execution_field_report_device(bigint,bigint,text,integer)": (
+        "crew of the run or the ops lead, with a current field grant at the run's hub"
+    ),
 }
 
 # signature -> why ops_app must NOT execute it
@@ -172,6 +183,17 @@ ACTOR_CALLS: dict[str, str] = {
     ),
     "operations_lift_pause(bigint,bigint,text,text)": "SELECT operations_lift_pause({a}, 0, 'x', '')",
     "planning_set_site_zone(bigint,bigint,bigint,text,text)": "SELECT planning_set_site_zone({a}, 0, NULL, 'x', '')",
+    "execution_field_record(bigint,bigint,uuid,text,text,text,integer,integer,text,jsonb,"
+    "timestamp with time zone,text,jsonb,text,text,text,jsonb)": (
+        "SELECT execution_field_record({a}, 0, gen_random_uuid(), repeat('a', 64), 'dev', 'protective', NULL, NULL, "
+        "'incident.report', '{{}}', NULL, 'missing', NULL, 'confirmed', '', '', '{{}}')"
+    ),
+    "execution_field_abandon(bigint,bigint,integer,integer,text,text)": (
+        "SELECT execution_field_abandon({a}, 0, 1, 1, 'x', '')"
+    ),
+    "execution_field_report_device(bigint,bigint,text,integer)": (
+        "SELECT execution_field_report_device({a}, 0, 'dev', 1)"
+    ),
 }
 
 # Hub-owned tables written only through the functions above: ops_app may read them and nothing else.
@@ -190,6 +212,9 @@ GUARDED_TABLES = [
     "accounts_rolegrant",
     "planning_travel_time",  # v2 03B-1
     "operations_region_pause",  # v2 03B-1
+    "execution_field_command",  # v2 03C-1
+    "execution_field_generation",
+    "execution_field_device_report",
 ]
 
 DEFINER_SQL = """

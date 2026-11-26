@@ -26,7 +26,7 @@ READERS (plain, STABLE, fixed search_path, EXECUTE for ops_app; the run row must
            seq < next -> SEQ_TAKEN (ref_id: the row that decided it)
 
 WRITERS (SECURITY DEFINER, owned by ops_owner, fixed search_path, EXECUTE for ops_app only). Each refuses a NULL,
-zero, unknown, inactive or role-less actor first (insufficient_privilege, DETAIL NOT_YOUR_RUN), before any lock;
+zero, unknown, inactive or role-less actor first (insufficient_privilege, DETAIL NOT_PERMITTED), before any lock;
 then locks the run FOR UPDATE; then requires a crew member of the run or the (regional) ops lead, holding a
 current ops_lead or field_operator grant at the run's hub (hub_actor_has_at: grants FOR SHARE).
   execution_field_record(actor, run, key, digest, device, channel, generation, seq, command, payload,
@@ -177,7 +177,7 @@ LANGUAGE plpgsql VOLATILE SET search_path = public, pg_temp AS $fn$
 DECLARE x execution_executionrun;
 BEGIN
   IF NOT hub_actor_has(p_actor, {FIELD_ROLES}) THEN
-    PERFORM execution_field_deny('NOT_YOUR_RUN', 'Sign in as a crew member of this run or the ops lead');
+    PERFORM execution_field_deny('NOT_PERMITTED', 'You have no field role');
   END IF;
   SELECT * INTO x FROM execution_executionrun WHERE id = p_run FOR UPDATE;
   IF NOT FOUND THEN
