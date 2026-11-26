@@ -79,7 +79,7 @@ def _zone_world(prefix: str) -> SimpleNamespace:
     zones.set_hub_home_zone(w.ops, hub_code=w.hub.code, zone_code="ZA")
     for a, b in ((w.za, w.zb), (w.zb, w.za)):
         travel.set_travel_time(w.ops, from_zone_id=a.pk, to_zone_id=b.pk, minutes=30, source="demo")
-    zones.set_site_zone(w.ops, site_code="S-1", hub_code=w.hub.code, zone_code="ZB")
+    zones.set_site_zone(w.ops, site_code="S-1", hub_code=w.hub.code, zone_code="ZB", reason="SYN: home zone")
     plan(w, w.visit)
     ps.confirm_visit(w.ops, visit_code=w.visit)
     record_all_evidence(w, w.visit)

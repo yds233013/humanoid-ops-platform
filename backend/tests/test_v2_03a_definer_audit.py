@@ -84,6 +84,8 @@ APP_FUNCTIONS: dict[str, str] = {
     ),
     "operations_pause_region(bigint,bigint,bigint,text,text)": "regional ops lead or safety_pause at the hub",
     "operations_lift_pause(bigint,bigint,text,text)": "regional ops lead only",
+    # v2 03B-4: a home's zone (tests/test_v2_03b_site_zone.py)
+    "planning_set_site_zone(bigint,bigint,bigint,text,text)": "regional ops lead only, with a reason",
 }
 
 # signature -> why ops_app must NOT execute it
@@ -169,6 +171,7 @@ ACTOR_CALLS: dict[str, str] = {
         "SELECT operations_pause_region({a}, {hub}, NULL, 'x', '')"
     ),
     "operations_lift_pause(bigint,bigint,text,text)": "SELECT operations_lift_pause({a}, 0, 'x', '')",
+    "planning_set_site_zone(bigint,bigint,bigint,text,text)": "SELECT planning_set_site_zone({a}, 0, NULL, 'x', '')",
 }
 
 # Hub-owned tables written only through the functions above: ops_app may read them and nothing else.
