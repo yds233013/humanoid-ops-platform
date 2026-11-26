@@ -89,27 +89,27 @@ def test_options_are_labelled_for_the_window_and_free_first(w):
     v2 = new_visit(w, h0=11, h1=12)  # overlaps V1's crew, robot and van
     opts = opt.plan_options(Visit.objects.get(code=v2))
     assert _labels(opts.robots) == [
-        "R-02 · free",
-        f"R-01 · busy {w.v1} until 14:50",
-        "R-03 · not ready: on hold",
+        "Robot R-02 · free",
+        f"Robot R-01 · busy {w.v1} until 14:50",
+        "Robot R-03 · not ready: on hold",
     ]
     ops, field, field2 = w.ops.username, w.field.username, w.field2.username
     assert _labels(opts.leads) == [
-        f"P-3 · {field2} · free",
-        f"P-1 · {ops} · busy {w.v1} 08:40–11:50",
-        f"P-2 · {field} · not qualified as lead",
+        f"{field2} (P-3) · free",
+        f"{ops} (P-1) · busy {w.v1} 08:40–11:50",
+        f"{field} (P-2) · not qualified as lead",
     ]
     assert [o.status for o in opts.seconds] == ["free", "busy", "busy"]
-    assert _labels(opts.seconds)[0] == f"P-3 · {field2} · free"
+    assert _labels(opts.seconds)[0] == f"{field2} (P-3) · free"
     assert _labels(opts.vehicles) == [
-        "VAN-2 · free",
-        f"VAN-1 · busy {w.v1} until 11:50",
-        "VAN-X · capacity not recorded",
+        "Vehicle VAN-2 · free",
+        f"Vehicle VAN-1 · busy {w.v1} until 11:50",
+        "Vehicle VAN-X · capacity not recorded",
     ]
     # the page shows the same labels, in the same order, with the codes as values (J5-3: person labels)
     html = _html(_client(w.ops).get(f"/planning/visits/{v2}/"))
     assert [x[1] for x in _select(html, "robot")] == _labels(opts.robots)
-    assert _select(html, "lead")[0][:2] == ("P-3", f"P-3 · {field2} · free")
+    assert _select(html, "lead")[0][:2] == ("P-3", f"{field2} (P-3) · free")
     assert "Free options are listed first" in html
 
 

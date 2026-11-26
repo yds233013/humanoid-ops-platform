@@ -689,31 +689,15 @@ def _readiness_card(row: VisitRow, why: list[str], since: datetime, roles: set[s
 
 
 def _read_issues(t: Today, roles: set[str]) -> None:
-    page = open_exceptions(t.at, limit=INBOX_LIMIT, include_readiness=False)
-    items = _scope_issues(t, page.items)
+    # Product debt (contract 13, 15.11): the hub scope is applied in SQL BEFORE the limit (open_exceptions'
+    # hub_ids, the operations.scope.keep_issues rule), so a hub viewer's list is never cut short by other
+    # hubs' issues and the "+" on the count means more of THEIR issues exist. A regional viewer is unchanged.
+    page = open_exceptions(t.at, limit=INBOX_LIMIT, include_readiness=False, hub_ids=t.hub_ids)
+    items = list(page.items)
     t.inbox_cards = [card_for(x, roles) for x in items if x.code not in BLOCKER_CODES]
     t.issue_count = len(items)
     t.issue_count_exact = page.next_cursor is None
     t.issues_ok = True
-
-
-def _scope_issues(t: Today, items: list[OpsException]) -> list[OpsException]:
-    """Keep issues about the viewer's hubs' robots and visits; an issue about neither (a missing setting, a
-    configuration) is shown to everyone who can read Today."""
-    if t.hub_ids is None:
-        return list(items)
-    from fleet.models import Robot
-
-    robot_hubs = dict(
-        Robot.objects.filter(code__in={x.robot for x in items if x.robot}).values_list("code", "hub_id")
-    )
-    _ids, visit_hubs = _visit_hubs([], sorted({x.visit for x in items if x.visit}))
-    out = []
-    for x in items:
-        hub = robot_hubs.get(x.robot) if x.robot else (visit_hubs.get(x.visit) if x.visit else None)
-        if (not x.robot and not x.visit) or hub in t.hub_ids:
-            out.append(x)
-    return out
 
 
 def _read_blockers(t: Today) -> None:

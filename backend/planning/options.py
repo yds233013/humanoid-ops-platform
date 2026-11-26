@@ -3,9 +3,10 @@
 READ ONLY. Nothing here books, reserves, approves, locks or writes an audit row; the operator still presses
 "Save plan", and the guarded ``planning.services.plan_visit`` re-checks everything under its own locks.
 
-Option labels ("NB-011 · free", "P-111 · Jordan Lee · busy V-0056 12:35–16:25", "NB-012 · not ready: on
-hold") are computed for the visit's current window with a fixed number of set-based statements, whatever the
-fleet size:
+Option labels, names first and codes second (design spec 14 principle 2; product debt, contract 15.11):
+"Robot NB-011 · free", "Jordan Lee (P-111) · busy V-0056 12:35–16:25", "Robot NB-012 · not ready: on hold",
+"Vehicle VAN-1 · free" (a robot or vehicle has no name of its own). They are computed for the visit's current
+window with a fixed number of set-based statements, whatever the fleet size:
 
 * robots: one read of ``operations_robot_eligibility`` (the set-based view that is oracle-tested equal to
   ``fleet.services.evaluate_eligibility``, i.e. the planner's own robot check) + one approved-profile lookup
@@ -58,6 +59,14 @@ ROBOT_SQL = (
     "CROSS JOIN LATERAL fleet_planning_location(e.robot_id) l "
     "WHERE e.lifecycle <> 'retired' ORDER BY e.robot_code"
 )
+
+
+def person_text(person: Any) -> str:
+    """The person's name first, the code second, e.g. "Jordan Lee (P-111)" (the review's own wording); the
+    code alone when the account has no name."""
+    user = person.user
+    name = (user.get_full_name() or user.get_username()) if user is not None else ""
+    return f"{name} ({person.code})" if name else person.code
 
 
 @dataclass
@@ -325,7 +334,7 @@ def options_at(
         out.robots.append(
             Option(
                 code,
-                f"{code} · {note}" + (f" · {risk}" if risk else ""),
+                f"Robot {code} · {note}" + (f" · {risk}" if risk else ""),
                 status,
                 robot_id == selected[0],
                 world.robots.get(robot_id),
@@ -360,7 +369,12 @@ def options_at(
                 status, note = FREE, "free"
             bucket.append(
                 Option(
-                    person.code, f"{person.label} · {note}", status, person.pk == selected_id, person, note
+                    person.code,
+                    f"{person_text(person)} · {note}",
+                    status,
+                    person.pk == selected_id,
+                    person,
+                    note,
                 )
             )
         # v2 03B-3: people based at the visit's hub first (a home hub confers no authority; it is only where
@@ -384,7 +398,9 @@ def options_at(
             status, note = BUSY, f"busy {c[0]} until {_until(c[2], end)}"
         else:
             status, note = FREE, "free"
-        out.vehicles.append(Option(v.code, f"{v.code} · {note}", status, v.pk == selected[3], v, note))
+        out.vehicles.append(
+            Option(v.code, f"Vehicle {v.code} · {note}", status, v.pk == selected[3], v, note)
+        )
     out.vehicles = _sort(out.vehicles)
     return out
 
@@ -543,8 +559,8 @@ def suggest(visit: Visit, opts: PlanOptions) -> Suggestion:
                     if robot.at_risk
                     else []
                 ),
-                f"{lead.obj.label} is qualified as lead and has no other booking in this window.",
-                f"{second.obj.label} is qualified as second and has no other booking in this window.",
+                f"{person_text(lead.obj)} is qualified as lead and has no other booking in this window.",
+                f"{person_text(second.obj)} is qualified as second and has no other booking in this window.",
                 f"Vehicle {vehicle.code} has a recorded capacity and restraint kit and no other trip "
                 "in this window.",
                 # v2 03B-1 (10.H): which approved matrix values produced this suggestion
