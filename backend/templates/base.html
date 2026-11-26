@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Fleet{% endblock %} · Ops Platform</title>
+<script>document.documentElement.classList.add('js')</script>
 <style>
 /* ---- Design system (01A). One stylesheet; tokens first. All text/background pairs are >= 4.5:1
    (tests/test_ui_foundation.py checks them). ---- */
@@ -39,6 +40,10 @@ main{max-width:1180px;margin:0 auto;padding:var(--s4) var(--s4) 64px}
 .usermenu .pop a:hover,.usermenu .pop button:hover{background:var(--neutralbg)}
 .usermenu .pop .who{padding:6px 10px;color:var(--soft);font-size:var(--fs-xs)} .usermenu .pop hr{border:0;border-top:1px solid var(--line);margin:var(--s1) 0}
 .usermenu .pop .grp{padding:6px 10px 2px;color:var(--soft);font-size:var(--fs-xs);font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+/* 03B closure: on phones (<=700px, with JavaScript) the section list folds behind "Menu" with the user menu;
+   the brand, the demo badge and the Menu button stay in one row, the section's own subnav stays one row. Without
+   JavaScript nothing folds. Page messages (pause banners, refusals) live in <main> and are never folded. */
+.navbtn{display:none}
 .subnav{background:var(--card);border-bottom:1px solid var(--line)} .subnav .hdr{min-height:44px;gap:var(--s1);overflow-x:auto}
 .subnav a{color:var(--soft)!important;padding:10px var(--s3);font-size:var(--fs-sm);font-weight:600;border-bottom:3px solid transparent;white-space:nowrap} .subnav a[aria-current]{color:var(--ink)!important;border-bottom-color:var(--blue)}
 
@@ -142,7 +147,17 @@ button.danger{background:var(--red);color:#fff;border-color:var(--red)}
 .decision.waiting-note{border-color:var(--line);background:var(--neutralbg)}
 /* 02E walk: at tablet width (701-900 px) the nav wraps onto its own line like on phones, so every section stays visible */
 @media (min-width:701px) and (max-width:900px){.hdr{flex-wrap:wrap} .primary-nav{order:3;flex-basis:100%;flex-wrap:wrap;overflow-x:visible} .demo-badge{margin-left:auto}}
-@media (max-width:700px){main td,main th{overflow-wrap:anywhere} main table.stack td,main table.stack td::before{overflow-wrap:break-word;word-break:normal} main{padding:var(--s3) var(--s4) 48px} .site-header{position:static} .hdr{gap:var(--s2);flex-wrap:wrap;padding-top:6px} .brand{display:none} .demo-badge{margin-left:auto} .primary-nav{order:3;flex-basis:100%;flex-wrap:wrap;overflow-x:visible} .primary-nav a{padding:10px 8px} h1{font-size:1.25rem} .card{padding:var(--s3) var(--s4)} input,select,textarea{width:100%} .row>label{width:100%} .row>label input,.row>label select{margin-top:var(--s1)}}
+@media (max-width:700px){main td,main th{overflow-wrap:anywhere} main table.stack td,main table.stack td::before{overflow-wrap:break-word;word-break:normal} main{padding:var(--s3) var(--s4) 48px} .site-header{position:static} .hdr{gap:var(--s2);flex-wrap:wrap;padding-top:6px} .brand{display:none} .demo-badge{margin-left:auto} .primary-nav{order:3;flex-basis:100%;flex-wrap:wrap;overflow-x:visible} .primary-nav a{padding:10px 8px} h1{font-size:1.25rem} .card{padding:var(--s3) var(--s4)} input,select,textarea{width:100%} .row>label{width:100%} .row>label input,.row>label select{margin-top:var(--s1)}
+  .js .hdr{padding-top:0} .js .brand{display:inline-flex;align-items:center;min-height:44px;order:0} .js .demo-badge{order:1}
+  .js .navbtn{display:inline-flex;align-items:center;gap:6px;order:2;min-height:44px;margin:4px 0;padding:0 12px;background:transparent;color:var(--head-ink);border:1px solid #ffffff55;border-radius:8px;font-size:var(--fs-sm)}
+  .js .navbtn[aria-expanded="true"]{background:#ffffff1f}
+  .js .site-header:not(.menu-open) .primary-nav,.js .site-header:not(.menu-open) .usermenu{display:none}
+  .js .menu-open .primary-nav{display:grid;grid-template-columns:1fr 1fr;gap:0 var(--s2);padding:0 0 var(--s2);border-top:1px solid #ffffff33}
+  .js .menu-open .primary-nav a{display:flex;align-items:center;min-height:44px;padding:0 var(--s3);border-bottom:0;border-left:3px solid transparent}
+  .js .menu-open .primary-nav a[aria-current]{border-left-color:#7DB7F0}
+  .js .menu-open .usermenu{order:4;flex-basis:100%;padding:0 0 var(--s2)} .usermenu summary{min-height:44px;display:flex;align-items:center} .usermenu .pop a,.usermenu .pop button{min-height:44px;display:flex;align-items:center}
+  .subnav .hdr{flex-wrap:nowrap;padding-top:0;scrollbar-width:none} .subnav .hdr::-webkit-scrollbar{display:none} .subnav a{min-height:44px;display:inline-flex;align-items:center;flex:0 0 auto}}
+@media (max-width:420px){.brand-long{display:none}}
 {% block extra_css %}{% endblock %}
 </style>
 </head>
@@ -155,6 +170,14 @@ button.danger{background:var(--red);color:#fff;border-color:var(--red)}
 {% block content %}{% endblock %}
 </main>
 <script>
+/* 03B closure: the phone header's Menu button opens and closes the folded section list and user menu
+   (Escape closes it and returns focus to the button). */
+(function(){
+  var b=document.querySelector('[data-navbtn]'); if(!b) return; var h=b.closest('.site-header');
+  function set(open){h.classList.toggle('menu-open',open); b.setAttribute('aria-expanded',open?'true':'false');}
+  b.addEventListener('click',function(){set(b.getAttribute('aria-expanded')!=='true');});
+  h.addEventListener('keydown',function(e){if(e.key==='Escape'&&h.classList.contains('menu-open')){set(false);b.focus();}});
+})();
 /* Stacked rows under 700px: copy each header cell's text onto the cells below it (progressive enhancement:
    without JavaScript the table simply scrolls sideways inside its wrapper). */
 (function(){
