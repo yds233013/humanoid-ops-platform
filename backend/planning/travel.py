@@ -1,8 +1,8 @@
 """Placeholder until 03B-1; replaced at merge.
 
 Frozen read accessor (docs/13_v2_phase03_contract.md 13.5):
-``minutes(from_zone, to_zone, at) -> TravelValue(minutes | None, version_id | None, source)``. A missing pair gives
-minutes None, read as "Travel time unknown" (10.H, 13.4 item 3). Placeholder: every pair is unknown.
+``minutes(from_zone, to_zone, at) -> TravelValue(minutes | None, version_id | None, source)``. A missing pair
+gives minutes None, read as "Travel time unknown" (10.H, 13.4 item 3). Placeholder: every pair is unknown.
 """
 
 from __future__ import annotations

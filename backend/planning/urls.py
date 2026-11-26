@@ -4,6 +4,7 @@ from planning import views
 
 urlpatterns = [
     path("", views.week, name="planning-week"),
+    path("board/", views.board, name="planning-board"),
     path("book/", views.book_visit, name="planning-book"),
     # Customers and homes (order matters: "new" before the <code> pages)
     path("sites/", views.sites, name="planning-sites"),

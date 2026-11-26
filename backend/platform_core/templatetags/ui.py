@@ -186,6 +186,20 @@ def local_time(value: Any) -> str:
 
 
 @register.filter
+def local_time_tz(value: Any) -> str:
+    """Clock time with its zone label from the IANA conversion, never hard-coded: ``14:00 PST`` (v2 03B-2)."""
+    dt = _as_datetime(value)
+    return "" if dt is None else dt.astimezone(workspace_zone()).strftime("%H:%M %Z")
+
+
+@register.filter
+def iso_instant(value: Any) -> str:
+    """The machine value of a ``<time datetime>`` attribute: the instant with its offset (v2 03B-2)."""
+    dt = _as_datetime(value)
+    return "" if dt is None else dt.astimezone(workspace_zone()).isoformat(timespec="minutes")
+
+
+@register.filter
 def local_date(value: Any) -> str:
     """A calendar day: an instant is converted to the workspace zone first; a ``date`` is shown as is."""
     zone = workspace_zone()
@@ -312,7 +326,14 @@ def refusal(message: Any) -> dict[str, Any] | None:
 # (key, label, url, permission or None, url prefixes that make it the active section)
 NAV: list[tuple[str, str, str, str | None, tuple[str, ...]]] = [
     ("today", "Today", "/ops/", "operations.read", ("/ops/", "/ops/timeline/")),
-    ("dispatch", "Dispatch", "/planning/", "planning.read", ("/planning/", "/readiness/", "/execution/")),
+    # v2 03B-2: the dispatch board is the default; the week list stays one click away
+    (
+        "dispatch",
+        "Dispatch",
+        "/planning/board/",
+        "planning.read",
+        ("/planning/", "/readiness/", "/execution/"),
+    ),
     ("fleet", "Fleet", "/fleet/", "fleet.read", ("/fleet/",)),
     ("customers", "Customers", "/planning/sites/", "planning.read", ("/planning/sites/",)),
     ("hub", "Hub", "/hub/", "hub.nav", ("/hub/", "/ops/closeout/")),
@@ -326,7 +347,8 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("Timeline", "/ops/timeline/", "operations.read"),
     ],
     "dispatch": [
-        ("Planner", "/planning/", "planning.read"),
+        ("Board", "/planning/board/", "planning.read"),
+        ("Week list", "/planning/", "planning.read"),
         ("Departure readiness", "/readiness/", "readiness.read"),
         ("Field runs", "/execution/", "execution.read"),
         ("My visits", "/execution/mine/", "execution.read"),
@@ -403,6 +425,10 @@ SECTION_PREFIXES: list[tuple[str, str]] = [
 ]
 
 
+# v2 03B-2: a visit page is reached from the dispatch board, so the board stays the highlighted section page
+SUB_ALIASES = {"/planning/visits/": "/planning/board/"}
+
+
 def section_for(path: str) -> str:
     for prefix, key in SECTION_PREFIXES:
         if path.startswith(prefix):
@@ -477,8 +503,9 @@ def site_header(context: template.Context) -> dict[str, Any]:
         for label, url, perm in SECTIONS.get(active, [])
         if _allowed(roles, perm)
     ]
+    here = SUB_ALIASES.get(next((p for p in SUB_ALIASES if path.startswith(p)), ""), path)
     current = max(
-        (x for x in sub if path.startswith(str(x["url"]))), key=lambda x: len(str(x["url"])), default=None
+        (x for x in sub if here.startswith(str(x["url"]))), key=lambda x: len(str(x["url"])), default=None
     )
     if current is not None:
         current["active"] = True

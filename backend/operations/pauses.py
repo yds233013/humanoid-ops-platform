@@ -1,9 +1,9 @@
 """Placeholder until 03B-1; replaced at merge.
 
 Frozen read accessors (docs/13_v2_phase03_contract.md 13.5):
-``active_for(hub_id, zone_id) -> PauseInfo | None`` and ``board_summary(hub_ids) -> dict[hub_id, list[PauseInfo]]``
-(one statement). Placeholder: no pause is ever active. The authorization and departure gates are 03B-1's; this
-module only reads.
+``active_for(hub_id, zone_id) -> PauseInfo | None`` and ``board_summary(hub_ids) -> dict[hub_id,
+list[PauseInfo]]`` (one statement). Placeholder: no pause is ever active. The authorization and departure
+gates are 03B-1's; this module only reads.
 """
 
 from __future__ import annotations

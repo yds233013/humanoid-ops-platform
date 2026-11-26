@@ -1,18 +1,47 @@
 {% extends "base.html" %}{% load ui %}
-{% block title %}{{ visit.code }}{% endblock %}
+{% block title %}{{ home_title }} ({{ visit.code }}){% endblock %}
+{% block extra_css %}
+.code{font-variant-numeric:tabular-nums} #changed,#review,#by-hand{scroll-margin-top:72px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.review h3{margin:var(--s4) 0 var(--s2)} .review h3:first-of-type{margin-top:0}
+.why,.checks,.opts,.np{list-style:none;margin:0;padding:0}
+.why li,.checks li{display:flex;gap:var(--s2);align-items:flex-start;padding:var(--s2) 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)} .why li:last-child,.checks li:last-child{border-bottom:0}
+.mk{flex:0 0 1.25em;text-align:center;font-weight:700}
+.why .lv-blocked .mk,.checks .ck-fail .mk,.np .mk{color:var(--red)} .why .lv-paused .mk,.why .lv-at_risk .mk,.why .lv-review .mk,.checks .ck-risk .mk,.opt.risk .mk{color:var(--amber)} .checks .ck-pass .mk{color:var(--pos)}
+.groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s3)} .groups .grp{margin:0;padding:var(--s3)}
+.opt{display:flex;gap:var(--s2);align-items:flex-start;padding:10px var(--s2);min-height:44px;border-radius:8px;cursor:pointer;font-size:var(--fs-sm)} .opt:hover{background:var(--neutralbg)}
+.opt input{margin-top:3px;width:18px;height:18px;flex:0 0 auto}
+.np li{padding:6px var(--s2);font-size:var(--fs-sm);color:var(--soft)}
+.cur{display:inline-block;margin-left:var(--s1);padding:0 8px;border-radius:999px;border:1px solid var(--line);font-size:var(--fs-xs);color:var(--soft)}
+.calm{color:var(--soft);font-size:var(--fs-sm);margin:var(--s1) 0}
+.diff{margin:0 0 var(--s2)} .diff th[scope=row]{background:transparent;width:22%}
+.verdict{margin:var(--s3) 0 var(--s2);padding:var(--s3) var(--s4);border-radius:var(--radius);border:1px solid var(--blueline);background:var(--bluebg);color:var(--blue)}
+.verdict.v-blocked{border-color:var(--redline);background:var(--redbg);color:var(--red)} .verdict.v-review{border-color:var(--amberline);background:var(--amberbg);color:var(--amber)}
+.changed{border-color:var(--blueline)} .save{margin-top:var(--s3)} .save input[name=reason]{max-width:420px;width:100%}
+.btn{text-decoration:none;display:inline-flex;align-items:center;min-height:44px}
+@media (max-width:700px){.groups{grid-template-columns:1fr} .review .btn,.review button{width:100%;justify-content:center} .diff th[scope=row]{width:auto}}
+{% endblock %}
 {% block content %}
-{% page_header title=visit.code back_url="/planning/" back_label="Planner" %}{{ visit.site|home_label }} · {{ visit|visit_status }} · revision {{ rev.revision_no }} · <a href="/readiness/visits/{{ visit.code }}/">Departure readiness</a>{% endpage_header %}
+{% page_header title=home_title back_url=board_url back_label="Dispatch board" %}<span class="code">{{ visit.code }} · {{ visit.site|home_label }}</span> · {{ hub.name }} · {{ visit|visit_status }} · revision {{ rev.revision_no }} · <a href="/readiness/visits/{{ visit.code }}/">Departure readiness</a>{% endpage_header %}
+{% if changed %}<section class="card changed" id="changed" data-changed="{{ changed.revision }}" aria-labelledby="changed-h"><h2 id="changed-h">What changed</h2>
+{% if changed.rows %}<table class="diff"><thead><tr><th scope="col">What</th><th scope="col">Before</th><th scope="col">After</th></tr></thead><tbody>{% for d in changed.rows %}<tr><th scope="row">{{ d.title }}</th><td>{{ d.before }}</td><td><span aria-hidden="true">→ </span>{{ d.after }}</td></tr>{% endfor %}</tbody></table>
+{% else %}<p class="calm">The robot, crew, vehicle and time are the same as before; the plan was checked and saved again.</p>{% endif %}
+<p class="verdict v-{{ changed.result }}" data-result="{{ changed.result }}"><b>{% if changed.result == "blocked" %}Blocked{% else %}{{ changed.text }}{% endif %}.</b>{% if changed.result == "blocked" %} Saved as a request; it cannot be confirmed until these are fixed.{% endif %}</p>
+{% if changed.reasons %}<ul class="plainlist">{% for t in changed.reasons %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
+</section>{% endif %}
 <div class="card">
   <h2>Planning status (checked now)</h2>
   <span class="badge {{ state }}">{{ label }}</span> <span class="muted">Planning only - not cleared to depart.</span>
   {% if visit.status != "cancelled" %}<p class="muted" style="margin:6px 0 0">{% if visit.status == "requested" %}Next step: choose a robot, a crew and a vehicle below, then save the plan.{% elif visit.status == "planned" %}Next step: the ops lead confirms the visit once nothing is blocking it.{% else %}Confirmed for planning. Departure is approved separately on the readiness page.{% endif %}</p>{% endif %}
-  {% if plain %}<h3>What needs attention</h3>{% include "planning/_blockers.html" %}{% elif visit.status != "cancelled" %}<p>Nothing is blocking this plan.</p>{% endif %}
+  {% if plain and review %}<p class="calm">What needs attention is listed under Review options below.</p>{% elif plain %}<h3>What needs attention</h3>{% include "planning/_blockers.html" %}{% elif visit.status != "cancelled" %}<p>Nothing is blocking this plan.</p>{% endif %}
   {% if charge %}<p data-charge="{{ charge.state }}"><b>Charge at departure:</b> {% if charge.state == "enough" %}{% chip "neutral" "Enough" %}{% elif charge.state == "needs_charge" %}{% chip "warn" "Needs charge" %}{% else %}{% chip "warn" "Charge forecast unknown" %}{% endif %} {{ charge.reason|capfirst }}. <span class="muted">Planning information: departure still needs the battery check.</span></p>{% endif %}
   {% if stock_reserved or stock_needs %}<p data-stock="{% if stock_needs %}{% for n in stock_needs %}{% if n.short %}short{% endif %}{% endfor %}{% else %}ok{% endif %}"><b>Stock:</b> {% for r in stock_reserved %}{{ r.quantity }} {{ r.item.name }} reserved{% if not forloop.last %}, {% endif %}{% endfor %}{% for n in stock_needs %}{% if stock_reserved or not forloop.first %}; {% endif %}{% if n.short %}{% chip "warn" "At risk" %} {{ n.reason }}{% else %}{{ n.missing }} {{ n.item_name }} not reserved yet{% endif %}{% endfor %}. <a href="/hub/stock/">Stock page</a> <span class="muted">Planning information: departure still needs the equipment check.</span></p>{% endif %}
-  <p class="muted">On site {{ start|local_dt }} to {{ end|local_time }} · travel {{ rev.travel_out_min|default:"unknown" }} / {{ rev.travel_back_min|default:"unknown" }} min · tasks {{ rev.tasks|join:", "|default:"-" }}</p>
+  <p class="muted">On site <time datetime="{{ start|iso_instant }}">{{ start|local_dt }}</time> to <time datetime="{{ end|iso_instant }}">{{ end|local_time_tz }}</time> · travel {{ rev.travel_out_min|default:"unknown" }} / {{ rev.travel_back_min|default:"unknown" }} min · tasks {{ rev.tasks|join:", "|default:"-" }}</p>
 </div>
+{% if visit.status != "cancelled" %}{% include "planning/_review.html" %}{% endif %}
 {% if visit.status != "cancelled" %}
-<div class="card"><h2>Plan or reschedule</h2>
+{% if review %}<details class="card fold" id="by-hand"><summary>Plan by hand (every field)</summary>{% endif %}
+<div class="{% if review %}{% else %}card{% endif %}"><h2>Plan or reschedule</h2>
 {% if can.plan %}<p class="muted" style="margin:0 0 6px">Each option says whether it is free for this visit's window (inspection, travel, on site, return and charging). Free options are listed first. The plan is checked again when you save it.</p>
 <p style="margin:0 0 10px"><a class="btn" href="?suggest=1#plan" data-suggest="1">Suggest a free robot, crew and vehicle</a></p>
 {% if suggestion %}<div class="suggestion" data-suggestion="{% if suggestion.found %}found{% else %}none{% endif %}" role="status">
@@ -31,12 +60,13 @@
   <label>Vehicle <select name="vehicle"><option value="">-</option>{% for o in options.vehicles %}<option value="{{ o.code }}"{% if o.selected %} selected{% endif %} data-status="{{ o.status }}">{{ o.label }}</option>{% endfor %}</select></label>
   <label>New start ({{ site_tz }}) <input type="datetime-local" name="start"></label>
   <label>New end <input type="datetime-local" name="end"></label>
-  <label>Reason for change <input name="reason" maxlength="200"></label><button class="primary">Save plan</button>
+  <label>Reason for change <input name="reason" maxlength="200"></label><button{% if not review %} class="primary"{% endif %}>Save plan</button>
 </form>{% else %}<p class="waiting">{{ who_plan }}</p>{% endif %}
 <div class="row" style="margin-top:10px">
   {% if visit.status == "planned" %}{% if can.confirm %}<form method="post" action="/planning/visits/{{ visit.code }}/confirm/">{% csrf_token %}{% form_token %}<button class="primary">Confirm visit</button></form>{% else %}<span class="waiting">{{ who_confirm }}</span>{% endif %}{% endif %}
   {% if can.plan %}<a class="btn" href="/planning/visits/{{ visit.code }}/cancel/">Cancel visit...</a>{% endif %}
 </div></div>
+{% if review %}</details>{% endif %}
 {% endif %}
 <div class="card"><h2>Reservations</h2>
 <div class="tablewrap"><table><thead><tr><th>Resource</th><th>Purpose</th><th>From</th><th>To</th><th>Revision</th><th>State</th></tr></thead><tbody>
