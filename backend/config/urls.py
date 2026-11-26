@@ -3,6 +3,7 @@ from django.urls import include, path
 
 from accounts import api as accounts_api
 from accounts import views as accounts_views
+from execution import field_sync
 from fleet import api as fleet_api
 from fleet import views as fleet_views
 from operations import pause_views
@@ -30,6 +31,9 @@ urlpatterns = [
     path("api/fleet/robots", fleet_api.robots),
     path("api/fleet/robots/<str:code>", fleet_api.robot_detail),
     path("api/fleet/<str:name>", fleet_api.command),
+    # v2 03C-3: the offline field-command protocol (contract 14.1 with 14.8)
+    path("api/field/sync", field_sync.sync, name="field-sync"),
+    path("api/field/abandon", field_sync.abandon, name="field-abandon"),
     # Minimal fleet UI
     path("", core_views.landing, name="landing"),
     path("login/", auth_views.LoginView.as_view()),

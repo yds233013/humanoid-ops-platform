@@ -261,6 +261,8 @@ SETTINGS = {
     # also gets its own operating hours row with the same value)
     "dispatch_lookahead_days": "7",
     "hub_operating_hours": "08:00-20:00",
+    # v2 03C-3: the phone clock tolerance of the field sync (contract 14.4 demo value)
+    "field_clock_skew_min": "2",
 }
 # ------------------------------------------------------------------ v2 03B-3: three fictional hubs
 # Zones per hub (code, name) and the hub's own zone (where its vans leave from and return to).

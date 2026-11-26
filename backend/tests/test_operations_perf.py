@@ -1116,3 +1116,74 @@ def day_bounds_for_quals() -> tuple[Any, Any]:
 
 
 DAY_FOR_BOARD = ow.DAY + timedelta(days=2)  # a scale-fixture day: visit k=1 of every HUB-1 robot
+
+
+# ------------------------------------------------------------------ v2 03C-3: the field sync endpoint
+SYNC_BATCH_MS = 1000  # contract section 8 and 14.6: a batch of 20 commands at p95 of 1 s or less
+
+
+@pytest.mark.perf
+@pytest.mark.django_db(transaction=True)
+def test_field_sync_batch_of_20_p95(request):
+    """POST /api/field/sync with 20 ordinary commands (observations, each through the real session command,
+    its permission check and triggers, in its own transaction) as the crew's second, over HTTP. Reports p95,
+    the median and the statements per batch."""
+    if not _perf_selected(request.config):
+        pytest.skip("run with -m perf")
+    import uuid
+
+    from django.test import Client
+
+    from tests.execution_world import build_execution
+
+    w = build_execution("perf_sync_")
+    c = Client()
+    c.force_login(w.field)
+    seq = 0
+
+    def batch() -> str:
+        nonlocal seq
+        at = db_now().isoformat()
+        commands = []
+        for _ in range(20):
+            seq += 1
+            commands.append(
+                {
+                    "key": str(uuid.uuid4()),
+                    "channel": "ordinary",
+                    "seq": seq,
+                    "last_decided_seq": seq - 1,
+                    "command": "session.observation",
+                    "payload": {"note": f"SYNTHETIC observation {seq}"},
+                    "device_observed_at": at,
+                }
+            )
+        return json.dumps(
+            {"device_id": str(uuid.uuid4()), "run": w.run.code, "generation": 1, "unsent_count": 20,
+             "commands": commands}
+        )  # fmt: skip
+
+    def send(data: str) -> Any:
+        resp = c.post("/api/field/sync", data, content_type="application/json")
+        assert resp.status_code == 200, resp.content
+        assert {r["outcome"] for r in resp.json()["results"]} == {"confirmed"}, resp.content
+        return resp
+
+    send(batch())  # warm-up
+    times, stmts = [], set()
+    for _ in range(RUNS):
+        data = batch()
+        counter = Counter()
+        t0 = time.perf_counter()
+        with connection.execute_wrapper(counter):
+            send(data)
+        times.append((time.perf_counter() - t0) * 1000)
+        stmts.add(counter.n)
+    result = {
+        "p95_ms": round(p95(times), 1),
+        "median_ms": round(sorted(times)[RUNS // 2], 1),
+        "budget_ms": SYNC_BATCH_MS,
+        "statements_per_batch": sorted(stmts),
+    }
+    print("\n/api/field/sync, 20 commands per batch:", json.dumps(result))
+    assert result["p95_ms"] <= SYNC_BATCH_MS, result
