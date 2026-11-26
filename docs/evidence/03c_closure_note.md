@@ -102,3 +102,47 @@ A sync batch of 20 commands runs 631 statements, constant.
 - **Carry-forward items** from the 03B closure (contract 14.7, P1 to P3) are being built in parallel on
   `v2/03-carry`. They will be submitted separately.
 - **Usability** with independent people: UNVERIFIED.
+
+## Narrow closure delta (EM review of 71d4eab, 2026-11-26)
+
+New candidate: `e24c713`, CI run 45834076946 success, 2417 passed, 0 failed. Perf runs 45834078858, 45834096726 and
+45834111585, all success.
+
+| Measurement (p95) | Run 1 | Run 2 | Run 3 | Budget |
+|---|---|---|---|---|
+| Sync, batch of 20 | 561 ms | 381 ms | 318 ms | 1 s |
+| Board | 382 ms | 145 ms | 122 ms | 2 s |
+| Readiness (scale) | 1,536 ms | 1,121 ms | 960 ms | 2 s |
+
+1. **Lock order, fixed** (`execution/0010_field_sync_lock`, merged from 03C-1).
+   - Field claims, abandonment and device reports serialize on `execution_field_sync_lock(run_id)`. That table has no
+     foreign key to the run, so taking it never locks the run row. No online path ever takes it (a test checks the
+     database catalog and the source code).
+   - The domain step then follows the established order: robot, visit, trip, run.
+   - Lock graph section 5 shows the full acquisition order has no cycle.
+   - Tests, run as `ops_app` with the waiter seen in `pg_locks`:
+     - **online-first:** an online transaction holds the robot and the visit, and a field claim waits. Both commit,
+       with no deadlock. With the old run-row-first statement restored locally, this test fails with "deadlock
+       detected".
+     - **field-first:** the online command waits, then completes.
+   - The existing same-key and same-seq races give one outcome each, as before.
+2. **Protective fallback boundary, proven, and one gap fixed** (`execution/0011`, merged from 03C-2;
+   `tests/test_v2_03c_protective.py`, 11 tests).
+   - An invalid stop creates or keeps one interruption, without duplicates.
+   - START and RESUME are blocked by the service, the field endpoint, the online view and a direct SQL insert as
+     `ops_app`. In each case the control succeeds after the interruption is resolved.
+   - Site handover, recovery and `continue_visit` are blocked or do not enable work. Resolving needs triage
+     permission. Holds are unchanged, and the response is always `protective_state`.
+   - **Gap found and fixed:** the robot could be brought back and its run closed, then authorized and sent out on a
+     new run while the operator interruption was still unresolved. `execution_robot_departure_problem` now refuses
+     authorization and departure until every operator interruption on any of the robot's runs is resolved.
+3. **Causal outcome, added** (merged from 03C-3).
+   - Each request may carry `last_decided_outcome` (confirmed, rejected or abandoned). It is untrusted, is stored in
+     the protective causal reference, and is not part of the identity digest.
+   - A device that saw a rejection never has that step treated as confirmed (tested).
+   - Every result carries `final`. `NOT_PERMITTED` gives `final=false`, meaning it may change if access changes.
+4. **Contract 14.9** records the approved deviations 2, 4, 6 and 7.
+
+Open: readiness reports the new interruption refusal under its existing code, `ROBOT_NOT_AT_HUB`. The text is
+correct, but the Today label "The robot is not at the hub" is misleading for this case. Only operator interruptions
+block a new departure; an incident interruption relies on its hold.
