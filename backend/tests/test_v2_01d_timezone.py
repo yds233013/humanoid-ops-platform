@@ -78,12 +78,14 @@ def test_pages_follow_the_workspace_zone_per_request():
     week = c.get(f"/planning/?week={DAY.isoformat()}").content.decode()
     assert f"Times are in {LA} (P" in week and "10:00 to 11:00" in week
     detail = c.get(f"/planning/visits/{code}/").content.decode()
-    assert re.search(rf"On site Tue 8 Dec{Y}, 10:00 PST to 11:00", detail)
+    assert re.search(
+        rf"On site Tue 8 Dec{Y}, 10:00 PST to 11:00", re.sub(r"<[^>]+>", "", detail)
+    )  # 03B-2: <time>
     set_zone(NY)
     week = c.get(f"/planning/?week={DAY.isoformat()}").content.decode()
     assert f"Times are in {NY} (E" in week and "13:00 to 14:00" in week
     detail = c.get(f"/planning/visits/{code}/").content.decode()
-    assert re.search(rf"On site Tue 8 Dec{Y}, 13:00 EST to 14:00", detail)
+    assert re.search(rf"On site Tue 8 Dec{Y}, 13:00 EST to 14:00", re.sub(r"<[^>]+>", "", detail))
     assert "UTC" not in re.sub(r"<details.*?</details>", "", detail, flags=re.S).split("<main>")[-1][:2000]
     # the zone is read once per request, not once per rendered time
     with CaptureQueriesContext(connection) as q:

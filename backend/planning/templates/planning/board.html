@@ -1,0 +1,147 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Dispatch board{% endblock %}
+{% block extra_css %}
+#attention,#hubs,.hub{scroll-margin-top:72px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.code{color:var(--soft);font-weight:400;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
+.bhead{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s3);flex-wrap:wrap;margin:var(--s2) 0 var(--s3)}
+.bhead .sub{color:var(--soft);font-size:var(--fs-sm);margin-top:var(--s1)} .bhead .actions{display:flex;gap:var(--s2);flex-wrap:wrap}
+.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-height:44px}
+.planline{margin:0 0 var(--s4);padding:var(--s2) var(--s3);border-left:4px solid var(--blueline);background:var(--card);border-radius:0 var(--radius) var(--radius) 0;font-size:var(--fs-sm)}
+.controls{display:flex;gap:var(--s3) var(--s5);flex-wrap:wrap;align-items:flex-end;margin:0 0 var(--s4)}
+.controls .grp{display:flex;flex-direction:column;gap:var(--s1)} .controls .grp>.lbl{font-size:var(--fs-xs);font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.4px}
+.seg{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center}
+.seg a{text-decoration:none;display:inline-flex;align-items:center;min-height:44px;min-width:44px;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:var(--fs-sm)}
+.seg a[aria-current]{background:var(--head);color:var(--head-ink);border-color:var(--head)}
+.datepick{display:flex;gap:var(--s2);align-items:center} .datepick input{min-height:44px} .datepick button{min-height:44px}
+.strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s3);margin:0 0 var(--s5)}
+.tile{display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);text-decoration:none;color:var(--ink);min-height:44px}
+a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-height:1.1;font-variant-numeric:tabular-nums;font-weight:700} .tile .what{font-size:var(--fs-sm);font-weight:600} .tile .scope{font-size:var(--fs-xs);color:var(--soft)}
+.tile.warn{background:var(--amberbg);border-color:var(--amberline)} .tile.bad{background:var(--redbg);border-color:var(--redline)}
+.sec{margin:0 0 var(--s6)} .sec>h2{font-size:var(--fs-lg);margin:0 0 var(--s3)} .sec>h2 .count{color:var(--soft);font-weight:400}
+.status{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-size:var(--fs-xs);font-weight:700;border:1px solid var(--line);background:var(--neutralbg);color:var(--ink);white-space:nowrap}
+.status .shape{font-size:.75rem;line-height:1}
+.status.t-bad{background:var(--redbg);color:var(--red);border-color:var(--redline)} .status.t-warn{background:var(--amberbg);color:var(--amber);border-color:var(--amberline)} .status.t-info{background:var(--bluebg);color:var(--blue);border-color:var(--blueline)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--s3);list-style:none;margin:0;padding:0}
+.bcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);display:flex;flex-direction:column;gap:var(--s2);height:100%}
+.bcard[data-status=blocked]{border-left:4px solid var(--red)} .bcard[data-status=paused],.bcard[data-status=at_risk]{border-left:4px solid var(--amberline)}
+.bcard .top{display:flex;justify-content:space-between;align-items:center;gap:var(--s2);font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
+.bcard h3{margin:0;font-size:var(--fs-base)} .bcard p{margin:0;font-size:var(--fs-sm)} .bcard .where{color:var(--soft)}
+.bcard .next{margin-top:auto;padding-top:var(--s1);display:flex;flex-direction:column;gap:var(--s1)} .bcard .who{color:var(--soft);font-size:var(--fs-xs)}
+.more{margin:var(--s2) 0 0;font-size:var(--fs-sm)} .more a{display:inline-flex;align-items:center;min-height:44px;font-weight:600}
+.hub{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin:0 0 var(--s4);overflow:hidden}
+.hubhead{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s3) var(--s5);flex-wrap:wrap;padding:var(--s3) var(--s4);border-bottom:1px solid var(--line)}
+.hubhead h3{margin:0;font-size:var(--fs-lg)} .hubhead h3 a{color:var(--ink);text-decoration:none;display:inline-flex;align-items:center;min-height:44px} .hubhead h3 a:hover{text-decoration:underline} .hubhead .meta{margin:2px 0 0;color:var(--soft);font-size:var(--fs-sm)}
+.hubstats{display:flex;gap:var(--s4);margin:0;flex-wrap:wrap} .hubstats div{display:flex;flex-direction:column;min-width:64px} .hubstats dt{font-size:var(--fs-xs);color:var(--soft)} .hubstats dd{margin:0;font-weight:700;font-size:var(--fs-lg);font-variant-numeric:tabular-nums}
+.pause{margin:0;padding:var(--s2) var(--s4);background:var(--amberbg);color:var(--amber);border-bottom:1px solid var(--amberline);font-size:var(--fs-sm)}
+.cols,.vrow{display:grid;grid-template-columns:118px minmax(0,1.5fr) minmax(0,1.5fr) minmax(0,.8fr) minmax(0,.7fr) minmax(0,1.2fr);gap:var(--s3);align-items:center;padding:var(--s2) var(--s4)}
+.cols .right{text-align:right}
+.cols{font-size:var(--fs-xs);font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.4px;background:#F0F2F6;border-bottom:1px solid var(--line)}
+.vlist{list-style:none;margin:0;padding:0} .vlist li+li{border-top:1px solid var(--line)}
+.vrow{color:var(--ink);text-decoration:none;min-height:44px;font-size:var(--fs-sm)} a.vrow:hover{background:var(--neutralbg)} a.vrow:focus-visible{outline-offset:-3px}
+.vrow .c-time{font-variant-numeric:tabular-nums;white-space:nowrap} .vrow .c-home b{font-weight:600} .vrow .c-home .code{display:block;white-space:nowrap;font-size:var(--fs-xs)} .vrow .none{color:var(--soft)}
+.vrow .c-status{display:flex;flex-wrap:wrap;gap:var(--s1);align-items:center;justify-content:flex-end}
+.zone{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--line);font-size:var(--fs-xs);color:var(--soft)}
+.vrow .c-kit{display:contents}
+.vrow .lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.hubempty{margin:0;padding:var(--s4);color:var(--soft);font-size:var(--fs-sm)} .hubempty b{color:var(--ink)}
+.compact{display:none} .compact details{border-top:1px solid var(--line)} .compact summary{padding:var(--s3) var(--s4);min-height:44px;cursor:pointer;color:var(--blue);font-weight:600;font-size:var(--fs-sm)}
+.compact .calm{margin:0;padding:var(--s3) var(--s4);font-size:var(--fs-sm);color:var(--soft)}
+.openhub{display:none}
+.note{color:var(--soft);font-size:var(--fs-sm);margin:var(--s2) 0 0}
+@media (max-width:900px){
+  .full{display:none} .compact{display:block}
+  .vrow{grid-template-columns:128px minmax(0,1fr) auto;grid-template-areas:"time home status" "time crew status" "time kit status";row-gap:2px;padding:var(--s3) var(--s4)}
+  .vrow .c-time{grid-area:time;align-self:start} .vrow .c-home{grid-area:home} .vrow .c-crew{grid-area:crew;color:var(--soft)} .vrow .c-kit{grid-area:kit;color:var(--soft)} .vrow .c-status{grid-area:status;align-self:start}
+  .vrow .c-kit{display:block} .vrow .c-veh::before{content:" · "}
+}
+@media (max-width:700px){
+  .strip{grid-template-columns:1fr 1fr 1fr;gap:var(--s2)} .tile{padding:var(--s2) var(--s3)} .tile .n{font-size:var(--fs-xl)}
+  .bhead h1{font-size:var(--fs-xl)} .bhead .actions{width:100%} .bhead .actions .btn{flex:1}
+  .controls{flex-direction:column;align-items:stretch} .datepick input{flex:1}
+  .cards{grid-template-columns:1fr} .bcard .btn{width:100%}
+  .hubs-all .compact{display:none} .hubs-all .openhub{display:flex}
+  .openhub{justify-content:space-between;align-items:center;padding:var(--s3) var(--s4);min-height:44px;font-weight:600;font-size:var(--fs-sm);text-decoration:none}
+  .hubstats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s2);width:100%} .hubstats div{min-width:0}
+  .vrow{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"time status" "home home" "crew crew" "kit kit"}
+}
+{% endblock %}
+{% block content %}
+<div class="bhead">
+  <div><h1>Dispatch</h1>
+  <div class="sub"><span data-day="{{ b.day_key }}">{{ day_label }}{% if b.day_key == "today" or b.day_key == "tomorrow" %}, {{ b.day|date:"D j M" }}{% endif %}</span> · {{ scope_label|capfirst }} · times in {% workspace_tz_label %}</div></div>
+  <div class="actions"><a class="btn" href="/planning/{% if q_hub %}?{{ q_hub }}{% endif %}">Week list</a>{% if can_book %}<a class="btn" href="/planning/book/">Book a visit</a>{% endif %}</div>
+</div>
+<p class="planline" data-planning-statement="1"><b>Planning is not departure.</b> "Available for planning" means the plan has no known blocker. It never means a robot may leave: departure is approved separately, on Departure readiness.</p>
+
+<div class="controls">
+  <div class="grp"><span class="lbl" id="daylbl">Day</span>
+  <div class="seg" role="group" aria-labelledby="daylbl">
+    <a href="?{% if q_hub %}{{ q_hub }}{% endif %}"{% if b.day_key == "today" %} aria-current="date"{% endif %}>Today</a>
+    <a href="?day=tomorrow{% if q_hub %}&{{ q_hub }}{% endif %}"{% if b.day_key == "tomorrow" %} aria-current="date"{% endif %}>Tomorrow</a>
+    <form method="get" class="datepick">{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}<label class="sr" for="day-input">Date</label><input id="day-input" type="date" name="day" value="{{ day_iso }}" aria-label="Date"><button type="submit">Show</button></form>
+  </div></div>
+  {% if scope.show_filter %}<div class="grp"><span class="lbl" id="hublbl">Hub</span>
+  <nav class="seg" aria-labelledby="hublbl">
+    <a href="?{% if b.day_key != 'today' %}day={{ b.day_key }}{% endif %}"{% if not scope.code and not scope.refused_code %} aria-current="page"{% endif %}>{% if scope.regional %}All hubs{% else %}All my hubs{% endif %}</a>
+    {% for h in scope.hubs %}<a href="?hub={{ h.code|urlencode }}{% if b.day_key != 'today' %}&day={{ b.day_key }}{% endif %}"{% if scope.code == h.code %} aria-current="page"{% endif %}>{{ h.name }}</a>{% endfor %}
+  </nav></div>{% endif %}
+</div>
+{% if scope.refused_code %}<p class="notice warn" role="alert" data-refused-hub="{{ scope.refused_code }}">You hold no role at hub {{ scope.refused_code }}. Nothing from it is shown.</p>{% endif %}
+
+<div class="strip" data-summary="1">
+  <a class="tile" href="#hubs" data-count="visits"><span class="n">{{ b.visits }}</span><span class="what">Visits {% if b.day_key == "today" or b.day_key == "tomorrow" %}{{ b.day_key }}{% else %}{{ day_label }}{% endif %}</span><span class="scope">{{ scope_label }}</span></a>
+  <a class="tile{% if b.attention_total %} warn{% endif %}" href="#attention" data-count="attention"><span class="n">{{ b.attention_total }}</span><span class="what">Need attention</span><span class="scope">{{ scope_label }}</span></a>
+  <a class="tile{% if b.hubs_paused %} warn{% endif %}" href="#hubs" data-count="paused"><span class="n">{{ b.hubs_paused }}</span><span class="what">Hubs paused</span><span class="scope">{{ scope_label }}</span></a>
+</div>
+
+<section class="sec" id="attention" data-section="attention" aria-labelledby="attention-h">
+<h2 id="attention-h">Needs attention {% if b.attention_total %}<span class="count">({{ b.attention_total }})</span>{% endif %}</h2>
+{% if attention %}<ol class="cards">
+{% for r in attention %}<li><article class="bcard" data-status="{{ r.status }}" data-visit="{{ r.code }}">
+  <div class="top"><span class="status t-{{ r.tone }}"><span class="shape" aria-hidden="true">{{ r.shape }}</span>{{ r.words }}</span>
+  <span><time datetime="{{ r.start|iso_instant }}">{{ r.start|local_time_tz }}</time></span></div>
+  <h3>{{ r.home }} <span class="code">{{ r.home_code }} · {{ r.code }}</span></h3>
+  <p class="where">{{ r.hub_name }} · leaves the hub <time datetime="{{ r.depart|iso_instant }}">{{ r.depart|local_time }}</time></p>
+  <p class="reason" data-reason="1">{{ r.reason }}</p>
+  <div class="next">{% if b.can_plan %}<a class="btn primary" href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options<span class="sr"> for {{ r.home }}, {{ r.code }}</span></a>
+  <span class="who" data-who="1">You can act on this (ops lead).</span>
+  {% else %}<a class="btn" href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options<span class="sr"> for {{ r.home }}, {{ r.code }}</span></a>
+  <span class="who" data-who="1">Only an {{ b.who_plan }} can change it.</span>{% endif %}</div>
+</article></li>{% endfor %}
+</ol>
+{% if b.attention_total > attention|length %}<p class="more"><a href="?{% if q %}{{ q }}&{% endif %}attention=all#attention" data-show-all="{{ b.attention_total }}">Show all ({{ b.attention_total }})</a></p>
+{% elif show_all and b.attention_total > 5 %}<p class="more"><a href="?{{ q }}#attention">Show the first 5</a></p>{% endif %}
+{% else %}<div class="empty" data-empty="attention"><b>No visits need attention at {{ scope_label }} {% if b.day_key == "today" or b.day_key == "tomorrow" %}{{ b.day_key }}{% else %}on {{ day_label }}{% endif %}.</b>Nothing is blocked, paused or at risk.</div>{% endif %}
+</section>
+
+<section class="sec{% if not scope.selected %} hubs-all{% endif %}" id="hubs" data-section="hubs" aria-labelledby="hubs-h">
+<h2 id="hubs-h">By hub</h2>
+{% for h in b.hubs %}<section class="hub" id="hub-{{ h.code }}" data-hub="{{ h.code }}" aria-labelledby="hub-h-{{ h.code }}">
+  <div class="hubhead">
+    <div><h3 id="hub-h-{{ h.code }}"><a href="?hub={{ h.code|urlencode }}{% if b.day_key != 'today' %}&day={{ b.day_key }}{% endif %}#hub-{{ h.code }}">{{ h.name }}</a> <span class="code">{{ h.code }}</span></h3>
+    <p class="meta">{% if h.area %}{{ h.area }} · {% endif %}{% if h.zones %}Zones: {{ h.zones|join:", " }}{% else %}Zones not recorded yet{% endif %}</p></div>
+    <dl class="hubstats" data-hub-stats="{{ h.code }}">
+      <div><dt>Robots available</dt><dd>{{ h.robots.available }}</dd></div>
+      <div><dt>Away</dt><dd>{{ h.robots.away }}</dd></div>
+      <div><dt>Held</dt><dd>{{ h.robots.held }}</dd></div>
+      <div><dt>Crews on shift</dt><dd>{{ h.crews }}</dd></div>
+    </dl>
+  </div>
+  {% if h.pause_text %}<p class="pause" role="status" data-pause="{{ h.code }}"><span aria-hidden="true">◆</span> {{ h.pause_text }}</p>{% endif %}
+  {% if h.rows %}
+  <div class="full">
+    <div class="cols" aria-hidden="true"><span>Time</span><span>Home</span><span>Crew</span><span>Robot</span><span>Vehicle</span><span class="right">Status</span></div>
+    {% include "planning/_board_rows.html" with rows=h.rows %}
+  </div>
+  <div class="compact">
+    {% if h.attention_rows %}{% include "planning/_board_rows.html" with rows=h.attention_rows %}{% else %}<p class="calm">No visits need attention at {{ h.name }}.</p>{% endif %}
+    <details><summary>Show all visits ({{ h.rows|length }})</summary>{% include "planning/_board_rows.html" with rows=h.rows %}</details>
+  </div>
+  <a class="openhub" href="?hub={{ h.code|urlencode }}{% if b.day_key != 'today' %}&day={{ b.day_key }}{% endif %}#hub-{{ h.code }}" data-open-hub="{{ h.code }}"><span>Open {{ h.name }}'s list ({{ h.rows|length }} visit{{ h.rows|length|pluralize }}{% if h.attention_rows %}, {{ h.attention_rows|length }} need{{ h.attention_rows|length|pluralize:"s," }} attention{% endif %})</span><span aria-hidden="true">›</span></a>
+  {% else %}<p class="hubempty" data-empty="hub-{{ h.code }}"><b>No visits planned for {% if b.day_key == "today" or b.day_key == "tomorrow" %}{{ b.day_key }}{% else %}{{ day_label }}{% endif %} at {{ h.name }}.</b>{% if can_book %} <a href="/planning/book/">Book a visit</a>{% endif %}</p>{% endif %}
+</section>{% empty %}<div class="empty" data-empty="hubs"><b>No hubs to show</b>{% if scope.refused_code %}You hold no role at that hub.{% else %}You hold no role at any hub yet. Ask an admin for a role.{% endif %}</div>{% endfor %}
+{% if b.charge_off %}<p class="note" data-charge-off="1">The charge forecast is off (the battery freshness setting is not provisioned), so no visit is marked as needing charge. Departure still needs its battery check.</p>{% endif %}
+<p class="note">Status combines each visit's last saved plan check with what has changed since (holds, maintenance, robot location, charge, stock and regional pauses). Open a visit to run the full plan check again.</p>
+</section>
+{% endblock %}

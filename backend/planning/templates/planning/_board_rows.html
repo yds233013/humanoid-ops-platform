@@ -1,0 +1,7 @@
+{% load ui %}<ul class="vlist">{% for r in rows %}<li><a class="vrow" href="/planning/visits/{{ r.code }}/{% if r.attention %}?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review{% elif q_hub %}?{{ q_hub }}{% endif %}" data-row="{{ r.code }}" data-status="{{ r.status }}">
+<span class="c-time"><time datetime="{{ r.start|iso_instant }}">{{ r.start|local_time }}</time>–<time datetime="{{ r.end|iso_instant }}">{{ r.end|local_time_tz }}</time></span>
+<span class="c-home"><b>{{ r.home }}</b> <span class="code">{{ r.home_code }} · {{ r.code }}</span></span>
+<span class="c-crew"><span class="lbl">Crew: </span>{% if r.crew %}{{ r.crew }}{% else %}<span class="none">Crew not chosen</span>{% endif %}</span>
+<span class="c-kit"><span class="c-robot">{% if r.robot %}Robot {{ r.robot }}{% else %}<span class="none">No robot</span>{% endif %}</span><span class="c-veh"><span class="lbl">Vehicle: </span>{% if r.vehicle %}{{ r.vehicle }}{% else %}<span class="none">No vehicle</span>{% endif %}</span></span>
+<span class="c-status">{% if r.zone %}<span class="zone"><span class="lbl">Zone: </span>{{ r.zone }}</span>{% endif %}<span class="status t-{{ r.tone }}"><span class="shape" aria-hidden="true">{{ r.shape }}</span>{{ r.words }}</span></span>
+</a></li>{% endfor %}</ul>

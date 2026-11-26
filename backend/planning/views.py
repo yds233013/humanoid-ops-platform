@@ -15,8 +15,11 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from accounts.permissions import active_roles, has_permission
+from accounts.roles import PERMISSIONS
+from fleet.models import Robot
 from hub import charging
 from planning import services as p
+from planning.board import home_name
 from planning.forms import (
     AdultsForm,
     AssessmentForm,
@@ -30,9 +33,10 @@ from planning.forms import (
 from planning.models import Reservation, Site, SiteAssessment, Visit
 from planning.options import plan_options, suggest
 from planning.plain import ALREADY_DONE, plain_blockers, refusal_text, role_words, who_can
-from platform_core.commands import CommandError
-from platform_core.hubscope import hub_scope, other_hub_refusal
+from platform_core.commands import CommandError, PermissionDenied
+from platform_core.hubscope import HubScope, hub_scope, other_hub_refusal
 from platform_core.interaction import consume_form_token
+from platform_core.templatetags.ui import localize_utc_text
 from platform_core.timezones import workspace_zone_name
 
 
@@ -57,6 +61,65 @@ def _card(v: Visit) -> dict[str, Any]:
         "state": live.feasibility if live else "cancelled",
         "plain": plain_blockers(live.blockers) if live else [],
     }
+
+
+def _board_view() -> Callable[..., Any]:
+    from operations.views import ops_view  # noqa: PLC0415 - the operations snapshot decorator (GET, one snapshot)
+
+    return ops_view("planning.read")
+
+
+@_board_view()
+def board(request: HttpRequest, at: datetime) -> HttpResponse:
+    """The regional dispatch board (v2 03B-2, spec S1): decisions first, then one section per hub. Read only,
+    built inside one snapshot with a fixed number of statements (planning/board.py)."""
+    from planning import board as b  # noqa: PLC0415
+
+    scope = hub_scope(request)  # the viewer's hubs; ?hub=CODE narrows
+    day, day_key = b.parse_day(request.GET.get("day"), at)
+    data = b.build_board(at, scope, day, day_key)
+    show_all = request.GET.get("attention") == "all"
+    today = at.astimezone(ZoneInfo(workspace_zone_name())).date()
+    return render(
+        request,
+        "planning/board.html",
+        {
+            "b": data,
+            "scope": scope,
+            "attention": data.attention if show_all else data.attention[: b.ATTENTION_LIMIT],
+            "show_all": show_all,
+            "day_label": _day_label(day_key, day),
+            "day_iso": day.isoformat(),
+            "today_iso": today.isoformat(),
+            "scope_label": _scope_label(scope),
+            "q": _board_query(scope, day_key),
+            "q_hub": f"hub={scope.code}" if scope.code else "",
+            "roles": sorted(scope.roles),
+            "can_book": bool(scope.roles & PERMISSIONS["planning.plan"]),
+        },
+    )
+
+
+def _day_label(day_key: str, day: date) -> str:
+    if day_key in ("today", "tomorrow"):
+        return day_key.capitalize()
+    return day.strftime("%a %-d %b")
+
+
+def _scope_label(scope: HubScope) -> str:
+    """Counts are always labelled with what they cover (EM condition: global counts say "all hubs")."""
+    if scope.selected is not None:
+        return scope.selected.name
+    if scope.regional:
+        return "all hubs"
+    return "your hubs" if len(scope.hubs) != 1 else scope.hubs[0].name
+
+
+def _board_query(scope: HubScope, day_key: str) -> str:
+    parts = [f"day={day_key}"] if day_key != "today" else []
+    if scope.code:
+        parts.append(f"hub={scope.code}")
+    return "&".join(parts)
 
 
 @login_required
@@ -108,7 +171,7 @@ def week(request: HttpRequest) -> HttpResponse:
 def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _guard(request)) is not None:
         return deny
-    v = get_object_or_404(Visit.objects.select_related("site"), code=code)
+    v = get_object_or_404(Visit.objects.select_related("site", "hub"), code=code)
     if (deny := other_hub_refusal(request, v.hub_id)) is not None:  # v2 03A-3: another hub's visit
         return deny
     can_plan = has_permission(request.user, "planning.plan")
@@ -116,9 +179,18 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if wants_suggestion and not can_plan:
         return HttpResponseForbidden(who_can("planning.plan"))
     card = _card(v)
-    options = suggestion = None
+    options = suggestion = review = None
+    wants_review = request.GET.get("review") == "1" or any(
+        k in request.GET for k in ("robot", "lead", "second", "vehicle")
+    )
+    departed = v.status != "cancelled" and v.departures.exists()
     if can_plan and v.status != "cancelled":
         options = plan_options(v)  # read only, a fixed number of statements (planning/options.py)
+        if wants_review and not departed:
+            from planning.review import build_review  # noqa: PLC0415
+
+            # v2 03B-2 (spec S2): advisory only; saving runs the guarded plan command again
+            review = build_review(v, request.GET, live=card["live"], opts=options)
         if wants_suggestion:
             suggestion = suggest(v, options)  # read only: books, reserves and records nothing
             if suggestion.found:
@@ -158,8 +230,36 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "who_plan": who_can("planning.plan"),
             "who_confirm": who_can("planning.confirm"),
             "plan_form": PlanForm(),
+            # v2 03B-2 (spec S2, S6)
+            "review": review,
+            "wants_review": wants_review,
+            "departed": departed,
+            "changed": _changed(v, request.GET.get("changed")),
+            "hub": v.hub,
+            "home_title": home_name(v.site),
+            "board_url": "/planning/board/"
+            + (f"?hub={request.GET['hub']}" if request.GET.get("hub") else ""),
+            "refuse_plan": cannot_change_text(v.hub),
+            "q_hub": f"hub={request.GET['hub']}" if request.GET.get("hub") else "",
         },
     )
+
+
+def cannot_change_text(hub: Any) -> str:
+    """Spec S2 "Refused" (S6 formula: what, why, who): names only the visit's own hub."""
+    return f"You can't change visits at {hub.name} ({hub.code}). Ask {_an(role_words('planning.plan'))}."
+
+
+def _an(words: str) -> str:
+    return f"an {words}" if words[:1].lower() in "aeiou" else f"a {words}"
+
+
+def _changed(v: Visit, raw: str | None) -> dict[str, Any] | None:
+    if not raw or not raw.isdigit():
+        return None
+    from planning.review import what_changed  # noqa: PLC0415
+
+    return what_changed(v, int(raw))
 
 
 def _stock_context(v: Visit) -> dict[str, Any]:
@@ -534,7 +634,9 @@ def _redirect_visit(code: str) -> HttpResponse:
 @login_required
 @require_POST
 def plan_view(request: HttpRequest, code: str) -> HttpResponse:
-    v = get_object_or_404(Visit.objects.select_related("site"), code=code)
+    """Save a plan through the ONE guarded plan command (planning.services.plan_visit): its own checks under
+    its locks, then the database triggers. Used by the plan form and by Review options (v2 03B-2, spec S2)."""
+    v = get_object_or_404(Visit.objects.select_related("site", "hub"), code=code)
     form = PlanForm(request.POST)
     if not form.is_valid():
         _not_saved(request, form)
@@ -548,20 +650,81 @@ def plan_view(request: HttpRequest, code: str) -> HttpResponse:
         except CommandError as exc:
             messages.error(request, refusal_text(exc, "planning.plan"))
             return _redirect_visit(code)
-    _run(
-        request,
-        p.plan_visit,
-        permission="planning.plan",
-        ok="Plan saved. The result of the check is shown below.",
-        visit_code=code,
-        robot_code=d["robot"] or None,
-        lead_code=d["lead"] or None,
-        second_code=d["second"] or None,
-        vehicle_code=d["vehicle"] or None,
-        reason=d["reason"] or "replanned",
-        **kw,
+    if consume_form_token(request) != "ok":
+        messages.warning(request, ALREADY_DONE)
+        return _redirect_visit(code)
+    try:
+        result = p.plan_visit(
+            request.user,
+            visit_code=code,
+            robot_code=d["robot"] or None,
+            lead_code=d["lead"] or None,
+            second_code=d["second"] or None,
+            vehicle_code=d["vehicle"] or None,
+            reason=d["reason"] or "replanned",
+            **kw,
+        )
+    except CommandError as exc:
+        messages.error(request, plan_refusal(exc, v, d, kw))
+        return _redirect_visit(code)
+    messages.success(request, plan_saved_text(result))
+    back = f"/planning/visits/{code}/?changed={int(result['revision'])}"
+    if request.POST.get("hub"):
+        back += f"&hub={str(request.POST['hub'])[:12]}"
+    return redirect(f"{back}#changed")
+
+
+def plan_saved_text(result: dict[str, Any]) -> str:
+    """S6: a success message says what is now true and what is still needed."""
+    if result.get("feasibility") == "feasible":
+        return (
+            "Plan saved. Planning feasible: not cleared to depart. "
+            "Next: confirm the visit, then complete departure readiness."
+        )
+    if result.get("feasibility") == "review":
+        return "Plan saved. Requires review: not cleared to depart. Check what needs review below."
+    n = len(result.get("blockers") or [])
+    return (
+        f"Plan saved as a request: {n} problem{'s' if n != 1 else ''} still block it. "
+        "The result of the check is shown below."
     )
-    return _redirect_visit(code)
+
+
+def plan_refusal(exc: CommandError, v: Visit, d: dict[str, Any], kw: dict[str, Any]) -> str:
+    """S6 refusal formula for a plan: what was refused, why in plain words, what to do or who can. The reasons
+    of a blocked reschedule are re-read with the read-only plan check (the same evaluate()), so they are
+    sentences with local times, never codes or UTC."""
+    hub = v.hub
+    if isinstance(exc, PermissionDenied):
+        return f"Refused (not allowed): {cannot_change_text(hub)} Nothing was changed."
+    text = str(exc)
+    if text.startswith("Rescheduling refused"):
+        from planning.models import Person, Vehicle  # noqa: PLC0415
+
+        rev = v.current_revision
+        assert rev is not None
+        robot = Robot.objects.filter(code=d["robot"]).first() if d["robot"] else None
+        plan = p.evaluate(
+            site=v.site,
+            start=kw.get("on_site_start", rev.on_site_start),
+            end=kw.get("on_site_end", rev.on_site_end),
+            travel_out=rev.travel_out_min,
+            travel_back=rev.travel_back_min,
+            tasks=rev.tasks,
+            scopes=rev.required_consent_scopes,
+            robot=robot,
+            lead=Person.objects.filter(code=d["lead"]).first() if d["lead"] else None,
+            second=Person.objects.filter(code=d["second"]).first() if d["second"] else None,
+            vehicle=Vehicle.objects.filter(code=d["vehicle"]).first() if d["vehicle"] else None,
+            visit=v,
+        )
+        why = [b["sentence"] for b in plain_blockers([x for x in plan.blockers if x["level"] == "blocked"])]
+        reasons = " ".join(why) if why else "The plan check found a blocker."
+        return (
+            f"Refused (not possible right now): The new plan for visit {v.code} can't be saved. {reasons} "
+            "Nothing was changed. Pick another option under Review options."
+        )
+    return f"Refused (not possible right now): {localize_utc_text(text).rstrip('.')}. Nothing was changed."
 
 
 @login_required
