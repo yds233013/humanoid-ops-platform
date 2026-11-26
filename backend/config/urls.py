@@ -3,7 +3,7 @@ from django.urls import include, path
 
 from accounts import api as accounts_api
 from accounts import views as accounts_views
-from execution import field_sync
+from execution import field_assets, field_snapshot, field_sync
 from fleet import api as fleet_api
 from fleet import views as fleet_views
 from operations import pause_views
@@ -34,6 +34,12 @@ urlpatterns = [
     # v2 03C-3: the offline field-command protocol (contract 14.1 with 14.8)
     path("api/field/sync", field_sync.sync, name="field-sync"),
     path("api/field/abandon", field_sync.abandon, name="field-abandon"),
+    # v2 03D-2: the read-only run snapshot for the offline field screen (contract 15.1, 15.10)
+    path("api/field/runs/<str:code>/snapshot", field_snapshot.snapshot, name="field-snapshot"),
+    # v2 03D-2: the field screen's scripts, same origin (no staticfiles app); fixed names only
+    path("field/queue.js", field_assets.asset("queue.js"), name="field-queue-js"),
+    path("field/run.js", field_assets.asset("run.js"), name="field-run-js"),
+    path("execution/sw.js", field_assets.asset("sw.js", service_worker=True), name="field-sw-js"),
     # Minimal fleet UI
     path("", core_views.landing, name="landing"),
     path("login/", auth_views.LoginView.as_view()),

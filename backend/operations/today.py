@@ -100,6 +100,11 @@ _BLOCKER_WORDS = {
     "RECOVERY_ONCALL_NOT_ENGINEER": "The recovery plan's on-call person is not an engineer",
     "EXPIRY_NOT_POSITIVE": "The checks would expire before the departure could be approved",
     "ROBOT_NOT_AT_HUB": "The robot is not at the hub",
+    # v2 03D (contract 15.7): the robot code is filled in by blocker_words(code, robot)
+    "ROBOT_INTERRUPTION_UNRESOLVED": (
+        "Robot {robot} has an unresolved interruption from an earlier run. "
+        "Resolve it before requesting departure authorization"
+    ),
     "INSPECTION_TEMPLATE_NOT_APPROVED": "The inspection checklist is not approved for real use",
     "POLICY_LACKS_INSPECTION": "The readiness policy does not require an inspection",
     "PERIODIC_INSPECTION_INTERVAL_UNKNOWN": "The periodic inspection interval is not set",
@@ -122,19 +127,20 @@ DEFAULT_WORDS = "A checklist item is not complete"
 MAX_WHY = 3
 
 
-def blocker_words(code: str) -> str:
+def blocker_words(code: str, robot: str = "") -> str:
     if code in _BLOCKER_WORDS:
-        return _BLOCKER_WORDS[code]
+        text = _BLOCKER_WORDS[code]
+        return text.replace("{robot}", robot) if robot else text.replace("Robot {robot}", "The robot")
     for prefix, text in _FALLBACK_WORDS.items():
         if code.startswith(prefix):
             return text
     return DEFAULT_WORDS
 
 
-def _why_list(codes: list[str]) -> list[str]:
+def _why_list(codes: list[str], robot: str = "") -> list[str]:
     seen: list[str] = []
     for c in codes:
-        w = blocker_words(c)
+        w = blocker_words(c, robot)
         if w not in seen:
             seen.append(w)
     extra = len(seen) - MAX_WHY
@@ -302,7 +308,7 @@ def _visit_row(v: Any, approval: dict[str, Any] | None, today: date) -> VisitRow
         codes = list(v.readiness_blockers)
         if codes:
             hard = hard or any(c not in _AT_RISK_CODES for c in codes)
-            why += [w for w in _why_list(codes) if w not in why]
+            why += [w for w in _why_list(codes, v.robot or "") if w not in why]
         elif not why:
             return VisitRow(
                 status="ready",
@@ -433,7 +439,7 @@ def _read_visits(t: Today) -> None:
     for v, row in zip(tl.visits, rows, strict=True):
         flag = next((f for f in v.flags if f.code == "READINESS_INCOMPLETE_SOON"), None)
         if flag is not None and row.status != "approved":
-            cards.append((row, _why_list(list(v.readiness_blockers)), flag.since))
+            cards.append((row, _why_list(list(v.readiness_blockers), row.robot or ""), flag.since))
     rows += [_run_row(r, t.local_date) for r in tl.runs]
     rows.sort(key=lambda x: (x.day != "today", x.start, x.code))
     today_rows = [r for r in rows if r.day == "today"]
