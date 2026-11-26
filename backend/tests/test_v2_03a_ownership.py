@@ -157,6 +157,9 @@ def test_backfill_on_a_phase02_demo_database_leaves_no_record_without_a_hub(monk
     today = demo.workspace_today()  # the demo is built for today (real command times, practice runs)
     monkeypatch.setattr(demo, "workspace_today", lambda: today)
     monkeypatch.setenv(demo.PASSWORD_ENV, "demo-test-password-4821")
+    # v2 03B-3: a Phase 02 database had one hub and no zones; the demo's 03B additions are left out here
+    monkeypatch.setattr(demo._Builder, "oakland_zones", lambda self: None)
+    monkeypatch.setattr(demo._Builder, "regions", lambda self: None)
     call_command("build_demo_workspace", stdout=StringIO())
     oak = Hub.objects.get()
     assert oak.code == "OAK"

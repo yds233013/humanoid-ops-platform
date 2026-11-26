@@ -1660,9 +1660,10 @@ def hub_lines(s: Summary) -> list[str]:
         )
     if s.attention.get("OAK"):
         out.append(f"  Oakland at risk: visit {s.attention['OAK']} needs charge before it leaves.")
-    out.append(
-        f"  Pause history: zone Lake Merritt of Oakland hub paused and lifted ({PAUSE_REASON.lower()})."
-    )
+    if s.away:  # the South Bay and Marin step ran; it also writes the pause history
+        out.append(
+            f"  Pause history: zone Lake Merritt of Oakland hub paused and lifted ({PAUSE_REASON.lower()})."
+        )
     return out
 
 
