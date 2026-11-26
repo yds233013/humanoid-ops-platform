@@ -12,6 +12,7 @@ SYNTHETIC data only.
 from __future__ import annotations
 
 import re
+from html import unescape
 
 import pytest
 
@@ -410,3 +411,95 @@ def test_no_line_leads_with_van_on_the_dispatch_pages(monkeypatch):
         assert not re.search(r"\b[Vv]ans?\b", text), name  # the word is "vehicle"
     week = pages["week"].content.decode()
     assert "Vehicle VAN-1" in week and "Robot R-01" in week
+
+
+# ================================================================== crew of another hub (planning/0015)
+def _cross_hub_message(w, person: str = "P-9") -> str:
+    from planning.board import person_name
+    from planning.models import Person
+
+    p = Person.objects.get(code=person)
+    return f"{person_name(p)} works at Hub B, not at this visit's hub. Choose crew from {w.hub_a.name}."
+
+
+@pytest.mark.parametrize("field", ["lead", "second"])
+def test_a_crew_member_of_another_hub_is_refused_by_the_plan_command(field, monkeypatch):
+    """A forged POST (the regional ops lead: a resource rule, not a permission) with HB's P-9 as lead or second
+    for a HUB-1 visit: refused by the Python check with the plain message, nothing written; with the Python
+    check bypassed, the database trigger refuses with the same words."""
+    from planning.models import Reservation, VisitRevision
+
+    w = _two_hubs(f"cx{field[0]}_")
+    v = _visit_at(w)
+    fields = {"robot": "R-01", "lead": "P-1", "second": "P-2", "vehicle": "VAN-1", "reason": "SYN forged"}
+    fields[field] = "P-9"
+    before = (VisitRevision.objects.count(), Reservation.objects.count())
+    c = _client(w.ops)
+    page = c.get(f"/planning/visits/{v.code}/").content.decode()
+    fields["_form_token"] = re.search(r'name="_form_token" value="([^"]+)"', page).group(1)
+    out = c.post(f"/planning/visits/{v.code}/plan/", fields, follow=True).content.decode()
+    assert _cross_hub_message(w) in unescape(out)
+    assert (VisitRevision.objects.count(), Reservation.objects.count()) == before
+    # the database boundary: the same refusal when the Python check is skipped
+    monkeypatch.setattr(ps, "crew_hub_check", lambda *a, **k: None)
+    with pytest.raises(ps.Conflict, match="works at Hub B, not at this visit's hub. Choose crew from"):
+        ps.plan_visit(w.ops, visit_code=v.code, robot_code="R-01", lead_code=fields["lead"],
+                      second_code=fields["second"], vehicle_code="VAN-1")  # fmt: skip
+    assert (VisitRevision.objects.count(), Reservation.objects.count()) == before
+
+
+def test_direct_sql_as_ops_app_cannot_insert_a_revision_with_another_hubs_crew():
+    import psycopg
+
+    from planning.models import Person, VisitRevision
+    from tests.test_v2_03a_transfers import _app_conn
+
+    w = _two_hubs("cs_")
+    v = _visit_at(w)
+    rev = v.current_revision
+    cols = [f.column for f in VisitRevision._meta.concrete_fields if f.column != "id"]
+    p9, p1 = Person.objects.get(code="P-9").pk, Person.objects.get(code="P-1").pk
+
+    def insert(cur, lead_id: int, n: int) -> None:
+        exprs = [
+            "%(lead)s" if col == "lead_id" else ("revision_no + %(n)s" if col == "revision_no" else col)
+            for col in cols
+        ]
+        cur.execute(
+            f"INSERT INTO planning_visitrevision ({', '.join(cols)}) "
+            f"SELECT {', '.join(exprs)} FROM planning_visitrevision WHERE id = %(id)s",
+            {"lead": lead_id, "n": n, "id": rev.pk},
+        )
+
+    with _app_conn(autocommit=False) as conn, conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.CheckViolation, match="works at Hub B, not at this visit's hub"):
+            insert(cur, p9, 1)
+        conn.rollback()
+        insert(cur, p1, 1)  # same-hub crew: accepted by the same trigger
+        conn.rollback()  # nothing kept
+
+
+def test_same_hub_crew_still_plans_and_hb_plans_with_its_own_crew():
+    w = _two_hubs("cg_")
+    v = _visit_at(w)
+    out = ps.plan_visit(w.ops, visit_code=v.code, robot_code="R-01", lead_code="P-1", second_code="P-3",
+                        vehicle_code="VAN-1")  # fmt: skip
+    assert out["feasibility"] != "blocked"
+    # an HB visit refuses HUB-1's crew the same way (the rule is symmetric)
+    hb = _visit_at(w, hub="HB")
+    with pytest.raises(
+        ps.Conflict, match=f"works at {w.hub_a.name}, not at this visit's hub. Choose crew from Hub B"
+    ):
+        ps.plan_visit(w.ops, visit_code=hb.code, robot_code="R-03", lead_code="P-9", second_code="P-1",
+                      vehicle_code="VAN-9")  # fmt: skip
+
+
+def test_existing_cross_hub_plans_are_counted_and_none_exist_in_the_fixture():
+    from django.db import connection
+
+    w = _two_hubs("cc_")
+    ps.plan_visit(w.ops, visit_code=_visit_at(w).code, robot_code="R-01", lead_code="P-1", second_code="P-2",
+                  vehicle_code="VAN-1")  # fmt: skip
+    with connection.cursor() as cur:
+        cur.execute(ps.CROSS_HUB_CREW_SQL)
+        assert cur.fetchone()[0] == 0
