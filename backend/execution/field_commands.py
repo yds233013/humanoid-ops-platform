@@ -32,6 +32,7 @@ SYNTHETIC data only; nothing here operates a robot.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
@@ -117,6 +118,11 @@ CAUSAL_KEYS = {"last_decided_seq": "int", "outcome": "str", "generation": "int"}
 
 RETRYABLE_SQLSTATES = {"40P01", "40001", "55P03", "57014", "57P01", "57P02", "57P03", "53300"}
 PERMISSION_SQLSTATE = "42501"
+# The execution triggers refuse an actor without a field role at the run's hub with check_violation
+# (fleet_fail) and this wording (execution/0002, 0004, 0008): "recording a trip event requires an active
+# ops_lead or field_operator role". A role the PAYLOAD's people lack ("the verifier must hold ...") is a
+# state conflict.
+ACTOR_ROLE_REFUSAL = re.compile(r"requires an (active|operational) [a-z_ ]*role")
 
 
 # ------------------------------------------------------------------ errors (shared contract)
@@ -265,7 +271,8 @@ def _classify(exc: Exception, actor: Any, run: ExecutionRun) -> Exception:
     text = localize_utc_text(str(exc))
     if isinstance(exc, NotAuthenticated):
         return FieldRefusal("NOT_PERMITTED", "Sign in again; nothing was recorded.")
-    if isinstance(exc, PermissionDenied) or state == PERMISSION_SQLSTATE:
+    actor_role = state == "23514" and ACTOR_ROLE_REFUSAL.search(text) is not None
+    if isinstance(exc, PermissionDenied) or state == PERMISSION_SQLSTATE or actor_role:
         detail = "" if text.startswith("Not allowed:") else f" ({text})"
         return FieldRefusal(
             "NOT_PERMITTED",
