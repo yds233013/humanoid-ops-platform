@@ -134,61 +134,73 @@ the owner, as in the 03A transfer race: a real authorization under the active pa
 PostgreSQL aborts the transaction and releases its locks at the error (before the client's ROLLBACK; checked in
 pg_locks), so the step itself is what holds the hub row while the lift waits.
 
-## 5. 03C-1: the field-command ledger (contract 14.3 item 4, 14.5 "Locks", 14.8 item 5)
+## 5. 03C-1: the field-command ledger (contract 14.3 item 4, 14.5 "Locks", 14.8 item 5; EM ruling on 03C)
 
-Binding order (14.5): **the run row FOR UPDATE first, then whatever the domain command takes** (03A and 03B graph
-unchanged). **R** = an `execution_executionrun` row, **G** = the actor's role grants.
+**EM ruling (replaces the run-row-first order of execution/0009):** the serialization point of field claims,
+abandonments and device reports is a **ledger-only row**, `execution_field_sync_lock(run_id)` (execution/0010),
+never the execution-run row. No claim transaction holds the run row before the domain's own locks; the domain
+commands keep their established order (guard rows, then the run). **L** = a run's sync-lock row, **R** = an
+`execution_executionrun` row, **G** = the actor's role grants.
 
 | Participant | Locks, in the order taken | Defined in |
 |---|---|---|
-| **Field claim** `field_ledger.claim` (one durable transaction per command) | **R U** -> the actor's `ops_lead` / `field_operator` grants at the run's hub **S** (`accounts_lock_grants`) -> decision (`execution_field_decide`, a fresh statement) -> the domain command's own order (`run_command`: **G S** again, re-entrant -> **Sh** -> guard rows ... -> **R U**, re-entrant) -> `execution_field_record` | execution/field_ledger.py, execution/0009 |
-| **Ledger writer** `execution_field_record` (inside a claim) | actor pre-check (no lock) -> **R U** (re-entrant) -> **G S** (`hub_actor_has_at`, re-entrant) -> INSERT (FK key-share on R and the user) | execution/0009 |
-| **Abandonment** `execution_field_abandon` | actor pre-check -> **R U** -> **G S** -> INSERT barrier + generation + audit | execution/0009 |
-| **Device report** `execution_field_report_device` | actor pre-check -> **R U** -> **G S** -> INSERT | execution/0009 |
+| **Field claim** `field_ledger.claim` (one durable transaction per command) | **L U** (`execution_field_sync_lock`: a plain read of R, no lock; the L row created on first use) -> the actor's `ops_lead` / `field_operator` grants at the run's hub **S** (`accounts_lock_grants`) -> decision (`execution_field_decide`, plain reads) -> the domain command in its own established order (`run_command`: **G S**, re-entrant -> **Sh** -> sites, patterns, robots, persons, vehicles, visits, trips ... -> **R U** -> incidents -> hold-policy registry) -> `execution_field_record` | execution/field_ledger.py, execution/0010 |
+| **Ledger writer** `execution_field_record` (inside a claim) | actor pre-check (no lock) -> **L U** (re-entrant) -> R read (no lock) -> **G S** (`hub_actor_has_at`, re-entrant) -> INSERT: foreign-key KEY SHARE on **R** and the user, LAST | execution/0009, 0010 |
+| **Abandonment** `execution_field_abandon` | actor pre-check -> **L U** -> R read -> **G S** -> INSERT barrier and generation (KEY SHARE on R and the user) + audit | execution/0009, 0010 |
+| **Device report** `execution_field_report_device` | actor pre-check -> **L U** -> R read -> **G S** -> INSERT (KEY SHARE on R and the user) | execution/0009, 0010 |
+| **Any online command** (unchanged) | grants **S** -> **Sh** -> guard rows in the global order -> **R U** -> ... ; never **L** | platform_core/locks.py |
 
-### 5.1 Reconciliation with sections 1 to 4
+`execution_field_sync_lock` has **no foreign key** to the run on purpose: a foreign-key check takes KEY SHARE on R,
+which conflicts with an online command's **R U**, and holding it before the domain's guard rows would rebuild the
+cycle this section removes.
 
-- **Ledger vs ledger.** Every ledger participant takes **R U** first and nothing before it, so two claims, a claim
-  and an abandonment, or a claim and a device report on one run are totally ordered on the run row. This is the
-  serialization point of 14.3 item 4: the second waits, then decides in a fresh statement (replay, `KEY_REUSED`,
-  `SEQ_TAKEN`, `AFTER_ABANDONED`, or apply when the first rolled back). Claims of different runs share no ledger
-  lock.
-- **Grants after the run row.** A grant revocation holds only the grant row **U** (section 2 case 3) and never
-  waits for a run, so a claim waiting for **G** behind a revocation cannot close a cycle. A revocation committed
-  while the claim waited is seen by the decision (fresh statement: `NOT_PERMITTED`, nothing stored); a revocation
-  started after the claim's **G S** waits for the claim to commit. `run_command` inside the claim re-takes the same
-  grants **S** (re-entrant).
-- **Settings and guard rows after the run row (the one inversion).** The global order of `platform_core/locks.py`
-  puts runs after sites, patterns, robots, persons, vehicles, visits and trips; a field claim holds **R U** before
-  its domain command takes those. An ONLINE command on the same run holds some of those rows first and then waits
-  for **R U** (every execution command takes `update_runs` last: custody handoffs and reconciliation take robot
-  **U**, an incident robot **U**, session start/resume and site checks robot and visit **S**). If the field
-  claim's domain command then needs one of the rows that online command holds, in a conflicting mode (for example
-  the claim's custody step wants robot **U** while an online session start holds robot **S**, or both want robot
-  **U**), the two form a cycle of two. PostgreSQL detects it (`deadlock_timeout`) and aborts one transaction
-  entirely:
-  - the field claim's domain command aborted: inside the claim, `run_command` runs in a savepoint, so the
-    deadlock rolls back only the domain work and `run_command` retries it while the claim still holds **R U**;
-    it can meet the same cycle again, at most `MAX_ATTEMPTS` (3) times, then raises 40P01, which 03C-2 maps to
-    `Transient`. The claim's transaction is then rolled back: nothing is stored (no key, no seq; 14.8 item 5),
-    the endpoint answers `retry`, and the phone resends the same key later;
-  - the online command aborted: `run_command` retries it from the start (40P01 is in `RETRYABLE_SQLSTATES`), now
-    after the field claim's commit.
-  No partial state is possible in either order, and nothing waits forever. Only two commands on the SAME run can
-  meet this way (claims of different runs hold different run rows), and the settings writer holds no row (section
-  2 case 1). The inversion follows the binding 14.5 order and is recorded here as a known, bounded retry path. The
-  alternative (a ledger-only per-run row as the first lock, so that the run row keeps its place in the global
-  order) was not taken because 14.5 names the run row; it is an open question for the EM.
-- **Foreign-key key-share.** A ledger INSERT references the run it already holds **U**. Another transaction's
-  INSERT referencing the run (a trip event, a custody event, a session event, a device report) takes key-share on
-  **R**, which waits for a claim's **U**; it holds nothing a claim waits for at that point except possibly the
-  robot (the inversion above).
+### 5.1 Why the full acquisition order has no cycle
 
-### 5.2 Demonstrated (waiter seen in `pg_locks`, runtime role `ops_app`)
+Order every lock a transaction can take as **L < G < Sh < sites < patterns < robots < persons < vehicles < visits <
+trips < policies < authorizations < incident policies < R < incidents < hold-policy registry** (the global order of
+`platform_core/locks.py` with L placed first). A deadlock needs a transaction holding a lock and waiting for one
+EARLIER in this order. Case by case:
 
-| Pair | First | Second waits, then | Test (`tests/test_v2_03c_ledger.py`) |
+1. **L is taken only by the field ledger, and always first.** Only `execution_field_sync_lock`, called by
+   `field_ledger.claim` as its first statement and by `execution_field_lock_for` (the shared check of the three
+   writers), references it. No online command, trigger or other function does (asserted on the catalog and the
+   Python sources: `test_only_the_field_ledger_takes_the_sync_lock`). So a transaction that waits for **L** holds
+   no lock yet (claim, abandonment, device report: each is its own transaction and L is its first lock; the writer
+   inside a claim re-takes L re-entrantly). A waiter for L can therefore never be part of a cycle, and two ledger
+   transactions of different runs never wait for each other's L.
+2. **Grants after L.** A revocation holds only the grant row **U** and waits for nothing else, so a claim waiting for
+   **G** cannot close a cycle; `run_command` re-takes the same grants **S** re-entrantly.
+3. **The domain command after L follows the global order unchanged**, exactly as online: guard rows ascending, then
+   **R U**, then incidents and the hold-policy registry. An online command and a field claim on the same run are
+   therefore ordered by their FIRST common guard row (the robot, in practice): whoever holds it, the other waits for
+   it while holding only rows earlier in the global order (and, for the claim, L and G, which no online command
+   ever wants). This is the standard no-cycle argument of sections 1 and 2.
+4. **The ledger INSERT's foreign-key KEY SHARE on R comes last.** Either the domain step already holds **R U**
+   (every field command's service takes `update_runs`: trip events, custody, site checks, sessions, interruptions,
+   incidents), so it is re-entrant; or the domain step was refused and its savepoint rolled back, releasing its row
+   locks, so the claim holds only **L** and **G** while it waits for an online command's **R U** to finish, and the
+   online command never waits for L or a grant **S**. The only rows a field domain step can hold after R are
+   incidents and the hold-policy registry, and it takes them only after **R U** (incident reporting:
+   robot U -> visit S -> run U -> incident insert -> registry S), so KEY SHARE on R is re-entrant there too.
+5. **Settings writer.** It takes only **X** and holds no row (section 2 case 1).
+6. **Foreign keys of other inserts on R** (trip, custody, session events, an online device-free command) take KEY
+   SHARE on R; none of them is ever blocked by the ledger, because the ledger never holds R before the domain step
+   takes it in its normal place.
+
+**At-most-once is unchanged:** every ledger decision (`execution_field_decide`) and every ledger write happens
+while holding **L U** of the run, so two claims of the same key or the same seq are still totally ordered; the
+second re-reads in a fresh statement after the first commits or rolls back.
+
+### 5.2 Demonstrated (waiter seen in `pg_locks`, runtime role `ops_app`; `tests/test_v2_03c_ledger.py`)
+
+| Pair | First | Second waits, then | Test |
 |---|---|---|---|
-| claim vs claim, same key, same identity | claim (R U, confirmed, uncommitted) | the second claim waits on R, then gets the replay (the domain does not run) | `test_a_competing_claim_waits_on_the_run_row_then_sees_one_outcome[commit-same-replay]` |
-| claim vs claim, same key, changed identity | claim (R U, uncommitted) | waits, then `KEY_REUSED`, nothing written | `...[commit-changed-KEY_REUSED]` |
-| claim vs claim, other key, same seq (two phones) | claim (R U, uncommitted) | waits, then `SEQ_TAKEN` | `...[commit-other_key-SEQ_TAKEN]` |
-| claim crashes before commit vs claim | claim (R U, then rolled back) | waits, then applies once (nothing was claimed) | `...[rollback-same-apply]`, `...[rollback-other_key-apply]` |
+| online command vs field claim, online first | online (robot **U**, visit **S** held, uncommitted) | the claim takes **L**, then waits for the robot in its domain step (pg_locks); the online command takes **R U** at once (< 2 s, no wait) and commits; the claim then commits `confirmed` | `test_online_first_a_field_claim_waits_on_the_robot_and_the_online_command_takes_the_run` |
+| field claim vs online command, field first | claim (**L**, robot **U**, visit **S**, **R U** held in its domain step, paused before commit) | the online command waits for the robot (pg_locks), then takes robot, visit and run and commits after the claim's commit | `test_field_first_the_online_command_waits_on_the_robot_then_completes` |
+| claim vs claim, same key, same identity | claim (**L** U, confirmed, uncommitted) | the second claim waits on **L**, then gets the replay (the domain does not run) | `test_a_competing_claim_waits_on_the_sync_lock_then_sees_one_outcome[commit-same-replay]` |
+| claim vs claim, same key, changed identity | claim (**L** U, uncommitted) | waits, then `KEY_REUSED`, nothing written | `...[commit-changed-KEY_REUSED]` |
+| claim vs claim, other key, same seq (two phones) | claim (**L** U, uncommitted) | waits, then `SEQ_TAKEN` | `...[commit-other_key-SEQ_TAKEN]` |
+| claim crashes before commit vs claim | claim (**L** U, then rolled back) | waits, then applies once (nothing was claimed) | `...[rollback-same-apply]`, `...[rollback-other_key-apply]` |
+
+The online-first test is the regression for the execution/0009 design: with the run row taken first by the claim it
+fails with PostgreSQL's `deadlock detected` (checked by putting the old statement back locally; not committed).

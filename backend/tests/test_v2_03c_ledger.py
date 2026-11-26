@@ -2,7 +2,7 @@
 sections 3 I-4..I-6, 6, 10.D, 10.E). The HTTP side is 03C-3's.
 
 Every test builds a real run (departure through the readiness commands) as the schema owner, then switches the
-Django connection to the RUNTIME role ops_app, so the ledger runs exactly as in production: the run row lock, the
+Django connection to the RUNTIME role ops_app, so the ledger runs exactly as in production: the per-run sync lock, the
 decision function, the SECURITY DEFINER writers and SELECT-only tables.
 
 * replay, KEY_REUSED (every identity field), SEQ_TAKEN, held, generations and the abandonment barrier, the
@@ -25,6 +25,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -35,6 +36,8 @@ from psycopg.types.json import Jsonb
 
 from execution import field_ledger as fl
 from execution.models import FieldCommand, FieldDeviceReport, FieldGeneration
+from platform_core import testhooks
+from platform_core.locks import lock_guards
 from platform_core.models import AuditEvent
 from tests.conftest import make_user
 from tests.execution_world import build_execution
@@ -43,7 +46,12 @@ APP_USER = os.environ.get("DB_APP_USER", "ops_app")
 APP_PASSWORD = os.environ.get("DB_APP_PASSWORD", "ops_app_dev")
 PHONE_TIME = "2026-11-27T09:41:05-08:00"
 DOMAIN = "test.field_domain_effect"
-TABLES = ("execution_field_command", "execution_field_generation", "execution_field_device_report")
+TABLES = (
+    "execution_field_command",
+    "execution_field_generation",
+    "execution_field_device_report",
+    "execution_field_sync_lock",
+)
 
 
 # ------------------------------------------------------------------------------------------------ fixtures
@@ -471,7 +479,7 @@ def _pg_waiting(pid: int) -> bool:
         ("rollback", "other_key", "apply"),
     ],
 )
-def test_a_competing_claim_waits_on_the_run_row_then_sees_one_outcome(w, holder_ends, competitor, expected):
+def test_a_competing_claim_waits_on_the_sync_lock_then_sees_one_outcome(w, holder_ends, competitor, expected):
     domain = Domain(w)
     k, i = key(), ident(w, 1)
     other = {"same": (k, i), "changed": (k, ident(w, 1, device="dev-B")), "other_key": (key(), ident(w, 1))}
@@ -513,7 +521,7 @@ def test_a_competing_claim_waits_on_the_run_row_then_sees_one_outcome(w, holder_
     t2 = threading.Thread(target=waiter)
     t2.start()
     assert started.wait(20)
-    assert _pg_waiting(out["pid"]), "the competing claim should wait on the run row lock"
+    assert _pg_waiting(out["pid"]), "the competing claim should wait on the run's sync lock"
     assert "result" not in out
     release.set()
     t1.join(30)
@@ -529,6 +537,155 @@ def test_a_competing_claim_waits_on_the_run_row_then_sees_one_outcome(w, holder_
     decided = rows(seq__isnull=False)
     assert len(decided) == 1 and decided[0].outcome == "confirmed"  # one transactional outcome for seq 1
     assert Domain.effects() == 1
+
+
+# ------------------------------------------------------------------------------------------------ 7b. online vs field
+# EM ruling on 03C: the ledger serializes on its own per-run row (execution_field_sync_lock), never on the run row,
+# so a field claim whose domain step takes the robot and then the run (the global order) and an ONLINE command on
+# the same run (robot U, visit S, then run U: execution/logistics.py's order) never form a cycle. Under
+# execution/0009 (run row first) the online-first order below was a deadlock.
+def _online_guards(conn: psycopg.Connection, w: SimpleNamespace) -> None:
+    with conn.cursor() as cur:
+        cur.execute("SET lock_timeout = '20s'")
+        cur.execute("SELECT id FROM fleet_robot WHERE id = %s FOR UPDATE", [w.run.robot_id])
+        cur.execute("SELECT id FROM planning_visit WHERE id = %s FOR SHARE", [w.run.visit_id])
+
+
+def _online_run(conn: psycopg.Connection, w: SimpleNamespace) -> float:
+    started = time.monotonic()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM execution_executionrun WHERE id = %s FOR UPDATE", [w.run.pk])
+        cur.execute(
+            "INSERT INTO platform_core_auditevent (occurred_at, actor_id, command, outcome, entity_type, entity_id, "
+            "payload, result, reason, request_id) VALUES (now(), %s, 'test.online_command', 'committed', '', '', "
+            "'{}', '{}', '', '')",
+            [w.ops.pk],
+        )
+    conn.commit()
+    return time.monotonic() - started
+
+
+def _field_with_domain(w: SimpleNamespace, out: dict[str, Any], errors: list[Exception]) -> None:
+    """A field claim whose domain step locks robot U, visit S and run U (lock_guards, the global order)."""
+    try:
+        with connection.cursor() as cur:
+            cur.execute("SELECT pg_backend_pid()")
+            out["field_pid"] = cur.fetchone()[0]
+        with fl.claim(key(), ident(w, 1, command="custody.back_to_vehicle")) as c:
+            assert c.decision == "apply"
+            with transaction.atomic():
+                lock_guards(
+                    update_robots=[w.run.robot_id],
+                    share_visits=[w.run.visit_id],
+                    update_runs=[w.run.pk],
+                    label="field_domain",
+                )
+                AuditEvent.objects.create(actor=w.field, command=DOMAIN, outcome="committed", payload={})
+            out["stored"] = c.confirm({"effect": "recorded"}, "Recorded")
+    except Exception as exc:  # pragma: no cover - reported by the test
+        errors.append(exc)
+    finally:
+        connection.close()
+
+
+def _online_count() -> int:
+    return AuditEvent.objects.filter(command="test.online_command").count()
+
+
+def test_online_first_a_field_claim_waits_on_the_robot_and_the_online_command_takes_the_run(w):
+    """Online command holds robot U + visit S (uncommitted); a field claim on the same run takes its sync lock and
+    waits for the robot in its domain step (pg_locks). The online command then takes the run row at once (the
+    claim does not hold it), commits; the claim continues and commits. One transaction each, no deadlock."""
+    out: dict[str, Any] = {}
+    errors: list[Exception] = []
+    online = app_conn(autocommit=False)
+    try:
+        _online_guards(online, w)
+        field = threading.Thread(target=_field_with_domain, args=(w, out, errors))
+        field.start()
+        for _ in range(200):
+            if "field_pid" in out:
+                break
+            time.sleep(0.05)
+        assert _pg_waiting(out["field_pid"]), "the field claim should wait for the robot row"
+        took = _online_run(online, w)  # would deadlock if the claim held the run row (execution/0009)
+        assert took < 2, f"the online command waited {took:.1f}s for the run row"
+        field.join(30)
+    finally:
+        online.close()
+    assert not errors, errors
+    assert out["stored"].outcome == "confirmed" and out["stored"].seq == 1
+    assert _online_count() == 1 and Domain.effects() == 1
+
+
+def test_field_first_the_online_command_waits_on_the_robot_then_completes(w):
+    """A field claim holds its sync lock and, in its domain step, robot U, visit S and run U (paused before its
+    commit); an online command on the same run waits for the robot row (pg_locks). The claim commits, then the
+    online command takes robot, visit and run and commits. No deadlock."""
+    out: dict[str, Any] = {}
+    errors: list[Exception] = []
+    in_domain, release = threading.Event(), threading.Event()
+
+    def pause() -> None:
+        in_domain.set()
+        assert release.wait(20)
+
+    testhooks.register("locked:field_domain", pause)
+    online = app_conn(autocommit=False)
+    online_out: dict[str, Any] = {}
+    try:
+        with online.cursor() as cur:
+            cur.execute("SELECT pg_backend_pid()")
+            online_pid = cur.fetchone()[0]
+        field = threading.Thread(target=_field_with_domain, args=(w, out, errors))
+        field.start()
+        assert in_domain.wait(20)
+
+        def online_command() -> None:
+            try:
+                _online_guards(online, w)
+                online_out["took"] = _online_run(online, w)
+            except Exception as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        bg = threading.Thread(target=online_command)
+        bg.start()
+        assert _pg_waiting(online_pid), "the online command should wait for the robot row"
+        assert _online_count() == 0
+        release.set()
+        field.join(30)
+        bg.join(30)
+    finally:
+        testhooks.clear()
+        online.close()
+    assert not errors, errors
+    assert out["stored"].outcome == "confirmed" and _online_count() == 1 and Domain.effects() == 1
+
+
+def test_only_the_field_ledger_takes_the_sync_lock(w):
+    """No online path can wait for the ledger lock: only the ledger's own functions reference it in the catalog,
+    and only field_ledger (plus the model's table name) in the application code."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND p.prosrc LIKE '%%execution_field_sync_lock%%' ORDER BY 1"
+        )
+        assert [r[0] for r in cur.fetchall()] == ["execution_field_lock_for", "execution_field_sync_lock"]
+        cur.execute(
+            "SELECT count(*) FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid "
+            "WHERE p.proname IN ('execution_field_lock_for', 'execution_field_sync_lock')"
+        )
+        assert cur.fetchone()[0] == 0
+    root = Path(__file__).resolve().parent.parent
+    users = sorted(
+        str(f.relative_to(root))
+        for f in root.rglob("*.py")
+        if "tests" not in f.parts
+        and "migrations" not in f.parts
+        and ".venv" not in f.parts
+        and "execution_field_sync_lock" in f.read_text(encoding="utf-8")
+    )
+    assert users == ["execution/field_ledger.py", "execution/models.py"]
 
 
 # ------------------------------------------------------------------------------------------------ 8. access
@@ -598,6 +755,9 @@ def test_ops_app_cannot_write_the_ledger_tables_directly(w):
         ("UPDATE execution_field_device_report SET unsent_count = 0", []),
         ("DELETE FROM execution_field_device_report", []),
         ("SELECT nextval('execution_field_command_id_seq')", []),
+        ("INSERT INTO execution_field_sync_lock (run_id, created_at) VALUES (987654321, now())", []),
+        ("SELECT run_id FROM execution_field_sync_lock FOR UPDATE", []),  # only through the function
+        ("DELETE FROM execution_field_sync_lock", []),
     ]
     before = [
         list(m.objects.order_by("id").values()) for m in (FieldCommand, FieldGeneration, FieldDeviceReport)
@@ -716,4 +876,5 @@ def test_the_ledger_is_classified_in_the_catalog_audit_and_select_only_for_ops_a
         "execution_field_next_seq": (False, False),
         "execution_field_record": (True, False),
         "execution_field_report_device": (True, False),
+        "execution_field_sync_lock": (True, False),
     }
