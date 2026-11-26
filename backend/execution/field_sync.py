@@ -23,7 +23,10 @@ Order of processing (each step only when the one before passed):
    ordinary step takes its ``seq`` in order (14.8: a rejected step is decided) and a replay is answered before
    anything else (14.8 item 2).
 
-Error classes (14.8 item 5): a durable ``rejected`` is written only for a classified refusal. A ``Transient``
+Error classes (14.8 item 5): a durable ``rejected`` is written only for a classified refusal
+(``FieldRefusal``). An exception ``field_commands.apply`` does not classify rolls the command back and
+answers HTTP 500 ``SERVER_ERROR`` (nothing stored for it; the commands before it in the batch stay committed
+and a resend gets their stored outcomes). A ``Transient``
 from the domain, a database error, or any exception before the transaction ends rolls the whole command
 back and answers ``retry`` (nothing claimed). An error while the transaction COMMITS means the server cannot
 say what happened: the request answers HTTP 503 ``OUTCOME_UNKNOWN`` and never a guessed result; the phone
@@ -41,14 +44,13 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from django.db import connection, transaction
+from django.db import InterfaceError, OperationalError, connection
 from django.http import HttpRequest, JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 from django.views.decorators.csrf import csrf_exempt
 
 from execution import field_commands, field_ledger
 from execution.models import ExecutionRun
-from platform_core.commands import CommandError
 from platform_core.testhooks import checkpoint
 from platform_core.timezones import workspace_zone
 
@@ -77,6 +79,10 @@ OUTCOME_UNKNOWN = {
     "error": "OUTCOME_UNKNOWN",
     "message": "The server could not confirm what was recorded. Keep every step and send them again.",
 }
+SERVER_ERROR = {
+    "error": "SERVER_ERROR",
+    "message": "The server failed on a step and recorded nothing for it. Keep every step and resend them.",
+}
 MSG_HELD = "Waiting for an earlier step of this run to arrive. Keep it; it is sent again automatically."
 MSG_RETRY = "The server could not record this step now. Nothing was recorded; send it again later."
 MSG_ONLINE_ONLY = "Needs a connection. Do not start."
@@ -95,6 +101,10 @@ class BadRequest(Exception):
 
 
 class OutcomeUnknown(Exception):  # noqa: N818 - a signal: the commit's result is unknown
+    pass
+
+
+class Unclassified(Exception):  # noqa: N818 - a signal: field_commands.apply raised something unclassified
     pass
 
 
@@ -288,9 +298,10 @@ def _is_crew(actor: Any, run: ExecutionRun) -> bool:
 
 
 def run_for_sync(actor: Any, code: str) -> ExecutionRun | None:
-    """The run when the actor may sync it (crew, or a regional actor; 14.4), else None, whether or not the
-    run exists."""
-    from accounts.permissions import visible_hub_ids
+    """The run when the actor may sync it, else None, whether or not the run exists. The ledger's access rule
+    (03C-1 execution_field_decide): a crew member of the run (lead or second of the departed revision) or an
+    ops lead at the run's hub (a regional grant or that hub's)."""
+    from accounts.permissions import active_roles
 
     run = (
         ExecutionRun.objects.select_related("revision", "visit", "departure", "robot")
@@ -299,7 +310,7 @@ def run_for_sync(actor: Any, code: str) -> ExecutionRun | None:
     )
     if run is None:
         return None
-    if _is_crew(actor, run) or visible_hub_ids(actor) is None:
+    if _is_crew(actor, run) or "ops_lead" in active_roles(actor, run.visit.hub_id):
         return run
     return None
 
@@ -380,14 +391,19 @@ def _decide(
     skew: timedelta,
 ) -> dict[str, Any]:
     key, seq, name, channel = cmd["key"], cmd["seq"], cmd["command"], cmd["channel"]
-    if c.stored is not None:  # replay: the stored outcome, before any domain work (14.8 item 2)
-        return _from_stored(key, c.stored)
     decision = c.decision
-    if decision == "held":
+    if (
+        decision == "replay" or c.stored is not None
+    ):  # the stored outcome, before any domain work (14.8 item 2)
+        return _from_stored(key, c.stored)
+    if decision == "held":  # nothing is stored; the block ends without a decision
         return _result(key, "held", seq=seq, message=MSG_HELD)
-    if isinstance(decision, tuple):  # a ledger rule (identity, sequence, generation, barrier)
+    if isinstance(
+        decision, tuple
+    ):  # a ledger rule: durable, except KEY_REUSED / NOT_YOUR_RUN / NOT_PERMITTED
         _, code, message = decision
-        return _result(key, "rejected", seq=seq, code=code, message=message)
+        written = c.reject(code, message)
+        return _stored_or_now(key, written, "rejected", seq, code=code, message=message)
     checkpoint("field_sync:claimed")
 
     cls = field_commands.CLASS.get(name)
@@ -401,18 +417,14 @@ def _decide(
             "WRONG_CHANNEL",
             f"This step must be sent on the {EXPECTED_CHANNEL[cls]} channel. Nothing was recorded.",
         )
-    elif channel == "ordinary" and not in_bounds(
-        cmd["device_at"], run.departure.departed_at, received_at, skew
-    ):
+    elif channel == "ordinary" and cmd["time_flag"] != "ok":
         refusal = ("DEVICE_TIME_OUT_OF_BOUNDS", MSG_CLOCK)
     if refusal is not None:
         written = c.reject(*refusal)
         return _stored_or_now(key, written, "rejected", seq, code=refusal[0], message=refusal[1])
 
-    clock_flag = channel == "protective" and not in_bounds(
-        cmd["device_at"], run.departure.departed_at, received_at, skew
-    )
-    causal = {"last_decided_seq": cmd["last_decided_seq"], "generation": generation}
+    clock_flag = channel == "protective" and cmd["time_flag"] == "out_of_range"
+    causal = causal_of(cmd, generation)
     try:
         result = field_commands.apply(
             actor,
@@ -421,11 +433,16 @@ def _decide(
             cmd["payload"],
             channel=channel,
             causal=causal if channel == "protective" else None,
+            key=key,  # the domain's own idempotency (incident reports), on top of the ledger's
         )
     except field_commands.FieldRefusal as refused:
         checkpoint("field_sync:before_reject")
         written = c.reject(refused.code, refused.message)
         return _stored_or_now(key, written, "rejected", seq, code=refused.code, message=refused.message)
+    except field_commands.Transient:
+        raise
+    except Exception as exc:  # unclassified by field_commands: never a guessed result (14.8 item 5)
+        raise Unclassified from exc
     result = dict(result)
     message = str(result.get("message") or "Recorded.")
     if clock_flag:
@@ -433,6 +450,11 @@ def _decide(
         message = f"{message} {MSG_CLOCK_FLAG}"
     written = c.confirm(result, message)
     return _stored_or_now(key, written, "confirmed", seq, message=message, result=result)
+
+
+def causal_of(cmd: dict[str, Any], generation: int) -> dict[str, Any]:
+    """The device's causal reference (14.8 item 1): only the keys field_commands and the ledger accept."""
+    return {"last_decided_seq": cmd["last_decided_seq"], "generation": generation}
 
 
 def process_command(
@@ -444,7 +466,10 @@ def process_command(
     received_at: datetime,
     skew: timedelta,
 ) -> dict[str, Any]:
-    """One command in its own transaction. Raises OutcomeUnknown only when the COMMIT itself failed."""
+    """One command in its own transaction. Raises OutcomeUnknown only when the COMMIT itself failed, and
+    Unclassified when field_commands.apply raised what it could not classify (rolled back, answered 5xx).
+    Anything else before the commit (Transient, a lock or connection error, a unique violation of the same
+    key claimed on two runs at once) rolls back and answers ``retry``: nothing is claimed."""
     channel = cmd["channel"]
     identity = field_ledger.Identity(
         actor_id=int(actor.pk),
@@ -457,14 +482,30 @@ def process_command(
         payload=cmd["payload"],
         device_observed_at=cmd["device_observed_at"],
     )
+    if cmd["device_at"] is None:
+        cmd["time_flag"] = "missing"
+    elif in_bounds(cmd["device_at"], run.departure.departed_at, received_at, skew):
+        cmd["time_flag"] = "ok"
+    else:
+        cmd["time_flag"] = "out_of_range"  # stored as unknown by the ledger
     body_done = False
     out: dict[str, Any] = {}
     try:
-        with transaction.atomic():
-            with field_ledger.claim(cmd["key"], identity) as c:
-                out = _decide(c, actor, run, cmd, generation, received_at, skew)
+        # claim() opens its OWN durable transaction: it must be the outermost one (no atomic around it)
+        with field_ledger.claim(
+            cmd["key"],
+            identity,
+            causal=causal_of(cmd, generation) if channel == "protective" else None,
+            device_time_flag=cmd["time_flag"],
+        ) as c:
+            out = _decide(c, actor, run, cmd, generation, received_at, skew)
             checkpoint("field_sync:before_commit")
             body_done = True
+    except Unclassified as exc:  # rolled back: nothing stored for this command; the request answers 5xx
+        log.exception(
+            "field sync: %s raised an unclassified error; answered 500", cmd["key"], exc_info=exc.__cause__
+        )
+        raise
     except Exception as exc:
         if body_done:
             log.exception("field sync: commit of %s failed; outcome unknown", cmd["key"])
@@ -503,8 +544,13 @@ def sync(request: HttpRequest) -> JsonResponse:
     run = run_for_sync(actor, req["run"])
     if run is None:
         return _json(NOT_YOUR_RUN, 403)
-    with transaction.atomic():
+    try:
         field_ledger.report_device(int(actor.pk), req["device_id"], int(run.pk), req["unsent_count"])
+    except field_ledger.LedgerRefused as refusal:
+        if refusal.code == "NOT_YOUR_RUN":
+            return _json(NOT_YOUR_RUN, 403)
+        # NOT_PERMITTED (a revoked grant): no report is stored; each command is answered by the ledger
+        log.info("field sync: device report refused (%s)", refusal.code)
     received_at = _db_now()
     skew = clock_skew()
     results = []
@@ -515,6 +561,8 @@ def sync(request: HttpRequest) -> JsonResponse:
             )
     except OutcomeUnknown:
         return _json(OUTCOME_UNKNOWN, 503)
+    except Unclassified:
+        return _json(SERVER_ERROR, 500)
     return _json({**_state_body(run), "results": results})
 
 
@@ -533,27 +581,31 @@ def abandon(request: HttpRequest) -> JsonResponse:
     if run is None:
         return _json(NOT_YOUR_RUN, 403)
     try:
-        with transaction.atomic():
-            out = field_ledger.abandon(actor, run.code, req["generation"], req["seq"], req["reason"])
-    except CommandError as exc:
-        return _json({"error": exc.code.upper(), "message": str(exc)}, exc.status)
-    except field_commands.Transient:
+        field_ledger.abandon(actor, run.code, req["generation"], req["seq"], req["reason"])
+    except field_ledger.LedgerRefused as refusal:
+        if refusal.code == "NOT_YOUR_RUN":
+            return _json(NOT_YOUR_RUN, 403)
+        status = 403 if refusal.code == "NOT_PERMITTED" else 409
+        return _json({"error": refusal.code, "message": refusal.message}, status)
+    except (OperationalError, InterfaceError):
         return _json({"error": "RETRY", "message": MSG_RETRY}, 503)
-    return _json(
-        {
-            **_state_body(run),
-            "abandoned": {
-                "generation": req["generation"],
-                "seq": req["seq"],
-                "replayed": bool(out.get("replayed")),
-            },
-        }
-    )
+    return _json({**_state_body(run), "abandoned": {"generation": req["generation"], "seq": req["seq"]}})
 
 
 def last_device_report(run: ExecutionRun) -> dict[str, Any] | None:
     """For the run page (ops lead): the newest device report, never presented as live."""
-    report = field_ledger.last_device_report(run.pk)
+    reader = getattr(field_ledger, "last_device_report", None)  # the 03C-1 stand-in only
+    if reader is not None:
+        report = reader(run.pk)
+    else:  # the shipped ledger (execution/0009): newest row of execution_field_device_report
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT device_id, unsent_count, reported_at FROM execution_field_device_report "
+                "WHERE run_id = %s ORDER BY reported_at DESC, id DESC LIMIT 1",
+                [run.pk],
+            )
+            row = cur.fetchone()
+        report = None if row is None else {"device_id": row[0], "unsent_count": row[1], "reported_at": row[2]}
     if report is None:
         return None
     device = str(report.get("device_id") or "")

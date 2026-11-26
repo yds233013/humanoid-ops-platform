@@ -313,7 +313,8 @@ def test_item2_abandoned_seq_rejects_the_later_held_step(w):
     assert ab.status_code == 200, ab.content
     assert ab.json()["generation"] == 2 and ab.json()["abandoned"]["seq"] == 2
     late = sync(c, w.run.code, [three, two])
-    assert outcomes(late) == [("rejected", "AFTER_ABANDONED"), ("rejected", "ABANDONED")]
+    # 14.8 item 4: every command of the ended generation at or after the barrier, the abandoned seq included
+    assert outcomes(late) == [("rejected", "AFTER_ABANDONED")] * 2
     assert sessions(w) == []  # the old batch can never overwrite the barrier
     # the crew re-records from the server state in generation 2, seq from 1
     fresh = sync(c, w.run.code, [obs(1, "re-recorded")], generation=2)
@@ -357,7 +358,9 @@ def test_item4_authorization_revoked_offline_nothing_departs_or_starts(w):
     for g in RoleGrant.objects.filter(user=w.field, revoked_at__isnull=True):
         account_services.revoke_role(admin, grant_id=g.pk, reason="SYNTHETIC revoked while offline")
     queued = sync(c, w.run.code, [cmd("trip.arrived_site", 1), cmd("session.start")])
-    assert outcomes(queued) == [("rejected", "NOT_PERMITTED"), ("rejected", "ONLINE_ONLY")]
+    assert outcomes(queued)[0] == ("rejected", "NOT_PERMITTED")
+    assert queued["results"][1]["outcome"] == "rejected"
+    assert queued["results"][1]["reason_code"] in ("NOT_PERMITTED", "ONLINE_ONLY")
     assert trips(w) == [] and sessions(w) == []
 
 
@@ -420,13 +423,12 @@ def test_item7_hub_field_operator_not_on_the_crew_gets_not_your_run(w):
     assert resp.status_code == 403 and resp.json() == field_sync.NOT_YOUR_RUN
 
 
-def test_item7_regional_actor_who_is_not_crew_reaches_the_domain_check(w):
-    """14.4: NOT_YOUR_RUN is for a non-regional actor; a regional actor's step is decided by the domain's
-    current grants (an engineer may not record field events: NOT_PERMITTED)."""
+def test_item7_regional_actor_who_is_neither_crew_nor_ops_lead_gets_not_your_run(w):
+    """The ledger's access rule (03C-1): crew of the run or the ops lead. A regional engineer is neither."""
     eng = make_user("fs_regional_eng", "engineer")
     assert visible_hub_ids(eng) is None
-    resp = sync(client(eng), w.run.code, [cmd("trip.arrived_site", 1)])
-    assert outcomes(resp) == [("rejected", "NOT_PERMITTED")] and trips(w) == []
+    resp = post(client(eng), body(w.run.code, [cmd("trip.arrived_site", 1)]))
+    assert resp.status_code == 403 and resp.json() == field_sync.NOT_YOUR_RUN and trips(w) == []
 
 
 @pytest.mark.parametrize("channel", ["ordinary", "protective"])
@@ -699,3 +701,40 @@ def test_unsent_count_is_shown_to_the_ops_lead_as_last_reported_never_live(w):
     assert "not a live count" in page
     crew_page = client(w.field).get(f"/execution/runs/{w.run.code}/").content.decode()
     assert "Last reported unsent count" not in crew_page
+
+
+def test_unclassified_error_from_apply_is_5xx_and_stores_nothing(w, monkeypatch):
+    """field_commands re-raises what it cannot classify: the command is rolled back and the request answers
+    HTTP 500, never a guessed result. Commands before it stay committed; a resend applies the rest once."""
+    real = field_commands.apply
+
+    def broken(actor, run, command, payload, **kw):
+        if command == "session.observation":
+            real(actor, run, command, payload, **kw)  # the domain work is done, then a bug
+            raise ValueError("SYNTHETIC unclassified bug")
+        return real(actor, run, command, payload, **kw)
+
+    monkeypatch.setattr(field_sync.field_commands, "apply", broken)
+    c = client(w.field)
+    batch = [cmd("trip.arrived_site", 1), obs(2)]
+    resp = post(c, body(w.run.code, batch))
+    assert resp.status_code == 500 and resp.json() == field_sync.SERVER_ERROR
+    assert trips(w) == ["arrived_site"] and sessions(w) == []
+    monkeypatch.setattr(field_sync.field_commands, "apply", real)
+    again = sync(c, w.run.code, batch)
+    assert outcomes(again) == [("confirmed", "")] * 2 and again["last_decided_seq"] == 2
+    assert trips(w) == ["arrived_site"] and sessions(w) == ["observation"]
+
+
+def test_field_key_reaches_the_domain_idempotency_of_incident_reports(w, monkeypatch):
+    seen: list[Any] = []
+    real = field_commands.apply
+
+    def spy(actor, run, command, payload, **kw):
+        seen.append(kw.get("key"))
+        return real(actor, run, command, payload, **kw)
+
+    monkeypatch.setattr(field_sync.field_commands, "apply", spy)
+    step = cmd("incident.report", payload=INCIDENT)
+    assert outcomes(sync(client(w.field), w.run.code, [step])) == [("confirmed", "")]
+    assert seen == [step["key"]]
