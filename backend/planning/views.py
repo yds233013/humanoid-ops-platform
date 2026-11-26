@@ -199,7 +199,8 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if can_plan and v.status != "cancelled":
         # read only, a fixed number of statements (planning/options.py); 03B closure P2: only the visit's own
         # hub's robots, people and vehicles are offered, the rest are counted
-        options = restrict_to_hub(plan_options(v), v.hub_id)
+        # the windows a NEW plan uses: the home's current zone, as the save (as_replanned)
+        options = restrict_to_hub(plan_options(p.as_replanned(v)), v.hub_id)
         if wants_review and not departed:
             from planning.review import build_review  # noqa: PLC0415
 

@@ -430,7 +430,11 @@ def checks_for(
         else ""
     )
     origin = origin_zone(visit)
-    rt = travel.route(visit.hub_id, zone, start, start) if zone is not None and origin is not None else None
+    # the plan's own route when it was checked against the matrix (out at the start, back at the end, as the
+    # save checks it)
+    rt = plan.travel
+    if rt is None and zone is not None and origin is not None:
+        rt = travel.route(visit.hub_id, zone, start, start)
     if not recorded and zone is None:
         out.append(
             Check(
@@ -660,30 +664,40 @@ def build_review(
             by_code[k].get(picks[k]) for k in ("robot", "lead", "second", "vehicle")
         )
         start, end = new_start or rev.on_site_start, new_end or rev.on_site_end
+        # exactly what the save (services.plan_visit) checks: the home's CURRENT zone and, for a zoned home,
+        # the travel matrix in force for this start and end; recorded minutes only for a home with no zone
+        planned = p.as_replanned(visit)
+        route = p.new_route(planned, start, end)
+        t_out, t_back = (
+            (route.out.minutes, route.back.minutes)
+            if route is not None
+            else (rev.travel_out_min, rev.travel_back_min)
+        )
         plan = p.evaluate(
             site=visit.site,
             start=start,
             end=end,
-            travel_out=rev.travel_out_min,
-            travel_back=rev.travel_back_min,
+            travel_out=t_out,
+            travel_back=t_back,
             tasks=rev.tasks,
             scopes=rev.required_consent_scopes,
             robot=robot,
             lead=lead,
             second=second,
             vehicle=vehicle,
-            visit=visit,
+            visit=planned,
+            travel=route,
         )
         checks = checks_for(
-            visit,
+            planned,
             plan,
             robot=robot,
             lead=lead,
             second=second,
             vehicle=vehicle,
             start=start,
-            travel_out=rev.travel_out_min,
-            travel_back=rev.travel_back_min,
+            travel_out=t_out,
+            travel_back=t_back,
         )
         v_key = plan.feasibility
         if vehicle is not None and vehicle.hub_id != visit.hub_id:
