@@ -41,7 +41,7 @@ urlpatterns = [
     # v2 03B-1: S5 zones and travel times (setup), S4 regional pause (before the planning/ include)
     path("settings/hubs/<str:hub_code>/zones/", zone_views.zone_list, name="settings-zones"),
     path("settings/hubs/<str:hub_code>/zones/new/", zone_views.zone_new, name="settings-zone-new"),
-    path("settings/hubs/<str:hub_code>/zones/base/", zone_views.zone_base, name="settings-zone-base"),
+    path("settings/hubs/<str:hub_code>/zones/home/", zone_views.zone_home, name="settings-zone-home"),
     path(
         "settings/hubs/<str:hub_code>/zones/<str:zone_code>/retire/",
         zone_views.zone_retire,

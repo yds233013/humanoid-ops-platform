@@ -77,7 +77,7 @@ def _zone_world(prefix: str) -> SimpleNamespace:
     w.zb = Zone.objects.get(
         pk=int(zones.create_zone(w.ops, hub_code=w.hub.code, code="ZB", name="Hills")["entity_id"])
     )
-    zones.set_hub_base_zone(w.ops, hub_code=w.hub.code, zone_code="ZA")
+    zones.set_hub_home_zone(w.ops, hub_code=w.hub.code, zone_code="ZA")
     for a, b in ((w.za, w.zb), (w.zb, w.za)):
         travel.set_travel_time(w.ops, from_zone_id=a.pk, to_zone_id=b.pk, minutes=30, source="demo")
     zones.set_site_zone(w.ops, site_code="S-1", hub_code=w.hub.code, zone_code="ZB")
@@ -260,7 +260,7 @@ def test_a_cross_hub_reassignment_of_a_paused_visit_is_still_refused_at_authoriz
     ws.create_hub(admin, code="HB", name="Hub B", area="", time_zone=TZ)
     hb = Hub.objects.get(code="HB")
     Zone.objects.create(hub=hb, code="ZH", name="Hub B side")
-    zones.set_hub_base_zone(w.ops, hub_code="HB", zone_code="ZH")
+    zones.set_hub_home_zone(w.ops, hub_code="HB", zone_code="ZH")
     zh = Zone.objects.get(hub=hb, code="ZH")
     for a, b in ((zh, w.zb), (w.zb, zh)):
         travel.set_travel_time(w.ops, from_zone_id=a.pk, to_zone_id=b.pk, minutes=40, source="demo")

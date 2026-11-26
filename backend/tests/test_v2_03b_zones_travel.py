@@ -5,14 +5,14 @@ Proven here:
 
 * Zones: a visit's zone is its home's zone at plan time, set by the database (a forged zone is ignored on insert
   and refused on update, as ops_app); a retired zone keeps its history (old visits, travel rows) but cannot be
-  used for a new visit, a home, a hub base zone or a travel value, and never comes back; zones are never
+  used for a new visit, a home, a hub home zone or a travel value, and never comes back; zones are never
   deleted and never change hub or code.
 * Travel: pairs are ordered (A -> B says nothing about B -> A); versions are 1, 2, 3 per pair, unique, and the
   one in force is deterministic (the highest version whose effective_from has passed); no retroactive value
   (effective_from in the past, or before the previous version, is refused for every role); the table is
   append-only and ops_app has SELECT only.
 * A missing pair blocks a new dispatch with "Travel time unknown" (request, plan, Suggest), even when the
-  caller sends minutes: no fallback. A hub with no base zone is unknown too.
+  caller sends minutes: no fallback. A hub with no home zone is unknown too.
 * A visit planned before its home had a zone keeps its recorded minutes.
 * A saved plan records the matrix rows it used; a newer version never rewrites it; a changed plan is checked
   fresh.
@@ -68,7 +68,7 @@ def _zoned(prefix: str, *, base: bool = True, pair: bool = True):
         pk=int(zones.create_zone(w.ops, hub_code=w.hub.code, code="ZB", name="Hills")["entity_id"])
     )
     if base:
-        zones.set_hub_base_zone(w.ops, hub_code=w.hub.code, zone_code="ZA")
+        zones.set_hub_home_zone(w.ops, hub_code=w.hub.code, zone_code="ZA")
     if pair:
         _set(w, w.za, w.zb, 25)
         _set(w, w.zb, w.za, 35)
@@ -143,7 +143,7 @@ def test_a_retired_zone_keeps_its_history_and_cannot_be_used_for_new_visits():
     with pytest.raises(Conflict, match="retired"):
         zones.set_site_zone(w.ops, site_code="S-2", hub_code=w.hub.code, zone_code="ZB")
     with pytest.raises(Conflict, match="retired"):
-        zones.set_hub_base_zone(w.ops, hub_code=w.hub.code, zone_code="ZB")
+        zones.set_hub_home_zone(w.ops, hub_code=w.hub.code, zone_code="ZB")
     with _app_conn() as conn, conn.cursor() as cur:
         with pytest.raises(psycopg.errors.CheckViolation, match="cannot be used again"):
             cur.execute("UPDATE platform_core_zone SET active = true WHERE id = %s", [w.zb.pk])
@@ -290,7 +290,7 @@ def test_a_missing_pair_blocks_a_new_dispatch_with_travel_time_unknown_and_no_fa
     done = plan(w, code)
     assert done["feasibility"] == "feasible", done
     # a hub with no zone of its own: unknown again (never a guess)
-    zones.set_hub_base_zone(w.ops, hub_code=w.hub.code, zone_code=None)
+    zones.set_hub_home_zone(w.ops, hub_code=w.hub.code, zone_code=None)
     code2 = new_visit(w, d=DAY + timedelta(days=1))
     assert "TRAVEL_UNKNOWN" in _codes(_rev(code2))
 
@@ -304,7 +304,7 @@ def test_a_visit_planned_before_its_home_had_a_zone_keeps_its_recorded_minutes()
     # zones and a (different) matrix value arrive afterwards
     hub = Hub.objects.get()
     za = Zone.objects.create(hub=hub, code="ZA", name="A")
-    zones.set_hub_base_zone(w.ops, hub_code=hub.code, zone_code="ZA")
+    zones.set_hub_home_zone(w.ops, hub_code=hub.code, zone_code="ZA")
     travel.set_travel_time(w.ops, from_zone_id=za.pk, to_zone_id=za.pk, minutes=55, source="demo")
     zones.set_site_zone(w.ops, site_code="S-1", hub_code=hub.code, zone_code="ZA")
     v = Visit.objects.get(code=code)
@@ -371,3 +371,34 @@ def test_the_zone_and_travel_pages_show_unknown_cells_and_history():
     c2 = Client()
     c2.force_login(tech)
     assert c2.get("/settings/travel-times/").status_code == 403
+
+
+# ================================================================== the travel origin (03B-2 integration)
+def test_the_hub_origin_zone_gives_the_outbound_pair_and_the_reverse_pair_gives_the_return():
+    from django.test.utils import CaptureQueriesContext
+
+    w = _zoned("th_")
+    assert zones.hub_origin_zone(w.hub.pk) == w.za
+    hub = Hub.objects.select_related("home_zone").get(pk=w.hub.pk)
+    with CaptureQueriesContext(connection) as q:
+        assert zones.hub_origin_zone(hub) == w.za
+    assert len(q.captured_queries) == 0
+    t0, t1 = at(DAY, 10), at(DAY, 11)
+    r = travel.route(w.hub.pk, w.zb.pk, t0, t1)
+    assert r.out == travel.minutes(zones.hub_origin_zone(w.hub.pk), w.zb, t0)
+    assert r.back == travel.minutes(w.zb, zones.hub_origin_zone(w.hub.pk), t1)
+    assert (r.out.minutes, r.back.minutes) == (25, 35)
+    # zone_of reads a loaded FK without a statement
+    code = new_visit(w, d=DAY + timedelta(days=2))
+    v = Visit.objects.select_related("zone").get(code=code)
+    with CaptureQueriesContext(connection) as q:
+        assert zones.zone_of(v) == w.zb
+    assert len(q.captured_queries) == 0
+    # the origin must be a zone of that hub
+    other = Hub.objects.create(code="HX", name="Hub X", time_zone=w.hub.time_zone)
+    foreign = Zone.objects.create(hub=other, code="XZ", name="X zone")
+    with _app_conn() as conn, conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.CheckViolation, match="belongs to another hub"):
+            cur.execute(
+                "UPDATE platform_core_hub SET home_zone_id = %s WHERE id = %s", [foreign.pk, w.hub.pk]
+            )

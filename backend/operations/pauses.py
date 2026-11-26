@@ -39,8 +39,8 @@ class PauseInfo:
     zone_id: int | None
     hub_name: str = ""
     hub_code: str = ""
-    zone_name: str = ""
-    zone_code: str = ""
+    zone_name: str | None = None  # None for a hub pause
+    zone_code: str | None = None
     time_zone: str = ""  # the hub's IANA zone, for local times
 
     @property
@@ -53,7 +53,7 @@ class PauseInfo:
 _COLUMNS = (
     "p.id, CASE WHEN p.zone_id IS NULL THEN 'hub' ELSE 'zone' END, p.reason, p.created_at, p.hub_id, "
     "p.zone_id, "
-    "h.name, h.code, coalesce(z.name, ''), coalesce(z.code, ''), h.time_zone"
+    "h.name, h.code, z.name, z.code, h.time_zone"
 )
 _FROM = (
     "FROM operations_region_pause p JOIN platform_core_hub h ON h.id = p.hub_id "

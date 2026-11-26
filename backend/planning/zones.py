@@ -1,11 +1,12 @@
 """Zones of a hub (v2 03B-1, docs/13_v2_phase03_contract.md 13.2, 13.4 item 3, 13.5).
 
-FROZEN read accessor: ``zone_of(visit) -> Zone | None`` (the visit's destination zone; None = unknown).
+FROZEN read accessors: ``zone_of(visit) -> Zone | None`` (the visit's destination zone; None = unknown) and
+``hub_origin_zone(hub) -> Zone | None`` (where the hub's trips start and end; None = unknown).
 
 Setup commands (run_command, admin or ops lead; the database enforces the rules in platform_core/0006 and
 planning/0013):
   * ``create_zone`` / ``retire_zone``: a retired zone keeps its history and cannot be used for new visits;
-  * ``set_hub_base_zone``: the zone the hub sits in (trips start and end there);
+  * ``set_hub_home_zone``: the zone the hub's vans leave from and return to (``hub_origin_zone``);
   * ``set_site_zone``: the zone of a home. A visit takes its home's zone when it is booked or re-planned.
 """
 
@@ -25,10 +26,22 @@ ZONE_CODE = re.compile(r"^[A-Z0-9][A-Z0-9-]{0,11}$")
 
 
 def zone_of(visit: Visit) -> Zone | None:
-    """The visit's destination zone (its home's zone at plan time), or None when unknown."""
+    """The visit's destination zone (its home's zone at plan time), or None when unknown. No statement when
+    ``visit.zone`` is already loaded (``select_related("zone")``); else one."""
     if visit.zone_id is None:
         return None
-    return Zone.objects.filter(pk=visit.zone_id).first()
+    return visit.zone
+
+
+def hub_origin_zone(hub: Hub | int | None) -> Zone | None:
+    """The zone the hub's vans leave from and return to (``platform_core_hub.home_zone_id``), or None when
+    unknown: then every zoned visit dispatched from the hub has "Travel time unknown". No statement when given
+    a Hub whose ``home_zone`` is already loaded (``select_related("home_zone")``)."""
+    if hub is None:
+        return None
+    if isinstance(hub, Hub):
+        return hub.home_zone if hub.home_zone_id is not None else None
+    return Zone.objects.filter(pk__in=Hub.objects.filter(pk=hub).values("home_zone_id")).first()
 
 
 def zone_label(zone: Zone | None, hub: Hub | None = None) -> str:
@@ -99,17 +112,17 @@ def retire_zone(actor: Any, *, hub_code: str, code: str) -> dict[str, Any]:
     )
 
 
-def set_hub_base_zone(actor: Any, *, hub_code: str, zone_code: str | None) -> dict[str, Any]:
+def set_hub_home_zone(actor: Any, *, hub_code: str, zone_code: str | None) -> dict[str, Any]:
     hub = _hub(hub_code)
 
     def handler() -> Outcome:
         z = _zone(hub, zone_code) if zone_code else None
-        Hub.objects.filter(pk=hub.pk).update(base_zone=z)
-        return Outcome("hub", hub.code, {"base_zone": z.code if z else None})
+        Hub.objects.filter(pk=hub.pk).update(home_zone=z)
+        return Outcome("hub", hub.code, {"home_zone": z.code if z else None})
 
     return run_command(
         actor,
-        "planning.set_hub_base_zone",
+        "planning.set_hub_home_zone",
         permission="planning.manage_zones",
         payload={"hub": hub.code, "zone": zone_code},
         handler=handler,

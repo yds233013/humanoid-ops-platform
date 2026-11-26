@@ -110,14 +110,14 @@ def zone_new(request: HttpRequest, hub_code: str) -> HttpResponse:
 
 
 @login_required
-def zone_base(request: HttpRequest, hub_code: str) -> HttpResponse:
+def zone_home(request: HttpRequest, hub_code: str) -> HttpResponse:
     hub = _hub(hub_code)
     choices = [
         (z.code, f"{z.name} ({z.code})") for z in Zone.objects.filter(hub=hub, active=True).order_by("name")
     ]
     current = (
-        Zone.objects.filter(pk=hub.base_zone_id).values_list("code", flat=True).first() or ""
-        if hub.base_zone_id is not None
+        Zone.objects.filter(pk=hub.home_zone_id).values_list("code", flat=True).first() or ""
+        if hub.home_zone_id is not None
         else ""
     )
     return command_page(
@@ -125,7 +125,7 @@ def zone_base(request: HttpRequest, hub_code: str) -> HttpResponse:
         permission="planning.manage_zones",
         form_class=BaseZoneForm,
         template="planning/zone_form.html",
-        call=lambda actor, d: zones.set_hub_base_zone(actor, hub_code=hub.code, zone_code=d["zone"] or None),
+        call=lambda actor, d: zones.set_hub_home_zone(actor, hub_code=hub.code, zone_code=d["zone"] or None),
         ok=f"{hub.name}'s own zone is saved.",
         success_url=f"/settings/hubs/{hub.code}/zones/",
         initial={"zone": current},

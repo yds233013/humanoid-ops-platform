@@ -8,8 +8,8 @@ FROZEN read accessor (03B-2 and 03B-3 build on it):
 in force at ``at`` (or a zone is unknown or retired). A missing pair is never filled in: minutes None reads
 "Travel time unknown", and a new dispatch that needs that route is blocked (planning.services.evaluate).
 
-A trip from hub H to a visit in zone Z uses two ordered pairs: out = (H's base zone -> Z) at the on-site
-start, back = (Z -> H's base zone) at the on-site end (``route``). A visit with no zone (a pre-03B visit, or
+A trip from hub H to a visit in zone Z uses two ordered pairs: out = (H's home zone -> Z) at the on-site
+start, back = (Z -> H's home zone) at the on-site end (``route``). A visit with no zone (a pre-03B visit, or
 a home whose zone is unknown) keeps its recorded minutes, as before 03B.
 
 Writes go only through ``planning_set_travel_time`` (planning/0013, SECURITY DEFINER; admin or ops lead):
@@ -78,7 +78,7 @@ def minutes(from_zone: Any, to_zone: Any, at: datetime) -> TravelValue:
 
 @dataclass(frozen=True)
 class Route:
-    """Travel for one visit: out (hub base zone -> visit zone) and back (the reverse pair)."""
+    """Travel for one visit: out (hub home zone -> visit zone) and back (the reverse pair)."""
 
     out: TravelValue
     back: TravelValue
@@ -92,11 +92,11 @@ class Route:
 
 
 ROUTE_SQL = """
-SELECT h.base_zone_id, z.active, o.minutes, o.version_id, o.source, b.minutes, b.version_id, b.source
+SELECT h.home_zone_id, z.active, o.minutes, o.version_id, o.source, b.minutes, b.version_id, b.source
 FROM platform_core_hub h
 LEFT JOIN platform_core_zone z ON z.id = %(zone)s
-LEFT JOIN LATERAL planning_travel_minutes(h.base_zone_id, %(zone)s, %(out_at)s) o ON true
-LEFT JOIN LATERAL planning_travel_minutes(%(zone)s, h.base_zone_id, %(back_at)s) b ON true
+LEFT JOIN LATERAL planning_travel_minutes(h.home_zone_id, %(zone)s, %(out_at)s) o ON true
+LEFT JOIN LATERAL planning_travel_minutes(%(zone)s, h.home_zone_id, %(back_at)s) b ON true
 WHERE h.id = %(hub)s
 """
 

@@ -108,7 +108,7 @@ class Hub(models.Model):
     # v2 03B-1: the zone the hub itself sits in, the start and end of every trip dispatched from it. Travel
     # out is the matrix pair (this zone -> the visit's zone), travel back the reverse pair. NULL = unknown:
     # a zoned visit dispatched from this hub then has "Travel time unknown" (no fallback).
-    base_zone = models.ForeignKey(
+    home_zone = models.ForeignKey(
         "platform_core.Zone", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )
 

@@ -8,9 +8,9 @@ run_command (planning.zones; admin or ops lead). Retired = active false. Trigger
 ops_app keeps SELECT, INSERT and UPDATE (the guarded setup commands) and loses DELETE and TRUNCATE: a zone is
 never deleted (visits, travel rows and pauses keep referring to it).
 
-platform_core_hub.base_zone_id (nullable): the zone the hub itself sits in (where trips start and end; the travel
+platform_core_hub.home_zone_id (nullable): the zone the hub itself sits in (where trips start and end; the travel
 matrix pair hub zone -> visit zone gives travel out, the reverse pair travel back). Trigger
-platform_core_hub_base_zone_guard: it must be an ACTIVE zone OF THAT HUB when it is set or changed.
+platform_core_hub_home_zone_guard: it must be an ACTIVE zone OF THAT HUB when it is set or changed.
 
 Reverse drops the triggers, the column and the table.
 """
@@ -50,14 +50,14 @@ CREATE TRIGGER zone_no_delete BEFORE DELETE ON platform_core_zone
 CREATE TRIGGER zone_no_truncate BEFORE TRUNCATE ON platform_core_zone
   FOR EACH STATEMENT EXECUTE FUNCTION reject_mutation();
 
-CREATE OR REPLACE FUNCTION platform_core_hub_base_zone_guard() RETURNS trigger
+CREATE OR REPLACE FUNCTION platform_core_hub_home_zone_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $fn$
 DECLARE z platform_core_zone;
 BEGIN
-  IF NEW.base_zone_id IS NULL OR (TG_OP = 'UPDATE' AND NEW.base_zone_id IS NOT DISTINCT FROM OLD.base_zone_id) THEN
+  IF NEW.home_zone_id IS NULL OR (TG_OP = 'UPDATE' AND NEW.home_zone_id IS NOT DISTINCT FROM OLD.home_zone_id) THEN
     RETURN NEW;
   END IF;
-  SELECT * INTO z FROM platform_core_zone WHERE id = NEW.base_zone_id;
+  SELECT * INTO z FROM platform_core_zone WHERE id = NEW.home_zone_id;
   IF z.hub_id IS DISTINCT FROM NEW.id THEN
     RAISE EXCEPTION 'Zone % belongs to another hub; a hub sits in one of its own zones', z.code
       USING ERRCODE = 'check_violation';
@@ -67,15 +67,15 @@ BEGIN
   END IF;
   RETURN NEW;
 END $fn$;
-REVOKE ALL ON FUNCTION platform_core_hub_base_zone_guard() FROM PUBLIC;
-CREATE TRIGGER hub_base_zone_guard BEFORE INSERT OR UPDATE OF base_zone_id ON platform_core_hub
-  FOR EACH ROW EXECUTE FUNCTION platform_core_hub_base_zone_guard();
+REVOKE ALL ON FUNCTION platform_core_hub_home_zone_guard() FROM PUBLIC;
+CREATE TRIGGER hub_home_zone_guard BEFORE INSERT OR UPDATE OF home_zone_id ON platform_core_hub
+  FOR EACH ROW EXECUTE FUNCTION platform_core_hub_home_zone_guard();
 
 REVOKE DELETE, TRUNCATE ON platform_core_zone FROM {APP};
 """
 SQL_REVERSE = f"""
-DROP TRIGGER IF EXISTS hub_base_zone_guard ON platform_core_hub;
-DROP FUNCTION IF EXISTS platform_core_hub_base_zone_guard();
+DROP TRIGGER IF EXISTS hub_home_zone_guard ON platform_core_hub;
+DROP FUNCTION IF EXISTS platform_core_hub_home_zone_guard();
 DROP TRIGGER IF EXISTS zone_no_truncate ON platform_core_zone;
 DROP TRIGGER IF EXISTS zone_no_delete ON platform_core_zone;
 DROP TRIGGER IF EXISTS zone_guard ON platform_core_zone;
@@ -122,7 +122,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="hub",
-            name="base_zone",
+            name="home_zone",
             field=models.ForeignKey(
                 blank=True,
                 null=True,
