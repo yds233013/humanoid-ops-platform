@@ -37,7 +37,7 @@ if not DEBUG:  # behind the host's HTTPS proxy (hosted demo)
 # static stacked-table helper at the end of base.html, allowed by its hash (test_v2_01a_platform checks
 # that the hash still matches the template; edit both together).
 CSP_ENABLED = not DEBUG
-CSP_SCRIPT_HASH = "sha256-hrlqi82Djn6FMe+8Vr+ToKztWRuX7FB0i/lPwC2Ge3A="
+CSP_SCRIPT_HASH = "sha256-lbMCPKNAGQmGsc5UCq4s6O0CryblYiP0Vn1/OkpRyOQ="
 CONTENT_SECURITY_POLICY = (
     f"default-src 'self'; script-src 'self' '{CSP_SCRIPT_HASH}'; "
     "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "

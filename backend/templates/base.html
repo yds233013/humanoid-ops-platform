@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Fleet{% endblock %} · Ops Platform</title>
-<script>document.documentElement.classList.add('js')</script>
 <style>
 /* ---- Design system (01A). One stylesheet; tokens first. All text/background pairs are >= 4.5:1
    (tests/test_ui_foundation.py checks them). ---- */
@@ -170,6 +169,7 @@ button.danger{background:var(--red);color:#fff;border-color:var(--red)}
 {% block content %}{% endblock %}
 </main>
 <script>
+document.documentElement.classList.add('js');
 /* 03B closure: the phone header's Menu button opens and closes the folded section list and user menu
    (Escape closes it and returns focus to the button). */
 (function(){
