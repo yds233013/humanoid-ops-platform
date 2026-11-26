@@ -72,3 +72,15 @@ def sign_in(live_server) -> Callable:
         )
 
     return _sign_in
+
+
+@pytest.fixture
+def page(page):
+    """pytest-playwright's page, but routes still in flight at the end of a test are dropped quietly.
+
+    Without this a route callback (for example a fetch of the snapshot) can outlive its test and fail the
+    next test's setup with "Request context disposed" (seen on CI 45897727496).
+    """
+    yield page
+    if not page.is_closed():  # a test may close the page itself (restart case)
+        page.unroute_all(behavior="ignoreErrors")
