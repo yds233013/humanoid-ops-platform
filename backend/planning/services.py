@@ -1171,7 +1171,10 @@ def plan_visit(
         v.refresh_from_db()
         if v.status == "cancelled":
             raise Conflict("Visit is cancelled")
-        crew_hub_check(v, lead, second)
+        if all(x is None or x.hub_id == v.hub_id for x in (robot, vehicle)):
+            # the database's order (planning_visit_hub_guard): robot, vehicle, then crew; another hub's
+            # robot or vehicle is reported by the trigger first, as before
+            crew_hub_check(v, lead, second)
         if robot is not None and v.status in ("planned", "confirmed") and _departed(v):
             # v2 03A-2: the robot is out on this visit, so the location check would otherwise answer first
             raise Conflict(f"Visit {v.code} has departed; it can never be re-planned")

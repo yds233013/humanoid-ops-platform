@@ -43,7 +43,7 @@ from operations import pauses
 from operations.models import RegionPause
 from planning import services as ps
 from planning import travel, zones
-from planning.models import Visit
+from planning.models import Person, Visit
 from platform_core import testhooks
 from platform_core import workspace as ws
 from platform_core.commands import Conflict, PermissionDenied
@@ -265,6 +265,8 @@ def test_a_cross_hub_reassignment_of_a_paused_visit_is_still_refused_at_authoriz
         travel.set_travel_time(w.ops, from_zone_id=a.pk, to_zone_id=b.pk, minutes=40, source="demo")
     for user in (w.field, w.field2):  # the crew records evidence at HB too
         RoleGrant.objects.create(user=user, role="field_operator", hub=hb)
+    # 03B carry (planning/0015): the crew must be based at the visit's hub, so P-1 and P-2 work at HB here
+    Person.objects.filter(code__in=["P-1", "P-2"]).update(hub=hb)
     for kind, code in (("robot", "R-02"), ("vehicle", "VAN-2")):
         tid = int(
             tr.start_transfer(w.ops, kind=kind, code=code, to_hub_code="HB", reason="SYN: help HB")["id"]
