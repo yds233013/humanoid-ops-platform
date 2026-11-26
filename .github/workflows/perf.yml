@@ -54,6 +54,13 @@ jobs:
         run: |
           set -o pipefail
           uv run pytest -m perf -s -q tests/test_operations_perf.py 2>&1 | tee perf.log
+      - name: Phase 05 500-robot p95 (Hub, Today, board, readiness <= 2 s; sync-20 <= 1 s; 5 hubs, 5,000 visits)
+        if: always()
+        timeout-minutes: 25
+        run: |
+          set -o pipefail
+          echo "loadavg before: $(cat /proc/loadavg)"
+          uv run pytest -m perf -s -q tests/test_v2_05_scale.py 2>&1 | tee perf05.log
       - name: Load after the run
         if: always()
         run: cat /proc/loadavg
@@ -61,4 +68,6 @@ jobs:
         if: always()
         with:
           name: perf-log
-          path: backend/perf.log
+          path: |
+            backend/perf.log
+            backend/perf05.log
