@@ -88,6 +88,8 @@ def test_design_tokens_meet_text_contrast():
         ("ink", "bg"), ("ink", "card"), ("soft", "bg"), ("soft", "card"), ("soft", "neutralbg"),
         ("blue", "card"), ("blue", "bluebg"), ("amber", "amberbg"), ("red", "redbg"), ("pos", "posbg"),
         ("head-ink", "head"), ("head-soft", "head"), ("ink", "neutralbg"), ("blue", "bg"),
+        # v2 03B-2: the check marks of "What we checked" and the review panel's shapes sit on the card colour
+        ("pos", "card"), ("amber", "card"), ("red", "card"),
     ]  # fmt: skip
     bad = {
         f"{a} on {b}": round(_ratio(tokens[a], tokens[b]), 2)
@@ -152,7 +154,7 @@ def _nav(html: str) -> list[str]:
 @pytest.mark.django_db(transaction=True)
 def test_every_page_has_the_global_header_with_user_menu():
     ops = make_user("ui_ops", "ops_lead")
-    for url in ("/fleet/", "/planning/", "/planning/sites/", "/ops/", "/ops/exceptions/", "/readiness/",
+    for url in ("/fleet/", "/planning/", "/planning/board/", "/planning/sites/", "/ops/", "/ops/exceptions/", "/readiness/",
                 "/execution/", "/execution/incidents/", "/ops/closeout/"):  # fmt: skip
         html = _get(ops, url).content.decode()
         assert _nav(html) == NAV_LABELS, url
