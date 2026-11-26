@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>queue.js test harness</title>
+</head>
+<body>
+<p>Test harness for the offline field queue (tests only, never served by Django).</p>
+<script type="module">
+import * as Q from "/field/queue.js";
+
+window.Q = Q;
+window.events = 0;
+Q.subscribe(() => { window.events += 1; });
+
+function snapshotFor(user, run, device, ledger, protective) {
+  return {
+    snapshot_version: 1,
+    fetched_at: new Date().toISOString(),
+    user: { id: user, name: `Test user ${user}` },
+    run: { code: run, state: "on_site", hub: "NB", robot: "NB-014", home_label: "Home 31 (fictional)" },
+    steps: [],
+    crew: [{ id: user, name: `Test user ${user}` }],
+    ops_leads: [{ name: "Dana Ortiz" }],
+    protective: protective || { open: false, kind: null, since: null, message: "" },
+    ledger: {
+      device_id: device, generation: 1, next_expected_seq: 1, last_decided_seq: 0,
+      last_decided_outcome: null, ...(ledger || {}),
+    },
+    readiness_code: null,
+  };
+}
+window.snapshotFor = snapshotFor;
+
+// Sign in as `user`, cache a snapshot and create the queue from its ledger (15.10 item 5).
+window.boot = async (user, run, ledger, protective) => {
+  await Q.setIdentity(user);
+  const snap = snapshotFor(user, run, await Q.deviceId(), ledger, protective);
+  await Q.saveSnapshot(snap);
+  return Q.ensureQueue(run, snap.ledger);
+};
+
+window.saveProtective = async (user, run, open) => {
+  const snap = snapshotFor(user, run, await Q.deviceId(), null, { open, kind: open ? "stop" : null, since: null, message: "" });
+  await Q.saveSnapshot(snap);
+};
+
+window.view = async (run) => (await Q.list(run)).map((r) => ({
+  key: r.key, channel: r.channel, seq: r.seq, generation: r.generation, state: r.state,
+  reason_code: r.reason_code, final: r.final, replaced_by: r.replaced_by || null, replaces: r.replaces || null,
+  resolved_locally: r.resolved_locally || false,
+}));
+
+window.ready = Q.open().then(() => true);
+</script>
+</body>
+</html>
