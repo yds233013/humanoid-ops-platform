@@ -131,6 +131,17 @@ SPECS: tuple[Spec, ...] = (
         "Set per hub with --hub; the value without a hub applies to every hub that has none.",
         "hours",
     ),
+    # v2 03C-3 (contract 14.4): how far ahead of the server's receipt time a phone's clock may be before an
+    # ordinary field step is refused (protective steps are never refused for the clock; they are flagged).
+    # Absent = 2 minutes (the contract's demo value), so a missing setting never widens the bound.
+    Spec(
+        "field_clock_skew_min",
+        "Phone clock tolerance (minutes)",
+        "How far ahead of the server's time a phone's clock may be when it sends queued field steps. A step "
+        "timed later than that is refused with a reason (safety reports are kept and flagged instead).",
+        "minutes",
+        default="2",
+    ),
 )
 BY_KEY = {s.key: s for s in SPECS}
 ALLOWED_KEYS = tuple(BY_KEY)

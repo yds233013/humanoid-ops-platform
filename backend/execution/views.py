@@ -30,6 +30,7 @@ from django.views.decorators.http import require_POST
 from accounts.permissions import active_roles, has_permission
 from accounts.roles import ALL_ROLES
 from execution import escalation as esc
+from execution import field_sync
 from execution import incidents as inc
 from execution import logistics as lg
 from execution import policy as pol
@@ -591,11 +592,15 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
         reconciled=reconciled,
     )
     title, text = NEXT_STEPS[step]
+    base = _base(request)
+    # v2 03C-3 (contract 14.1): what the phone last REPORTED, for the ops lead; never shown as live
+    device_report = field_sync.last_device_report(run) if base["is_ops_lead"] else None
     return render(
         request,
         "execution/run.html",
         {
             **summary,
+            "device_report": device_report,
             "tz": tz,
             "custody_rows": custody,
             "unverified": unverified,
@@ -636,7 +641,7 @@ def run_detail(request: HttpRequest, code: str) -> HttpResponse:
             "knowledge_sources": KNOWLEDGE_SOURCES,
             "now_local": datetime.now(workspace_zone()).strftime("%Y-%m-%dT%H:%M"),
             "report_key": uuid.uuid4().hex,
-            **_base(request),
+            **base,
         },
     )
 

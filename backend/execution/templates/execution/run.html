@@ -17,6 +17,7 @@
   {% if open_interruptions %}<p>Open interruptions: <b>{{ open_interruptions|join:", " }}</b> (each blocks session start/resume until resolved)</p>{% endif %}
   {% if open_incidents %}<p>Open incidents: {% for c in open_incidents %}<a href="/execution/incidents/{{ c }}/">{{ c }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
   <p class="muted">Crew: {% for p in crew %}{{ p.label }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+  {% if is_ops_lead %}<p class="muted" data-field-unsent>{% if device_report %}Last reported unsent count: {{ device_report.unsent_count }} (at {{ device_report.reported_at|local_dt }}, device …{{ device_report.device_tail }}). This is what the phone last told the server, not a live count.{% else %}No phone has reported an unsent count for this run.{% endif %}</p>{% endif %}
 </div>
 
 {% include "execution/_next_step.html" %}
