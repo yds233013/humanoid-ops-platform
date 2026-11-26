@@ -42,7 +42,7 @@
 {% if g.risk_more %}<details class="fold"><summary>{{ g.risk_more|length }} more at risk</summary><ul class="opts">{% for c in g.risk_more %}<li><label class="opt risk"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"><span><span class="mk" aria-hidden="true">▲</span> <span class="sr">At risk: </span>{{ c.line }}</span></label></li>{% endfor %}</ul></details>{% endif %}
 {% else %}<p class="calm" data-no-options="{{ g.kind }}">No {{ g.title|lower }} is free for this time.</p>{% endif %}
 {% if g.not_possible %}<details class="fold" data-not-possible="{{ g.kind }}"><summary>Not possible ({{ g.not_possible|length }})</summary><ul class="np">{% for c in g.not_possible %}<li><span class="mk" aria-hidden="true">✕</span> {{ c.line }}{% if c.current %} <span class="cur">current</span>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
-{% if g.elsewhere %}<p class="calm" data-elsewhere="{{ g.kind }}">{{ g.elsewhere }} at other hubs, not listed.</p>{% endif %}
+{% if g.elsewhere %}<p class="calm" data-elsewhere="{{ g.kind }}">{{ g.elsewhere_text }}.</p>{% endif %}
 </fieldset>{% endfor %}
 <fieldset class="grp"><legend>Time (optional)</legend>
 <div class="field"><label for="rv-start">New start ({{ site_tz }})</label><input id="rv-start" type="datetime-local" name="start" value="{{ review.new_start }}"></div>

@@ -64,7 +64,8 @@ details.fold>summary{padding:var(--s3) 0;line-height:20px} .review button,.revie
   <label>New start ({{ site_tz }}) <input type="datetime-local" name="start"></label>
   <label>New end <input type="datetime-local" name="end"></label>
   <label>Reason for change <input name="reason" maxlength="200"></label><button{% if not review %} class="primary"{% endif %}>Save plan</button>
-</form>{% else %}<p class="waiting">{{ who_plan }}</p>{% endif %}
+</form>
+<p class="muted" data-hub-only="1" style="margin:var(--s2) 0 0">Only robots, people and vehicles at {{ hub.name }} are offered.{% if options.elsewhere_text %} {{ options.elsewhere_text }}{% endif %}</p>{% else %}<p class="waiting">{{ who_plan }}</p>{% endif %}
 <div class="row" style="margin-top:var(--s3)">
   {% if visit.status == "planned" %}{% if can.confirm %}<form method="post" action="/planning/visits/{{ visit.code }}/confirm/">{% csrf_token %}{% form_token %}<button class="primary">Confirm visit</button></form>{% else %}<span class="waiting">{{ who_confirm }}</span>{% endif %}{% endif %}
   {% if can.plan %}<a class="btn" href="/planning/visits/{{ visit.code }}/cancel/">Cancel visit...</a>{% endif %}

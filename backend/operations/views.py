@@ -265,7 +265,10 @@ def exceptions_data(at: datetime, cursor: str | None, hub_ids: set[int] | None =
     page_no = cont["page"] if cont else 1
     first_at = cont["first_at"] if cont else at
     # snapshot-dated items keep page 1's time as 'since', so they do not reappear on every new snapshot
-    result = exceptions.open_exceptions(at, limit=PAGE_SIZE, after=after, since_at=first_at)
+    # 03B closure (P2): the viewer's hubs are applied by the read model BEFORE the page limit (full pages, an
+    # exact cursor, coverage of their hubs)
+    scoped = {} if hub_ids is None else {"hub_ids": hub_ids}  # a regional read is called exactly as before
+    result = exceptions.open_exceptions(at, limit=PAGE_SIZE, after=after, since_at=first_at, **scoped)
     next_cursor = field(result, "next_cursor")
     return {
         "as_of": at,
@@ -273,7 +276,7 @@ def exceptions_data(at: datetime, cursor: str | None, hub_ids: set[int] | None =
         "first_page_as_of": first_at,
         "previous_page_as_of": cont["prev_at"] if cont else None,
         "new_snapshot": cont is not None,
-        "items": scope.keep_issues(list(field(result, "items", [])), hub_ids),  # v2 03A: viewer's hubs
+        "items": list(field(result, "items", [])),  # already the viewer's hubs (03A I-8, scoped in SQL)
         "readiness_coverage": field(result, "readiness_coverage"),
         # EM B2: runs whose RETURN_OVERDUE cannot be computed (no planned unloading end) are shown, not hidden
         "unknown_basis": list(field(result, "unknown_basis", []) or []),

@@ -99,6 +99,20 @@ def test_design_tokens_meet_text_contrast():
     assert not bad, f"contrast below 4.5:1: {bad}"
 
 
+def test_phone_header_tints_keep_contrast():
+    """03B closure: the phone header's open Menu button has a white background tint over --head; the header
+    text and the soft nav text on that tint still meet 4.5:1 (borders and dividers are not text grounds)."""
+    css = (BACKEND / "templates" / "base.html").read_text()
+    tokens = dict(re.findall(r"--([a-z-]+):\s*(#[0-9A-Fa-f]{6})", css))
+    tints = re.findall(r"background:#ffffff([0-9a-f]{2})", css.split("03B closure: on phones")[1])
+    assert tints, "the phone header uses white background tints over the header colour"
+    head = [int(tokens["head"][i : i + 2], 16) for i in (1, 3, 5)]
+    for alpha in {int(t, 16) / 255 for t in tints}:
+        blended = "#" + "".join(f"{round(c + (255 - c) * alpha):02X}" for c in head)
+        for ink in ("head-ink", "head-soft"):
+            assert _ratio(tokens[ink], blended) >= 4.5, (ink, blended)
+
+
 def test_mobile_css_does_not_hide_a_table_column():
     css = (BACKEND / "templates" / "base.html").read_text()
     assert "nth-child" not in css, "D-04: no rule may hide a table column on small screens"

@@ -25,7 +25,21 @@ The search (13.4 item 4):
   overlap. Facts about the home itself (assessment, consent, a regional pause) do not depend on the time;
   they are reported once in ``home_notes`` and the plan command still applies them.
 * Ranking: slots with no at-risk item ("Available for planning") first, then "At risk" slots (robot away on
-  a same-hub run, section 12); within each, earliest first, then robot code, crew codes, vehicle code.
+  a same-hub run, section 12); within each, earliest first, then robot code, crew codes, vehicle code. Each
+  candidate time gives at most one slot: its first combination, in that code order, that evaluate accepts.
+* Variety (03B closure, P3): two slots are NEAR-IDENTICAL when they have the same lead and second, on the
+  same local day at the hub, starting less than ``BLOCK_MIN`` (120) minutes apart. The slots shown are
+  chosen by walking the ranked slots and taking each one that is not near-identical to a slot already
+  taken; if fewer than ``limit`` are taken that way, the rest are filled from the remaining slots in rank
+  order (never fewer slots than before). They are then shown in rank order. To find varied slots, the search
+  goes on after ``limit`` Available slots for at most ``DIVERSITY_EXTRA`` (60) more evaluations, within the
+  budget; running out there is not reported as an exhausted search.
+* Outstanding checks (03B closure, P1): every shown slot carries ``SLOT_LABEL`` and, before anyone saves it,
+  the checks that still run later for that slot, from the same facts the review panel uses: the robot's
+  charge forecast at the slot's departure (``hub.charging``), the home's assessment and consent on that date
+  (``evaluate``'s own blockers), the robot's return to the hub when it is away (At risk), and an active
+  regional pause (``operations.pauses.active_for``). Nothing here decides: the guarded plan command runs every
+  check again when the slot is saved, and departure has its own gates.
 * Budget: at most ``BUDGET`` (200) evaluations per request. Every candidate time counts once when the option
   labels rule it out, and every combination asked of evaluate counts once. When the budget runs out before
   the look-ahead is searched, ``exhausted`` is True and the page says so.
@@ -55,9 +69,16 @@ from platform_core.models import Hub
 
 STEP_MIN = 30
 BUDGET = 200
+BLOCK_MIN = 120  # P3: same crew, same day, starts closer than this = near-identical
+DIVERSITY_EXTRA = 60  # P3: evaluations spent looking for varied slots after ``limit`` Available ones
 TRIES_PER_TIME = 3
 FREE, AT_RISK = "available", "at_risk"
 STATUS_WORDS = {FREE: ("Available for planning", "●"), AT_RISK: ("At risk", "▲")}
+# 03B closure (contract 14.7, P1): the label of every suggested slot, word for word.
+SLOT_LABEL = (
+    "Suggested planning time. Final checks, including charging, site requirements and regional pauses, run "
+    "when you save. This is not departure authorization."
+)
 
 # Blockers about the home, not about the time or the resources: reported once, never a reason to skip a slot.
 HOME_CODES = {"SITE_NOT_ASSESSED", "SITE_NOT_ELIGIBLE", "SITE_RESTRICTED", "TASK_EXCLUDED", "CONSENT"}
@@ -92,6 +113,16 @@ class Slot:
     tz: str  # the hub's IANA zone
     site_tz: str
     travel_versions: tuple[int | None, int | None] = (None, None)
+    depart: datetime | None = None  # UTC, from evaluate's timeline (the charge forecast is for this time)
+    robot_id: int | None = None
+    home: list[tuple[str, str]] = field(default_factory=list)  # (level, sentence) about the home on this date
+    outstanding: list[Any] = field(
+        default_factory=list
+    )  # planning.review.Check lines, filled for shown slots
+
+    @property
+    def label_text(self) -> str:
+        return SLOT_LABEL
 
     @property
     def words(self) -> str:
@@ -176,6 +207,35 @@ class NextFreeResult:
             f"No free time in the next {self.days} day{'s' if self.days != 1 else ''} at {self.hub_name}. "
             "Widen the search or add crew time."
         )
+
+
+def near_identical(a: Slot, b: Slot) -> bool:
+    """P3: the same crew (lead and second), the same local day at the hub, starts < BLOCK_MIN apart."""
+    zone = ZoneInfo(a.tz)
+    return (
+        getattr(a.lead, "code", "") == getattr(b.lead, "code", "")
+        and getattr(a.second, "code", "") == getattr(b.second, "code", "")
+        and a.start.astimezone(zone).date() == b.start.astimezone(zone).date()
+        and abs((a.start - b.start).total_seconds()) < BLOCK_MIN * 60
+    )
+
+
+def pick_varied(slots: list[Slot], limit: int) -> list[Slot]:
+    """P3 (documented rule in the module docstring): ranked walk, skipping near-identical slots, then filled
+    in rank order; returned in rank order."""
+    ranked = sorted(slots, key=lambda s: s.key)
+    chosen: list[Slot] = []
+    for s in ranked:
+        if len(chosen) >= limit:
+            break
+        if not any(near_identical(s, c) for c in chosen):
+            chosen.append(s)
+    for s in ranked:
+        if len(chosen) >= limit:
+            break
+        if s not in chosen:
+            chosen.append(s)
+    return sorted(chosen, key=lambda s: s.key)
 
 
 def _now() -> datetime:
@@ -344,8 +404,14 @@ def next_free(
     seen_home: list[str] = []
     found: list[Slot] = []
     free_count = 0
+    extra_from: int | None = None  # P3: evaluations when ``limit`` Available slots were first found
+    varied_done = False
 
     def spend() -> bool:
+        if extra_from is not None and (
+            out.evaluations >= budget or out.evaluations - extra_from >= DIVERSITY_EXTRA
+        ):
+            return False  # enough slots already: looking for variety ends quietly
         if out.evaluations >= budget:
             out.exhausted = True
             return False
@@ -353,14 +419,18 @@ def next_free(
         return True
 
     for start in starts:
-        if free_count >= limit or out.stopped or out.exhausted:
+        if varied_done or out.stopped or out.exhausted:
+            break
+        if extra_from is not None and (
+            out.evaluations >= budget or out.evaluations - extra_from >= DIVERSITY_EXTRA
+        ):
             break
         end = start + span
         lead_time = t_out + max((v[0] for v in world.loads.values()), default=0) + insp
         if start - timedelta(minutes=lead_time) <= now:
             continue  # too soon: inspection and loading would have to start in the past (not counted)
         out.candidates += 1
-        opts = popt.options_at(world, hub.pk, start, end, t_out, t_back)
+        opts = popt.restrict_to_hub(popt.options_at(world, hub.pk, start, end, t_out, t_back), hub.pk)
         combos = _combos(opts, hub.pk)
         if not combos:
             if not spend():
@@ -392,9 +462,11 @@ def next_free(
             if stop:
                 out.stopped = plain_blocker(stop[0])["sentence"]
                 break
+            home: list[tuple[str, str]] = []
             for b in plan.blockers:
                 if b["code"] in HOME_CODES:
                     sentence = plain_blocker(b)["sentence"]
+                    home.append((b["level"], sentence))
                     if sentence not in seen_home:
                         seen_home.append(sentence)
             if any(b["code"] not in HOME_CODES for b in blocked) or "timeline_utc" not in plan.snapshot:
@@ -416,11 +488,120 @@ def next_free(
                 travel_versions=(
                     (route.out.version_id, route.back.version_id) if route is not None else (None, None)
                 ),
+                depart=datetime.fromisoformat(plan.snapshot["timeline_utc"]["depart"]),
+                robot_id=robot.obj.pk,
+                home=home,
             )
             break
         if slot_found is not None:
             found.append(slot_found)
             free_count += slot_found.status == FREE
-    out.slots = sorted(found, key=lambda s: s.key)[:limit]
+            if free_count >= limit:
+                extra_from = out.evaluations if extra_from is None else extra_from
+                free = [x for x in found if x.status == FREE]
+                varied = pick_varied(free, limit)
+                varied_done = len(varied) >= limit and all(
+                    not near_identical(a, b) for i, a in enumerate(varied) for b in varied[i + 1 :]
+                )
+    out.slots = pick_varied(found, limit)
     out.home_notes = seen_home
+    if out.slots:
+        outstanding_checks(out.slots, hub, probe.zone_id)
     return out
+
+
+def outstanding_checks(slots: list[Slot], hub: Hub, zone_id: int | None) -> None:
+    """P1 (03B closure): the checks still outstanding for each shown slot, before it is saved. Read only: one
+    pause read, one setting read and one charge-forecast read per slot (at most ``limit``)."""
+    from hub import charging  # noqa: PLC0415
+    from operations import pauses  # noqa: PLC0415
+    from planning.board import pause_banner  # noqa: PLC0415
+    from planning.review import FAIL, PASS, RISK, Check  # noqa: PLC0415
+
+    pause = pauses.active_for(hub.pk, zone_id)
+    forecast_on = charging.forecast_configured()
+    for s in slots:
+        robot = f"Robot {s.robot}"
+        lines: list[Check] = []
+        # charging (v2 02B forecast at the slot's departure; the departure battery check stays the gate)
+        f = (
+            charging.robot_forecasts([s.robot_id], s.depart).get(s.robot_id)
+            if forecast_on and s.robot_id is not None and s.depart is not None
+            else None
+        )
+        if not forecast_on:
+            lines.append(
+                Check(
+                    "charge",
+                    "Charging",
+                    RISK,
+                    "Not forecast yet: the battery freshness setting (ops_soc_fresh_min) is not provisioned. "
+                    f"The battery check runs before {robot} leaves.",
+                )
+            )
+        elif f is None or f.state == charging.UNKNOWN:
+            why = f.reason if f is not None else "no battery level is recorded"
+            lines.append(
+                Check(
+                    "charge",
+                    "Charging",
+                    RISK,
+                    f"{robot} has no charge forecast: {why}. The battery check runs before it leaves.",
+                )
+            )
+        elif f.state == charging.NEEDS:
+            lines.append(
+                Check(
+                    "charge",
+                    "Charging",
+                    FAIL if f.cannot_in_time else RISK,
+                    f"{robot} needs charge before it leaves: {f.reason}.",
+                )
+            )
+        else:
+            lines.append(
+                Check(
+                    "charge",
+                    "Charging",
+                    PASS,
+                    f"{robot} is forecast to have enough charge ({f.reason}). The battery check still runs "
+                    "before it leaves.",
+                )
+            )
+        # the home on this date (assessment, restrictions, consent): evaluate's own facts
+        if s.home:
+            worst = FAIL if any(level == "blocked" for level, _ in s.home) else RISK
+            lines.append(Check("home", "Home and site requirements", worst, " ".join(t for _, t in s.home)))
+        else:
+            lines.append(
+                Check(
+                    "home",
+                    "Home and site requirements",
+                    PASS,
+                    "The home's assessment and consent cover this date. They are checked again when you "
+                    "save.",
+                )
+            )
+        # the robot's return (section 12: away on a same-hub run)
+        if s.status == AT_RISK:
+            lines.append(
+                Check(
+                    "return",
+                    "Robot back at the hub",
+                    RISK,
+                    f"{robot} is away on a run of {hub.name}. It cannot be authorized to leave until it is "
+                    "verified back at the hub.",
+                )
+            )
+        # an active regional pause (the authorization and departure gates enforce it)
+        lines.append(
+            Check("pause", "Regional pause", RISK, pause_banner(hub.name, pause))
+            if pause is not None
+            else Check(
+                "pause",
+                "Regional pause",
+                PASS,
+                f"No departure pause at {hub.name} now. A pause set later still stops departure.",
+            )
+        )
+        s.outstanding = lines

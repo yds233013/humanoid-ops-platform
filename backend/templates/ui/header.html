@@ -1,7 +1,8 @@
 <header class="site-header">
 <div class="hdr">
-{% if authenticated %}<a class="brand" href="{{ home_url }}">Ops Platform</a>
-<nav class="primary-nav" aria-label="Main">{% for n in nav %}<a href="{{ n.url }}"{% if n.active %} aria-current="page"{% endif %}>{{ n.label }}</a>{% endfor %}</nav>
+{% if authenticated %}<a class="brand" href="{{ home_url }}">Ops<span class="brand-long"> Platform</span></a>
+<button type="button" class="navbtn" aria-expanded="false" aria-controls="main-nav" data-navbtn="1"><span aria-hidden="true">&#9776;</span> Menu</button>
+<nav class="primary-nav" id="main-nav" aria-label="Main">{% for n in nav %}<a href="{{ n.url }}"{% if n.active %} aria-current="page"{% endif %}>{{ n.label }}</a>{% endfor %}</nav>
 {% if demo %}<span class="demo-badge" data-demo-badge="1" title="Fictional data. Nothing here is a real approval.">Demo workspace</span>{% endif %}
 <details class="usermenu"><summary>{{ username }} &#9662;</summary>
 <div class="pop"><div class="who">Signed in as {{ username }}{% if roles %}<br>{{ roles|join:", " }}{% endif %}</div><hr>

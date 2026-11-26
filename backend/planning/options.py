@@ -78,6 +78,33 @@ class PlanOptions:
     leads: list[Option] = field(default_factory=list)
     seconds: list[Option] = field(default_factory=list)
     vehicles: list[Option] = field(default_factory=list)
+    # 03B closure (P2): options of other hubs left out by ``restrict_to_hub``, counted per list, and the
+    # unrestricted options they came from (Review options still checks a forged robot or vehicle code and says
+    # the database would refuse it)
+    elsewhere: dict[str, int] = field(default_factory=dict)
+    everything: PlanOptions | None = field(default=None, repr=False)
+
+    @property
+    def elsewhere_text(self) -> str:
+        """``Not offered: 3 robots, 12 people and 2 vehicles at other hubs.`` (empty when none)."""
+        robots, people, vehicles = (
+            self.elsewhere.get("robots", 0),
+            max(self.elsewhere.get("leads", 0), self.elsewhere.get("seconds", 0)),
+            self.elsewhere.get("vehicles", 0),
+        )
+        parts = [
+            f"{n} {one if n == 1 else many}"
+            for n, one, many in (
+                (robots, "robot", "robots"),
+                (people, "person", "people"),
+                (vehicles, "vehicle", "vehicles"),
+            )
+            if n
+        ]
+        if not parts:
+            return ""
+        listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+        return f"Not offered: {listed} at other hubs."
 
 
 @dataclass
@@ -359,6 +386,53 @@ def options_at(
             status, note = FREE, "free"
         out.vehicles.append(Option(v.code, f"{v.code} · {note}", status, v.pk == selected[3], v, note))
     out.vehicles = _sort(out.vehicles)
+    return out
+
+
+# Robot and vehicle notes that mean "not at this visit's hub" (options_at's own words)
+OTHER_HUB_NOTES = ("at another hub", "away on another hub's run", "on its way to another hub")
+ELSEWHERE_WORDS = {
+    "robots": ("robot", "robots"),
+    "leads": ("person", "people"),
+    "seconds": ("person", "people"),
+    "vehicles": ("vehicle", "vehicles"),
+}
+
+
+def elsewhere_line(kind: str, n: int) -> str:
+    """``12 people at other hubs are not offered`` (03B closure P2)."""
+    one, many = ELSEWHERE_WORDS[kind]
+    return f"1 {one} at another hub is not offered" if n == 1 else f"{n} {many} at other hubs are not offered"
+
+
+def restrict_to_hub(opts: PlanOptions, hub_id: int | None) -> PlanOptions:
+    """03B closure (contract 14.7, P2): the choices offered for a visit are its own hub's only.
+
+    * robots: based at the visit's hub (``fleet_robot.hub_id``, the rule of the database trigger
+      ``planning_visit_hub_guard``) and not placed at or away for another hub by the section 12 planning
+      predicate (``options_at`` notes "at another hub", "away on another hub's run");
+    * people: home hub (``planning_person.hub_id``) is the visit's hub;
+    * vehicles: based at the visit's hub and not on their way to another hub (the trigger's rule).
+
+    Everything else is only counted in ``elsewhere``. The current plan's own choice is always kept, so a
+    form never silently changes it. The labels and the guarded plan command are unchanged: the command and
+    the trigger still refuse another hub's robot or vehicle, whatever a form sends. Read only, no statement.
+    """
+    if hub_id is None:
+        return opts
+    out = PlanOptions(charge_on=opts.charge_on, everything=opts)
+    for name in ("robots", "leads", "seconds", "vehicles"):
+        kept, other = [], 0
+        for o in getattr(opts, name):
+            obj_hub = getattr(o.obj, "hub_id", hub_id)
+            away = obj_hub != hub_id or (name in ("robots", "vehicles") and o.note in OTHER_HUB_NOTES)
+            if away and not o.selected:
+                other += 1
+            else:
+                kept.append(o)
+        setattr(out, name, kept)
+        if other:
+            out.elsewhere[name] = other
     return out
 
 

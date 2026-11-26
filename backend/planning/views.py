@@ -31,7 +31,7 @@ from planning.forms import (
     WithdrawForm,
 )
 from planning.models import Reservation, Site, SiteAssessment, Visit
-from planning.options import plan_options, suggest
+from planning.options import plan_options, restrict_to_hub, suggest
 from planning.plain import ALREADY_DONE, plain_blockers, refusal_text, role_words, who_can
 from platform_core.commands import CommandError, PermissionDenied
 from platform_core.hubscope import HubScope, hub_scope, other_hub_refusal
@@ -186,7 +186,9 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     )
     departed = v.status != "cancelled" and v.departures.exists()
     if can_plan and v.status != "cancelled":
-        options = plan_options(v)  # read only, a fixed number of statements (planning/options.py)
+        # read only, a fixed number of statements (planning/options.py); 03B closure P2: only the visit's own
+        # hub's robots, people and vehicles are offered, the rest are counted
+        options = restrict_to_hub(plan_options(v), v.hub_id)
         if wants_review and not departed:
             from planning.review import build_review  # noqa: PLC0415
 

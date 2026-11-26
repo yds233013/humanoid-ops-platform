@@ -1084,6 +1084,35 @@ def _release_active(visit: Visit, reason: str) -> None:
         trip.save(update_fields=["released_at"])
 
 
+# 03B closure (contract 14.7; 10.B / I-8): current plans whose lead or second is based at another hub than the
+# visit. They keep working until re-planned (planning/0015 checks new revisions only); a re-plan must pick
+# same-hub crew. Used to count them before and after the rule.
+CROSS_HUB_CREW_SQL = """
+SELECT count(*) FROM planning_visit v
+JOIN planning_visitrevision rv ON rv.id = v.current_revision_id
+LEFT JOIN planning_person l ON l.id = rv.lead_id
+LEFT JOIN planning_person s ON s.id = rv.second_id
+WHERE (l.id IS NOT NULL AND l.hub_id <> v.hub_id) OR (s.id IS NOT NULL AND s.hub_id <> v.hub_id)
+"""
+
+
+def crew_hub_check(visit: Visit, lead: Person | None, second: Person | None) -> None:
+    """03B closure: the crew is based at the visit's hub (the same rule and words as the database trigger
+    planning_visit_hub_guard, planning/0015), so the form shows a plain refusal. A resource rule, not a
+    permission: it applies to every role."""
+    for person in (lead, second):
+        if person is not None and person.hub_id != visit.hub_id:
+            from planning.board import person_name  # noqa: PLC0415
+            from platform_core.models import Hub  # noqa: PLC0415
+
+            names = dict(Hub.objects.filter(pk__in=[person.hub_id, visit.hub_id]).values_list("pk", "name"))
+            theirs = names.get(person.hub_id, "another hub")
+            ours = names.get(visit.hub_id, "this visit's hub")
+            raise Conflict(
+                f"{person_name(person)} works at {theirs}, not at this visit's hub. Choose crew from {ours}."
+            )
+
+
 def plan_visit(
     actor: Any,
     *,
@@ -1142,6 +1171,10 @@ def plan_visit(
         v.refresh_from_db()
         if v.status == "cancelled":
             raise Conflict("Visit is cancelled")
+        if all(x is None or x.hub_id == v.hub_id for x in (robot, vehicle)):
+            # the database's order (planning_visit_hub_guard): robot, vehicle, then crew; another hub's
+            # robot or vehicle is reported by the trigger first, as before
+            crew_hub_check(v, lead, second)
         if robot is not None and v.status in ("planned", "confirmed") and _departed(v):
             # v2 03A-2: the robot is out on this visit, so the location check would otherwise answer first
             raise Conflict(f"Visit {v.code} has departed; it can never be re-planned")
