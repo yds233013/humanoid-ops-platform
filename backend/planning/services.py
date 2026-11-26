@@ -209,13 +209,17 @@ def evaluate(
     periodic: fleet_services.PeriodicStatus | None = None,
     maintenance: list[str] | None = None,
     travel: Any = None,
+    pause_check: bool = True,
 ) -> Plan:
     """``periodic``: an already computed X-3 periodic status of ``robot`` in the current mode, reused for its
     eligibility instead of reading it again (readiness evaluator; see fleet.services.evaluate_eligibility).
     ``maintenance``: likewise, the robot's already read blocking maintenance reasons (v2 02C).
     ``travel``: v2 03B-1, a ``planning.travel.Route`` for a NEW decision on a zoned visit (``new_route``): its
     matrix minutes replace ``travel_out`` / ``travel_back``, and a missing pair blocks ("Travel time unknown",
-    never a fallback). Without it the given (recorded) minutes are used, as before 03B."""
+    never a fallback). Without it the given (recorded) minutes are used, as before 03B.
+    ``pause_check``: v2 03B-1, label a regional pause (one statement). The readiness evaluator passes False:
+    its per-visit statement budget is pinned (operations.exceptions.READINESS_EVALUATOR_STATEMENTS) and the
+    database gates refuse authorization and departure under a pause anyway."""
     b: list[dict[str, str]] = []
     snap: dict[str, Any] = {
         "evaluated_at": timezone.now().isoformat(),
@@ -416,7 +420,7 @@ def evaluate(
 
     # --- v2 03B-1 regional pause (I-9): planning stays allowed and says so; authorization and departure
     # are refused (database gates)
-    if visit is not None:
+    if visit is not None and pause_check:
         from operations.pauses import (
             PAUSED_TEXT,
             active_for,
@@ -1260,6 +1264,7 @@ def live_feasibility(
     *,
     periodic: fleet_services.PeriodicStatus | None = None,
     maintenance: list[str] | None = None,
+    pause_check: bool = True,
 ) -> Plan:
     """Re-evaluate the current revision against the world as it is NOW (consent withdrawn, hold placed...).
     Never trusts the stored result or the existence of reservations. ``periodic``, ``maintenance``: see
@@ -1281,6 +1286,7 @@ def live_feasibility(
         visit=v,
         periodic=periodic,
         maintenance=maintenance,
+        pause_check=pause_check,
     )
 
 

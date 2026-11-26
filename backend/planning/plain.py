@@ -78,6 +78,19 @@ BLOCKERS: dict[str, tuple[str, str]] = {
         "Travel time to or from the home is not known.",
         "Plan the visit again with travel times filled in.",
     ),
+    # v2 03B-1: the travel matrix (no fallback) and the regional pause
+    "TRAVEL_UNKNOWN": (
+        "Travel time unknown: there is no approved travel time between the hub and this home's zone.",
+        "Ask an admin or the ops lead to set it (Settings > Travel times). Nothing is estimated.",
+    ),
+    "ZONE_RETIRED": (
+        "This home's zone is retired, so new visits cannot use it.",
+        "Move the home to an active zone, then plan again.",
+    ),
+    "PAUSED": (
+        "Paused: cannot leave until lifted.",
+        "Planning can go ahead; the regional ops lead lifts the pause before anyone can leave.",
+    ),
     "UNKNOWN_INSPECTION_TIME": (
         "The time needed for the pre-visit inspection is not set.",
         "Ask the ops lead to set the pre-visit inspection time.",
@@ -168,6 +181,8 @@ def plain_blocker(b: dict[str, str]) -> dict[str, str]:
         else:
             sentence = f"Robot {robot} is not ready for planning."
     elif code == "CONSENT" and msg:
+        sentence = msg.rstrip(".") + "."
+    elif code == "PAUSED" and msg:  # v2 03B-1: where and why, as recorded
         sentence = msg.rstrip(".") + "."
     return {
         "level": b.get("level", "blocked"),

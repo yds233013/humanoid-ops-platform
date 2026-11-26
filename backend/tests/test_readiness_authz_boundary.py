@@ -735,8 +735,15 @@ SQL_COVERAGE: dict[str, Any] = {
     # departure are refused by the strict physical predicate (execution_robot_departure_problem)
     "PLANNING_ROBOT_AWAY_OVERLAP": "is not at hub (custody: ",
     "PLANNING_ROBOT_AWAY": "is not at hub (custody: ",
+    # v2 03B-1: a zoned visit with no matrix value has no recorded minutes; a pause is re-proven by the gate
+    "PLANNING_TRAVEL_UNKNOWN": "travel time is unknown",
+    "PLANNING_PAUSED": "Paused: cannot leave until lifted",
+    "PLANNING_ZONE_RETIRED": (
+        GAP,
+        "a planning rule for NEW decisions only (a saved plan keeps its recorded minutes); not a departure gate",
+    ),
 }
-ALLOWED_GAPS = {"RECOVERY_ONCALL_NOT_ENGINEER"}
+ALLOWED_GAPS = {"RECOVERY_ONCALL_NOT_ENGINEER", "PLANNING_ZONE_RETIRED"}
 
 
 def _planning_codes() -> set[str]:
@@ -756,7 +763,8 @@ def test_every_blocker_code_is_mapped_to_its_sql_refusal():
         cur.execute(
             "SELECT string_agg(pg_get_functiondef(p.oid), E'\n') FROM pg_proc p "
             "WHERE p.proname IN ('readiness_issue_authorization', 'readiness_guard_problem', "
-            "'execution_robot_departure_problem', 'planning_inspection_signer_problem')"
+            "'execution_robot_departure_problem', 'planning_inspection_signer_problem', "
+            "'operations_pause_gate_problem')"
         )
         source = cur.fetchone()[0]
     for code, target in SQL_COVERAGE.items():

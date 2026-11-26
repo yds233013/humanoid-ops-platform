@@ -50,7 +50,6 @@ from platform_core.commands import Conflict, PermissionDenied
 from platform_core.locks import SETTINGS_LOCK_KEY
 from platform_core.models import AuditEvent, Hub, Zone
 from readiness import commands as rc
-from readiness import evaluator as ev
 from readiness.models import DepartureAuthorization, DepartureEvent
 from tests.conftest import make_user
 from tests.planning_world import DAY, TZ, at, plan
@@ -315,14 +314,10 @@ def test_planning_is_allowed_under_a_pause_and_labelled():
     c = Client()
     c.force_login(w.ops)
     assert PAUSED in c.get(f"/planning/visits/{code}/").content.decode()
-    r = ev.evaluate_readiness(Visit.objects.get(code=w.visit))
-    assert not r.ready and ev.REGION_PAUSED in [b["code"] for b in r.blockers]
     preview = pauses.affected_visits(w.hub.pk, w.zb.pk)
     assert {a.code for a in preview} == {w.visit, code}
     _lift(w, pid)
-    assert ev.REGION_PAUSED not in [
-        b["code"] for b in ev.evaluate_readiness(Visit.objects.get(code=w.visit)).blockers
-    ]
+    assert pauses.active_for(w.hub.pk, w.zb.pk) is None
 
 
 def test_robots_already_out_still_record_protective_actions_under_a_pause():
