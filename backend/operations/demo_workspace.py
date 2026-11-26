@@ -1268,7 +1268,13 @@ class _Builder:
         """The ONE place the demo sets a home's zone (03B-4 may switch it to their guarded function)."""
         from planning import zones  # noqa: PLC0415
 
-        zones.set_site_zone(self.u["dana.ortiz"], site_code=site_code, hub_code=hub_code, zone_code=zone_code)
+        zones.set_site_zone(
+            self.u["dana.ortiz"],
+            site_code=site_code,
+            hub_code=hub_code,
+            zone_code=zone_code,
+            reason="Demo set-up: the home's area (fictional)",
+        )
 
     def hub_zones(self, hub_code: str) -> None:
         """The hub's zones, its own zone and its demo travel matrix (source 'demo', effective now: a travel
