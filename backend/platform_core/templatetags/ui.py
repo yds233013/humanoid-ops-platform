@@ -356,6 +356,7 @@ NAV: list[tuple[str, str, str, str | None, tuple[str, ...]]] = [
 SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     "today": [
         ("Today", "/ops/", "operations.read"),
+        ("Briefing", "/ops/briefing/", "operations.read"),  # v2 Phase 04: the read-only Operations briefing
         ("Timeline", "/ops/timeline/", "operations.read"),
     ],
     "dispatch": [

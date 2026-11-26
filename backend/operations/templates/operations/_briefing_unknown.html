@@ -1,0 +1,3 @@
+{% load ui %}<div class="bf-unknown" data-unknown="{{ u.key }}"><b>{{ u.text }}</b>
+<p class="src">Source: {{ u.source }}</p>
+{% if u.links %}<p class="links">{% for code, url in u.links %}<a href="{{ url }}">{{ code }}</a>{% endfor %}{% if u.more %}<a href="{{ u.more_url }}">and {{ u.more }} more</a>{% endif %}</p>{% elif u.more_url %}<p class="links"><a href="{{ u.more_url }}">Open the record</a></p>{% endif %}</div>

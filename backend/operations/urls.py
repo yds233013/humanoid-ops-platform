@@ -8,6 +8,7 @@ app_name = "operations"
 
 urlpatterns = [
     path("", views.today_page, name="today"),
+    path("briefing/", views.briefing_page, name="briefing"),  # v2 Phase 04, read only
     path("robots/", views.robot_status_page, name="robot-status"),
     path("production-readiness/", views.production_readiness_page, name="production-readiness"),
     path("exceptions/", views.exceptions_page, name="exceptions"),
