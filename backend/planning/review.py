@@ -445,7 +445,16 @@ def checks_for(
     elif zone is None:
         # a home without a zone keeps the minutes recorded on the visit, as before 03B (03B-1 rule); the EM
         # (03B closure) wants it said, in the at-risk style
-        out.append(Check("travel", "Travel time", RISK, legacy_travel_text(travel_out, travel_back)))
+        out.append(
+            Check(
+                "travel",
+                "Travel time",
+                RISK,
+                legacy_travel_text(
+                    travel_out, travel_back, visit.site.zone_ref if visit.site.zone_ref_id else None
+                ),
+            )
+        )
     else:
         # a zoned home needs an approved matrix value; a missing pair blocks new dispatch (10.H, 13.4)
         why = (
@@ -581,6 +590,8 @@ def build_review(
     why = [
         {**pb, "sentence": strip_status_prefix(pb["sentence"])} for pb in plain_blockers(live.blockers)
     ] + _planning_risks(visit)
+    if (moved := zones.home_zone_change_blocker(visit)) is not None:
+        why.insert(0, plain_blockers([moved])[0])  # readiness blocks it (PLANNING_HOME_ZONE_CHANGED)
     blocker = _blocker(visit, live, hub)
     if blocker is not None:  # the one message replaces its own line in the list (D-B8)
         why = [x for x in why if x.get("code") != blocker["code"]]

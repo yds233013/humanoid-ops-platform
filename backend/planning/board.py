@@ -40,6 +40,7 @@ from operations import pauses
 from planning import zones
 from planning.models import Visit
 from planning.plain import plain_blocker, robot_reason, role_words
+from platform_core.models import Zone
 from platform_core.templatetags.ui import local_time, workspace_zone
 
 ATTENTION_LIMIT = 5
@@ -263,7 +264,8 @@ class HubSection:
     crews: int
     pauses: list[Any]
     rows: list[Row]
-    zones: list[str]
+    zones: list[str]  # the hub's active zones
+    has_zones: bool = False  # any zone row at all, retired included
 
     @property
     def attention_rows(self) -> list[Row]:
@@ -299,10 +301,24 @@ class Board:
         return sum(1 for h in self.hubs if h.pauses)
 
 
-def legacy_travel_text(out_min: int | None, back_min: int | None) -> str:
-    """EM 03B closure (A): a home without a zone keeps the travel minutes recorded on its visit, and every
-    screen that shows the travel says so, in the at-risk style (words plus shape)."""
+def legacy_travel_text(out_min: int | None, back_min: int | None, home_zone: Any = None) -> str:
+    """EM 03B closure (A): a visit planned without a zone keeps the travel minutes recorded on it, and every
+    screen that shows the travel says so, in the at-risk style (words plus shape). ``home_zone``: the zone the
+    home is in NOW, when it got one after the visit was planned; then the text names it instead of saying the
+    home has no zone (the readiness gate blocks such a visit until it is planned again)."""
+    if home_zone is not None:
+        return (
+            f"Legacy travel estimate: {travel_text(out_min, back_min)} (planned before this home was put in "
+            f"zone {zones.zone_label(home_zone)}; plan the visit again)"
+        )
     return f"Legacy travel estimate: {travel_text(out_min, back_min)} (this home has no zone yet)"
+
+
+def zone_changed_reason(visit: Visit) -> Reason | None:
+    """The readiness gate's PLANNING_HOME_ZONE_CHANGED in the board's words (Blocked), naming the zones; None
+    when the home is still in the visit's zone. No statement with ``zone`` and ``site__zone_ref`` loaded."""
+    b = zones.home_zone_change_blocker(visit)
+    return Reason("blocked", f"{b['message']} {b['action']}", b["code"]) if b is not None else None
 
 
 def travel_text(out_min: int | None, back_min: int | None) -> str:
@@ -479,6 +495,7 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
         .select_related(
             "zone",
             "site",
+            "site__zone_ref",
             "current_revision",
             "current_revision__robot",
             "current_revision__lead__user",
@@ -534,6 +551,8 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
                 )
                 reasons += _robot_reasons(row, eligible, why, where, window)
             reasons += _stored_reasons(list(r.blockers or []))
+            if (moved := zone_changed_reason(v)) is not None:
+                reasons.append(moved)
             f = forecasts.get(v.pk)
             if f is not None and f.cannot_in_time:
                 reasons.append(
@@ -558,10 +577,19 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
             reasons.sort(key=lambda x: SEVERITY.get(x.level, 9))
             row.reasons = reasons
         if v.zone_id is None and not v.departed:
-            row.legacy = legacy_travel_text(r.travel_out_min, r.travel_back_min)
+            row.legacy = legacy_travel_text(r.travel_out_min, r.travel_back_min, v.site.zone_ref)
         row.status = _status(row, bool(v.departed))
         rows.append(row)
 
+    # every zone of the visible hubs, whatever today's visits are (one statement): "Zones not recorded yet"
+    # only for a hub that has none
+    hub_zones: dict[int, list[str]] = {}
+    for hub_id, name, active in Zone.objects.filter(hub_id__in=sorted(hub_by_id)).values_list(
+        "hub_id", "name", "active"
+    ):
+        names = hub_zones.setdefault(hub_id, [])
+        if active:
+            names.append(name)
     sections = []
     for h in visible:
         mine = [x for x in rows if x.hub_id == h.pk]
@@ -577,7 +605,8 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
                 crews=len(crews),
                 pauses=list(pauses_by_hub.get(h.pk, [])),
                 rows=mine,
-                zones=sorted({x.zone for x in mine if x.zone}),
+                zones=sorted(hub_zones.get(h.pk, [])),
+                has_zones=h.pk in hub_zones,
             )
         )
     attention = sorted((x for x in rows if x.attention), key=attention_key)

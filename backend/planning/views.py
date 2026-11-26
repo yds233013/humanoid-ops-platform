@@ -19,6 +19,7 @@ from accounts.roles import PERMISSIONS
 from fleet.models import Robot
 from hub import charging
 from planning import services as p
+from planning import zones
 from planning.board import home_name, legacy_travel_text, person_name, travel_text
 from planning.forms import (
     AdultsForm,
@@ -32,7 +33,7 @@ from planning.forms import (
 )
 from planning.models import Reservation, Site, SiteAssessment, Visit
 from planning.options import plan_options, restrict_to_hub, suggest
-from planning.plain import ALREADY_DONE, plain_blockers, refusal_text, role_words, who_can
+from planning.plain import ALREADY_DONE, plain_blocker, plain_blockers, refusal_text, role_words, who_can
 from platform_core.commands import CommandError, PermissionDenied
 from platform_core.hubscope import HubScope, hub_scope, other_hub_refusal
 from platform_core.interaction import consume_form_token
@@ -172,7 +173,7 @@ def week(request: HttpRequest) -> HttpResponse:
 def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _guard(request)) is not None:
         return deny
-    v = get_object_or_404(Visit.objects.select_related("site", "hub", "zone"), code=code)
+    v = get_object_or_404(Visit.objects.select_related("site", "site__zone_ref", "hub", "zone"), code=code)
     if (deny := other_hub_refusal(request, v.hub_id)) is not None:  # v2 03A-3: another hub's visit
         return deny
     can_plan = has_permission(request.user, "planning.plan")
@@ -185,6 +186,16 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
         k in request.GET for k in ("robot", "lead", "second", "vehicle")
     )
     departed = v.status != "cancelled" and v.departures.exists()
+    moved = zones.home_zone_change_blocker(v) if v.status != "cancelled" and not departed else None
+    if moved is not None:
+        # the home changed zone after this plan (readiness blocks it as PLANNING_HOME_ZONE_CHANGED): the
+        # planner says so, Blocked, and never "Nothing is blocking this plan"
+        card = {
+            **card,
+            "state": "blocked",
+            "label": p.LABELS["blocked"],
+            "plain": [plain_blocker(moved), *card["plain"]],
+        }
     if can_plan and v.status != "cancelled":
         # read only, a fixed number of statements (planning/options.py); 03B closure P2: only the visit's own
         # hub's robots, people and vehicles are offered, the rest are counted
@@ -265,7 +276,7 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "nf": next_slots,
             "zone": v.zone if v.zone_id is not None else None,
             "legacy": (
-                legacy_travel_text(card["rev"].travel_out_min, card["rev"].travel_back_min)
+                legacy_travel_text(card["rev"].travel_out_min, card["rev"].travel_back_min, v.site.zone_ref)
                 if v.zone_id is None and not departed and v.status != "cancelled"
                 else ""
             ),

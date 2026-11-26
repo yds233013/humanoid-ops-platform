@@ -132,7 +132,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 {% for h in b.hubs %}<section class="hub" id="hub-{{ h.code }}" data-hub="{{ h.code }}" aria-labelledby="hub-h-{{ h.code }}">
   <div class="hubhead">
     <div><h3 id="hub-h-{{ h.code }}"><a href="?hub={{ h.code|urlencode }}{% if b.day_key != 'today' %}&day={{ b.day_key }}{% endif %}#hub-{{ h.code }}">{{ h.name }}</a> <span class="code">{{ h.code }}</span></h3>
-    <p class="meta">{% if h.area %}{{ h.area }} · {% endif %}{% if h.zones %}Zones: {{ h.zones|join:", " }}{% else %}Zones not recorded yet{% endif %}</p></div>
+    <p class="meta">{% if h.area %}{{ h.area }} · {% endif %}{% if h.zones %}Zones: {{ h.zones|join:", " }}{% elif h.has_zones %}No active zones{% else %}Zones not recorded yet{% endif %}</p></div>
     <dl class="hubstats" data-hub-stats="{{ h.code }}">
       <div><dt>Robots available</dt><dd>{{ h.robots.available }}</dd></div>
       <div><dt>Away</dt><dd>{{ h.robots.away }}</dd></div>

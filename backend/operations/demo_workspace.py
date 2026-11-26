@@ -899,7 +899,9 @@ class _Builder:
         booked: list[tuple[dict[str, Any], str]] = []
         # v2 03B-3: a travel value never takes effect in the past (13.4 item 3), so the visits that already
         # started when the build runs are booked first, before their homes get a zone: they keep their
-        # recorded minutes (legacy). Every later visit of a zoned home uses the demo travel matrix.
+        # recorded minutes (legacy). Every later visit of a zoned home uses the demo travel matrix. Their
+        # homes then get a zone after they were planned, a real change (13.5): until planned again they are
+        # Blocked (PLANNING_HOME_ZONE_CHANGED) on readiness, the planner and the board, which name the zone.
         cut = timezone.now() + timedelta(minutes=10)
         started = [r for r in future if self.at(r["day"], r["start"]) <= cut]
         for row in started:
