@@ -1,0 +1,107 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Operations briefing{% endblock %}
+{% block extra_css %}
+.bf-head{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--s3);flex-wrap:wrap;margin:var(--s2) 0 var(--s3)}
+.bf-head .sub{color:var(--soft);font-size:var(--fs-sm);margin:var(--s1) 0 0}
+.bf-intro{margin:0 0 var(--s4);font-size:var(--fs-sm);color:var(--soft);max-width:72ch}
+.code{color:var(--soft);font-weight:400;font-size:var(--fs-xs);font-variant-numeric:tabular-nums}
+.bf-jump{list-style:none;margin:0 0 var(--s5);padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--s3)}
+.bf-jump a{display:flex;flex-direction:column;gap:var(--s1);min-height:44px;padding:var(--s3) var(--s4);background:var(--card);border:1px solid var(--line);border-radius:var(--radius);color:var(--ink);text-decoration:none}
+.bf-jump a:hover{border-color:var(--blue)} .bf-jump b{font-size:var(--fs-base)} .bf-jump span{font-size:var(--fs-xs);color:var(--soft);font-variant-numeric:tabular-nums}
+.bf-hub{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin:0 0 var(--s5);scroll-margin-top:96px}
+.bf-hub>header{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s2) var(--s4);flex-wrap:wrap;padding:var(--s3) var(--s4);border-bottom:1px solid var(--line)}
+.bf-hub>header h2{margin:0;font-size:var(--fs-lg)} .bf-hub>header .counts{margin:0;font-size:var(--fs-sm);color:var(--soft);font-variant-numeric:tabular-nums}
+.bf-q{padding:var(--s3) var(--s4) var(--s4);border-bottom:1px solid var(--line)} .bf-q:last-child{border-bottom:0}
+.bf-q>h3{margin:0 0 var(--s2);font-size:var(--fs-base);display:flex;gap:var(--s2);align-items:baseline;flex-wrap:wrap}
+.bf-q>h3 .qn{color:var(--soft);font-weight:600;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
+.bf-q.prio{background:#F8FAFC;border-radius:var(--radius) var(--radius) 0 0}
+.bf-list{list-style:none;margin:0;padding:0}
+.bf-list>li{padding:var(--s2) 0;border-top:1px solid var(--neutralbg)} .bf-list>li:first-child{border-top:0}
+.bf-line{margin:0;display:flex;flex-wrap:wrap;gap:var(--s1) var(--s2);align-items:baseline;font-size:var(--fs-sm)}
+.bf-line .what{flex:1 1 320px;min-width:0}
+.bf-line .what a{font-weight:700}
+.bf-more{margin:var(--s1) 0 0;padding-left:18px;font-size:var(--fs-sm)} .bf-more li{margin:2px 0}
+.src{margin:var(--s1) 0 0;font-size:var(--fs-xs);color:var(--soft)}
+.bf-note{margin:var(--s1) 0 0;font-size:var(--fs-xs);color:var(--soft);font-style:italic}
+.bf-prio{margin:0;padding:0;list-style:none;counter-reset:p}
+.bf-prio>li{counter-increment:p;display:grid;grid-template-columns:28px minmax(0,1fr);gap:var(--s1) var(--s2);padding:var(--s2) 0;border-top:1px solid var(--line)} .bf-prio>li:first-child{border-top:0}
+.bf-prio>li::before{content:counter(p);display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;background:var(--head);color:var(--head-ink);font-size:var(--fs-xs);font-weight:700}
+.bf-prio p{margin:0;font-size:var(--fs-sm)} .bf-prio .rule{font-size:var(--fs-xs);color:var(--soft)}
+.bf-prio a{font-weight:600}
+.bf-unknown{margin:var(--s2) 0 0;padding:var(--s2) var(--s3);border:1px dashed var(--line);border-radius:8px;background:var(--neutralbg);font-size:var(--fs-sm)}
+.bf-unknown b{font-weight:700} .bf-unknown .links{margin:var(--s1) 0 0;display:flex;flex-wrap:wrap;gap:var(--s1) var(--s3);font-size:var(--fs-xs)}
+.bf-unknown .links a{display:inline-flex;align-items:center;min-height:32px}
+.bf-empty{margin:0;font-size:var(--fs-sm);color:var(--soft)}
+.bf-fold{margin:var(--s2) 0 0} .bf-fold>summary{display:inline-flex;align-items:center;min-height:44px}
+.bf-rules{margin:0 0 var(--s4);padding:0 var(--s4);background:var(--card);border:1px solid var(--line);border-radius:var(--radius)}
+.bf-rules>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600;color:var(--blue);font-size:var(--fs-sm)}
+.bf-rules ol{margin:0 0 var(--s3);padding-left:22px;font-size:var(--fs-sm)} .bf-rules li{margin:var(--s1) 0} .bf-rules p{font-size:var(--fs-sm);margin:0 0 var(--s3)}
+.bf-footer{margin:var(--s5) 0 0;padding:var(--s3) var(--s4);border-top:2px solid var(--line);font-size:var(--fs-sm);color:var(--soft)}
+.bf-footer b{color:var(--ink)}
+@media (max-width:700px){
+  .bf-q{padding:var(--s3)} .bf-hub>header{padding:var(--s3)} .bf-line .what{flex-basis:100%}
+  .bf-jump{grid-template-columns:1fr}
+}
+{% endblock %}
+{% block content %}
+<div class="bf-head"><div><h1>Operations briefing</h1>
+<p class="sub op-asof" data-as-of="{{ as_of_iso }}">{{ b.day_text }} · {{ scope_label }} · as of <b>{{ as_of_iso|local_dt }}</b> · one consistent snapshot; reload for a newer one</p></div></div>
+<p class="bf-intro">Four questions for each hub, answered from the same records as Today, the dispatch board and the incident queue. Every line names its source and links to it. The list of priorities is built by fixed, written rules.</p>
+{% include "ui/hub_filter.html" %}
+
+{% for n in b.notices %}<div class="notice warn" role="alert" data-unknown="{{ n.key }}">{{ n.text }}</div>{% endfor %}
+
+{% if b.hubs|length > 1 %}<ul class="bf-jump" aria-label="Hubs in this briefing">{% for h in b.hubs %}<li><a href="#{{ h.anchor }}" data-jump="{{ h.code }}"><b>{{ h.name }} <span class="code">{{ h.code }}</span></b>
+<span>{{ h.robots|length }} robot{{ h.robots|length|pluralize }} unavailable · {{ h.visits|length }} visit{{ h.visits|length|pluralize }} at risk · {{ h.incidents|length }} incident{{ h.incidents|length|pluralize }} need{{ h.incidents|length|pluralize:"s," }} attention</span></a></li>{% endfor %}</ul>{% endif %}
+
+<details class="bf-rules" data-rules="1"><summary>How the priorities are ordered</summary>
+<p>Each hub's list takes the lines below and orders them by these rules, lower number first; within a rule, by time (earliest departure or oldest report first), then by code. At most {{ limit }} are shown. Nothing is weighted or guessed.</p>
+<ol>{% for r in rules %}<li data-rule="{{ r.number }}"><b>{{ r.title }}.</b> {{ r.why }}</li>{% endfor %}</ol>
+</details>
+
+{% for h in b.hubs %}<section class="bf-hub" id="{{ h.anchor }}" data-hub="{{ h.code }}" aria-labelledby="{{ h.anchor }}-h">
+<header><h2 id="{{ h.anchor }}-h">{{ h.name }} <span class="code">{{ h.code }}</span></h2>
+<p class="counts">{{ h.robots_total }} robot{{ h.robots_total|pluralize }} · {{ h.visits_total }} visit{{ h.visits_total|pluralize }} today, not yet departed</p></header>
+
+<div class="bf-q prio" data-question="4"><h3><span class="qn">4</span> What to prioritise</h3>
+{% if h.priorities %}<ol class="bf-prio">{% for p in h.priorities %}<li data-priority-rule="{{ p.rule.number }}" data-ref="{{ p.ref }}"><span class="sr">Priority {{ forloop.counter }}</span><div>
+<p><a href="{{ p.url }}">{{ p.text }}</a></p>
+<p class="rule">Rule {{ p.rule.number }}: {{ p.rule.title|lower }} · Who can act: {{ p.who }}</p>
+<p class="src">Source: {{ p.source }}</p></div></li>{% endfor %}</ol>
+{% if h.more_priorities %}<p class="bf-note">{{ h.more_priorities }} more below, in the lists for each question.</p>{% endif %}
+{% else %}<p class="bf-empty" data-empty="priorities">Nothing to prioritise at {{ h.name }} from these records.{% if h.robots_unknown or h.visits_unknown or h.incidents_unknown or b.notices %} Some answers below say there is not enough data, so this is not an all-clear.{% endif %}</p>{% endif %}
+</div>
+
+<div class="bf-q" data-question="1"><h3><span class="qn">1</span> Robots unavailable for deployment</h3>
+{% if b.robots_ok %}
+{% if h.pauses %}<ul class="bf-list">{% for p in h.pauses %}<li data-kind="pause" data-level="paused"><p class="bf-line"><span class="status t-{{ p.tone }}"><span class="shape" aria-hidden="true">{{ p.shape }}</span>{{ p.words }}</span><span class="what"><a href="{{ p.url }}">{{ p.title }}</a> — {{ p.first.sentence }}</span></p><p class="src">Source: {{ p.first.source }}</p></li>{% endfor %}</ul>{% endif %}
+{% if h.robots %}<ul class="bf-list">{% for it in h.robots %}{% include "operations/_briefing_item.html" %}{% endfor %}</ul>
+{% elif not h.pauses %}<p class="bf-empty" data-empty="robots">No robot at {{ h.name }} is unavailable for a reason these records show.</p>{% endif %}
+{% if h.robots_out %}<details class="fold bf-fold" data-out="{{ h.robots_out|length }}"><summary>{{ h.robots_out|length }} robot{{ h.robots_out|length|pluralize }} out on a visit</summary><ul class="bf-list">{% for it in h.robots_out %}{% include "operations/_briefing_item.html" %}{% endfor %}</ul></details>{% endif %}
+{% for u in h.robots_unknown %}{% include "operations/_briefing_unknown.html" %}{% endfor %}
+{% else %}<p class="bf-unknown" data-unknown="robots"><b>Not enough data to say.</b> The robot records could not be loaded.</p>{% endif %}
+</div>
+
+<div class="bf-q" data-question="2"><h3><span class="qn">2</span> Visits at risk today</h3>
+{% if b.visits_ok %}
+{% if h.visits %}<ul class="bf-list">{% for it in h.visits %}{% include "operations/_briefing_item.html" %}{% endfor %}</ul>
+{% elif not h.visits_unknown %}<p class="bf-empty" data-empty="visits">{% if h.visits_total %}No visit today at {{ h.name }} has an open problem on the dispatch board or its readiness checklist.{% else %}No visits today at {{ h.name }} that have not left yet.{% endif %}</p>{% endif %}
+{% if h.visits_clear %}<p class="bf-note" data-clear="{{ h.visits_clear }}">{{ h.visits_clear }} other visit{{ h.visits_clear|pluralize }} today {{ h.visits_clear|pluralize:"has,have" }} no open problem on the board or the checklist. That is not permission to leave.</p>{% endif %}
+{% for u in h.visits_unknown %}{% include "operations/_briefing_unknown.html" %}{% endfor %}
+{% else %}<p class="bf-unknown" data-unknown="visits"><b>Not enough data to say.</b> Today's visit plans could not be loaded.</p>{% endif %}
+</div>
+
+<div class="bf-q" data-question="3"><h3><span class="qn">3</span> Incidents that need attention</h3>
+{% if b.incidents_ok %}
+{% if h.incidents %}<ul class="bf-list">{% for it in h.incidents %}{% include "operations/_briefing_item.html" %}{% endfor %}</ul>
+{% else %}<p class="bf-empty" data-empty="incidents">No open incident at {{ h.name }} is waiting for triage, a severity decision or an escalation.</p>{% endif %}
+{% if h.incidents_open %}<details class="fold bf-fold" data-open-incidents="{{ h.incidents_open|length }}"><summary>{{ h.incidents_open|length }} other open incident{{ h.incidents_open|length|pluralize }}, being handled</summary><ul class="bf-list">{% for it in h.incidents_open %}{% include "operations/_briefing_item.html" %}{% endfor %}</ul></details>{% endif %}
+{% for u in h.incidents_unknown %}{% include "operations/_briefing_unknown.html" %}{% endfor %}
+{% else %}<p class="bf-unknown" data-unknown="incidents"><b>Not enough data to say.</b> The open incidents could not be loaded.</p>{% endif %}
+</div>
+</section>{% empty %}
+<div class="empty" data-empty="hubs"><b>No hub to brief on</b>{% if scope.refused_code %}You hold no role at hub {{ scope.refused_code }}, so nothing from it is shown.{% else %}You hold no role at any hub yet. Ask your ops lead.{% endif %}</div>
+{% endfor %}
+
+<p class="bf-footer" data-footer="1"><b>{{ footer }}</b> Act on each record's own page.</p>
+{% endblock %}

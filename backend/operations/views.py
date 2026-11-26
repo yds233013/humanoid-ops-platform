@@ -436,6 +436,32 @@ def today_page(request: HttpRequest, at: datetime) -> HttpResponse:
 
 
 @ops_view("operations.read")
+def briefing_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    """v2 Phase 04: the Operations briefing (/ops/briefing/). Read only, GET only, one snapshot; built from
+    the existing read models by plain rules (operations.briefing). Not an AI and not an agent."""
+    from operations import briefing
+
+    viewer = hub_scope(request)  # the viewer's hubs; ?hub=CODE narrows
+    b = briefing.build_briefing(at, request.user, viewer)
+    if viewer.selected is not None:
+        scope_label = viewer.selected.name
+    elif viewer.regional:
+        scope_label = "all hubs"
+    else:
+        scope_label = viewer.hubs[0].name if len(viewer.hubs) == 1 else "your hubs"
+    ctx = {
+        **_base(request, at, "briefing", viewer.roles),
+        "b": b,
+        "scope": viewer,
+        "scope_label": scope_label,
+        "rules": briefing.RULES,
+        "footer": briefing.FOOTER,
+        "limit": briefing.PRIORITY_LIMIT,
+    }
+    return render(request, "operations/briefing.html", ctx)
+
+
+@ops_view("operations.read")
 def robot_status_page(request: HttpRequest, at: datetime) -> HttpResponse:
     """The detailed one-row-per-robot table (the old Today page); ?group= filters by a Today fleet group."""
     from operations import today
