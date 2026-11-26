@@ -470,7 +470,10 @@ def test_planner_labels_unknown_and_excludes_only_robots_that_cannot_charge_in_t
     labels = {o.code: (o.status, o.label) for o in opts.robots}
     assert labels["R-02"] == ("unusable", "Robot R-02 · cannot charge in time")
     assert labels["R-01"][1] == "Robot R-01 · free"  # enough: its fresh passing battery check (85%)
-    assert labels["R-03"] == ("free", "Robot R-03 · free · charge forecast unknown")  # nothing recorded: selectable
+    assert labels["R-03"] == (
+        "free",
+        "Robot R-03 · free · charge forecast unknown",
+    )  # nothing recorded: selectable
     s = opt.suggest(Visit.objects.get(code=code), opts)
     assert s.robot is None or s.robot.code != "R-02"
     later = new_visit(w, d=(_now() + timedelta(days=3)).date())

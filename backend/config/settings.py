@@ -121,8 +121,8 @@ DATABASES = {
         "HOST": env("DB_HOST", "localhost"),
         "PORT": env("DB_PORT", "5440"),
         "ATOMIC_REQUESTS": False,
-        # Phase 05 (500-robot validation, docs/evidence/05_scale_validation.md): jit=off. The read models' plan
-        # cost grows with the fleet and passes jit_above_cost at 500 robots; JIT compilation then costs
+        # Phase 05 (500-robot validation, docs/evidence/05_scale_validation.md): jit=off. The read models'
+        # plan cost grows with the fleet and passes jit_above_cost at 500 robots; JIT compilation then costs
         # ~150-250 ms per statement on every page (the read models must never JIT compile: tests/
         # test_operations_sql.py, test_operations_perf.py). Short OLTP statements gain nothing from JIT.
         "OPTIONS": {"options": "-c lock_timeout=3000 -c statement_timeout=10000 -c jit=off"},
