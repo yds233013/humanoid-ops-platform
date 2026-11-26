@@ -115,5 +115,6 @@ took the hub row waits for the gate's transaction to finish.
 | | the authorization gate step (`operations_pause_gate_problem`, held by the owner, refusing under the active pause) | the lift waits, then commits; a new authorization is then issued | `...[authorization]` |
 
 In the lift-vs-authorization "authorization first" order the authorization side is its gate step, held open by
-the owner, as in the 03A transfer race: a real authorization under the active pause raises at that step, and its
-locks are released with the failed statement, so the step itself is what holds the hub row while the lift waits.
+the owner, as in the 03A transfer race: a real authorization under the active pause raises at that step, and
+PostgreSQL aborts the transaction and releases its locks at the error (before the client's ROLLBACK; checked in
+pg_locks), so the step itself is what holds the hub row while the lift waits.

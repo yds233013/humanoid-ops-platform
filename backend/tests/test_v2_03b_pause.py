@@ -609,8 +609,8 @@ def test_a_lift_and_an_authorization_are_ordered_both_ways(first):
     else:
         # The authorization's gate step (operations_pause_gate_problem: settings Sh -> visit S -> hub S, then the
         # check) held uncommitted by the owner, as in the 03A transfer race: a real authorization under the
-        # active pause raises at that step and its locks go with the failed statement, so the step itself is
-        # what holds the hub row here.
+        # active pause raises at that step, and PostgreSQL releases an aborted transaction's locks at the error,
+        # so the step itself is what holds the hub row here.
         holder = _owner_conn(autocommit=False)
         waiter = _app_conn()
         out = {}
