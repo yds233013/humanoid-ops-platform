@@ -145,18 +145,26 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     tasks = WorkOrder.objects.all()
 
     # ---- EM ruling 8.9: exactly two closed practice runs, labelled, through the real commands, stamped now
-    runs = list(ExecutionRun.objects.select_related("robot", "visit", "visit__site").order_by("code"))
+    # v2 03B-3: South Bay's run out now (its robot is "away") is the only other run; it is not a practice run
+    away_run, away_visit = re.search(r"is out on run (EX-\d+) \(visit (V-\d+)\)", out).groups()
+    runs = list(ExecutionRun.objects.exclude(code=away_run).select_related("robot", "visit", "visit__site")
+                .order_by("code"))  # fmt: skip
     practice = {r.visit.code for r in runs}
     assert len(runs) == 2 and {r.robot.code for r in runs} == {due_soon, overdue}
     assert all(r.visit.site.code == demo.PRACTICE_HOME for r in runs)
     assert TripClosure.objects.filter(run__in=runs).count() == 2 == TripClosure.objects.count()
-    assert set(DepartureAuthorization.objects.values_list("visit__code", flat=True)) == practice
-    assert DepartureAuthorization.objects.count() == 2 == DepartureEvent.objects.count()
+    assert set(DepartureAuthorization.objects.values_list("visit__code", flat=True)) == practice | {
+        away_visit
+    }
+    assert DepartureAuthorization.objects.count() == 3 == DepartureEvent.objects.count()
     assert all(timezone.now() - d < timedelta(hours=1) for d in DepartureEvent.objects.values_list(
         "departed_at", flat=True))  # fmt: skip
-    # no open run and no unfinished custody transfer: every robot that moved is back at the hub
-    assert not ExecutionRun.objects.exclude(pk__in=TripClosure.objects.values("run_id")).exists()
-    for robot_id in CustodyEvent.objects.values_list("robot_id", flat=True).distinct():
+    # no other open run and no unfinished custody transfer: every other robot that moved is back at the hub
+    open_runs = ExecutionRun.objects.exclude(pk__in=TripClosure.objects.values("run_id"))
+    assert list(open_runs.values_list("code", "visit__hub__code")) == [(away_run, "SJC")]
+    for robot_id in (
+        CustodyEvent.objects.exclude(run__code=away_run).values_list("robot_id", flat=True).distinct()
+    ):
         c = current_custody(robot_id)
         assert c.kind == "hub" and c.verified and open_run_id(robot_id) is None, c
     for r in runs:  # the label is visible on the visit, readiness and run pages
@@ -223,9 +231,9 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
     with connection.cursor() as cur:
         cur.execute("SELECT count(*), count(*) FILTER (WHERE battery_state = 'known') "
                     "FROM operations_predictor_observation")  # fmt: skip
-        assert cur.fetchone() == (2, 2)
+        assert cur.fetchone() == (3, 3)  # v2 03B-3: and South Bay's departure
     health = _text(ops.get("/ops/health/").content.decode())
-    assert "Showing 2 of 2 logged departure(s)" in health
+    assert "Showing 3 of 3 logged departure(s)" in health
     assert re.search(r"Recorded availability .*? \d+(\.\d+)?%", health)
     assert "Nothing logged yet" not in health
     assert "configuration history is not reconstructed" in health
@@ -238,7 +246,7 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
                                            command__startswith="fleet.lifecycle.").order_by("occurred_at")
         if a.result.get("to") == "in_service"
     }  # fmt: skip
-    assert len(in_service) == demo.IN_SERVICE
+    assert len(in_service) == demo.IN_SERVICE + 29 + 20  # v2 03B-3: plus South Bay and Marin
     denominator = sum((at - t).total_seconds() for t in in_service.values())
     held = sum((at - max(hd.placed_at, in_service[hd.robot.code])).total_seconds()
                for hd in Hold.objects.filter(released_at__isnull=True, blocking=True, robot__isnull=False)
@@ -301,7 +309,7 @@ def test_hub_day_facts_exist_after_a_build_and_work_orders_change_no_safety_stat
         assert prod and all(state == "no_rule" and blocking for _req, state, blocking in prod)
         with pytest.raises(CommandError):
             call_command("build_demo_workspace", "--reset", stdout=io.StringIO())
-        assert ExecutionRun.objects.count() == 2  # nothing generated
+        assert ExecutionRun.objects.count() == 3  # nothing generated (2 practice runs + South Bay's run)
     finally:
         set_setting("demo_mode", "true")
 

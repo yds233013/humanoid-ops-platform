@@ -282,8 +282,9 @@ def test_review_panel_lists_the_checks_and_never_writes(w):
         "location", "overlap", "crew", "vehicle", "maintenance", "holds", "travel", "pause", "other",
     }  # fmt: skip
     assert checks["holds"] == "pass" and checks["pause"] == "pass"
-    # a home with no zone keeps the minutes recorded on the visit (03B-1 rule); never an invented matrix value
-    assert checks["travel"] == "pass" and "has no zone yet" in html
+    # a home with no zone keeps the minutes recorded on the visit (03B-1 rule); never an invented matrix value.
+    # v2 03B-3 (EM 03B closure A): it is labelled "Legacy travel estimate" in the at-risk style
+    assert checks["travel"] == "risk" and "has no zone yet" in html
     assert "If you save: Planning feasible: not cleared to depart." in html
     assert _save_form(html)["robot"] in ("R-02", "R-03")
     # what the checks say about a choice the plan command would refuse

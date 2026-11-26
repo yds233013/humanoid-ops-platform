@@ -98,6 +98,7 @@ class Row:
     status: str
     reasons: list[Reason] = field(default_factory=list)
     crew_key: tuple[int | None, int | None] = (None, None)  # (lead id, second id): crews on shift
+    legacy: str = ""  # EM 03B closure (A): "Legacy travel estimate: ..." for a visit whose home has no zone
 
     @property
     def words(self) -> str:
@@ -164,6 +165,15 @@ class Board:
     @property
     def hubs_paused(self) -> int:
         return sum(1 for h in self.hubs if h.pauses)
+
+
+def legacy_travel_text(out_min: int | None, back_min: int | None) -> str:
+    """EM 03B closure (A): a home without a zone keeps the travel minutes recorded on its visit, and every
+    screen that shows the travel says so, in the at-risk style (words plus shape)."""
+    return (
+        f"Legacy travel estimate: {out_min if out_min is not None else 'unknown'} min out, "
+        f"{back_min if back_min is not None else 'unknown'} min back (this home has no zone yet)"
+    )
 
 
 def pause_banner(hub_name: str, pause: Any) -> str:
@@ -389,6 +399,8 @@ def build_board(at: datetime, scope: Any, day: date, day_key: str) -> Board:
                     break
             reasons.sort(key=lambda x: SEVERITY.get(x.level, 9))
             row.reasons = reasons
+        if v.zone_id is None and not v.departed:
+            row.legacy = legacy_travel_text(r.travel_out_min, r.travel_back_min)
         row.status = _status(row, bool(v.departed))
         rows.append(row)
 

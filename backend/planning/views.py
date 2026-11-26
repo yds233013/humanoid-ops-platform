@@ -19,7 +19,7 @@ from accounts.roles import PERMISSIONS
 from fleet.models import Robot
 from hub import charging
 from planning import services as p
-from planning.board import home_name
+from planning.board import home_name, legacy_travel_text
 from planning.forms import (
     AdultsForm,
     AssessmentForm,
@@ -171,7 +171,7 @@ def week(request: HttpRequest) -> HttpResponse:
 def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if (deny := _guard(request)) is not None:
         return deny
-    v = get_object_or_404(Visit.objects.select_related("site", "hub"), code=code)
+    v = get_object_or_404(Visit.objects.select_related("site", "hub", "zone"), code=code)
     if (deny := other_hub_refusal(request, v.hub_id)) is not None:  # v2 03A-3: another hub's visit
         return deny
     can_plan = has_permission(request.user, "planning.plan")
@@ -179,7 +179,7 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
     if wants_suggestion and not can_plan:
         return HttpResponseForbidden(who_can("planning.plan"))
     card = _card(v)
-    options = suggestion = review = None
+    options = suggestion = review = next_slots = None
     wants_review = request.GET.get("review") == "1" or any(
         k in request.GET for k in ("robot", "lead", "second", "vehicle")
     )
@@ -191,6 +191,12 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
 
             # v2 03B-2 (spec S2): advisory only; saving runs the guarded plan command again
             review = build_review(v, request.GET, live=card["live"], opts=options)
+        if review is not None and (review.nothing_fits or request.GET.get("next") == "1"):
+            # v2 03B-3 (spec S2 "No option works", S3): the next free times at the visit's hub. Read only;
+            # choosing one posts to the guarded plan command.
+            from planning.next_free import next_free  # noqa: PLC0415
+
+            next_slots = next_free(v)
         if wants_suggestion:
             suggestion = suggest(v, options)  # read only: books, reserves and records nothing
             if suggestion.found:
@@ -240,6 +246,20 @@ def visit_detail(request: HttpRequest, code: str) -> HttpResponse:
             "board_url": "/planning/board/"
             + (f"?hub={request.GET['hub']}" if request.GET.get("hub") else ""),
             "refuse_plan": cannot_change_text(v.hub),
+            "nf": next_slots,
+            "zone": v.zone if v.zone_id is not None else None,
+            "legacy": (
+                legacy_travel_text(card["rev"].travel_out_min, card["rev"].travel_back_min)
+                if v.zone_id is None and not departed and v.status != "cancelled"
+                else ""
+            ),
+            "nf_action": "plan",
+            "nf_intro": (
+                "No free robot, crew and vehicle for this time. These times work at "
+                f"{v.hub.name}; each was checked with the same plan check that runs when you save."
+                if review is not None and review.nothing_fits
+                else ""
+            ),
             "q_hub": f"hub={request.GET['hub']}" if request.GET.get("hub") else "",
         },
     )
@@ -571,6 +591,57 @@ def consent_withdraw(request: HttpRequest, code: str, consent_id: int) -> HttpRe
 
 
 # ------------------------------------------------------------------ book a visit
+def _book_hub(d: dict[str, Any]) -> Any:
+    from platform_core.models import Hub  # noqa: PLC0415
+
+    code = (d.get("hub") or "").strip().upper()
+    hubs = list(Hub.objects.order_by("code"))
+    return next((h for h in hubs if h.code == code), hubs[0] if len(hubs) == 1 else None)
+
+
+def _book_slot(request: HttpRequest, target: Site, d: dict[str, Any], start: Any, end: Any) -> Any:
+    """v2 03B-3 (S3): book a chosen next free time. Two guarded commands, in order: request the visit, then
+    plan it with the slot's robot, crew and vehicle (``plan_visit`` checks everything again under its locks).
+    If the plan is refused, the request stays and the visit page says why."""
+    result = _run(
+        request,
+        p.request_visit,
+        permission="planning.plan",
+        ok="Visit requested.",
+        site_code=target.code,
+        on_site_start=start,
+        on_site_end=end,
+        travel_out_min=d["travel_out_min"],
+        travel_back_min=d["travel_back_min"],
+        tasks=d["tasks"],
+        required_scopes=d["scopes"],
+        hub_code=d.get("hub") or None,
+    )
+    if result is None:
+        return None
+    code = result["entity_id"]
+    list(messages.get_messages(request))  # replaced by the one message below
+    try:
+        saved = p.plan_visit(
+            request.user,
+            visit_code=code,
+            robot_code=request.POST.get("slot_robot") or None,
+            lead_code=request.POST.get("slot_lead") or None,
+            second_code=request.POST.get("slot_second") or None,
+            vehicle_code=request.POST.get("slot_vehicle") or None,
+            reason="Booked at a next free time",
+        )
+    except CommandError as exc:
+        messages.error(
+            request,
+            f"Visit {code} is requested, but the plan for that time was refused: "
+            f"{localize_utc_text(str(exc)).rstrip('.')}. Choose a robot, crew and vehicle below.",
+        )
+        return redirect("planning-visit", code=code)
+    messages.success(request, "Visit booked at the chosen time. " + plan_saved_text(saved))
+    return redirect(f"/planning/visits/{code}/?changed={int(saved['revision'])}#changed")
+
+
 @login_required
 def book_visit(request: HttpRequest, code: str | None = None) -> HttpResponse:
     if (deny := _guard(request)) is not None:
@@ -579,6 +650,9 @@ def book_visit(request: HttpRequest, code: str | None = None) -> HttpResponse:
     chosen = site or (Site.objects.filter(code=request.GET.get("site", "")).first())
     initial = {"site": chosen.code} if chosen else {}
     form = BookForm(request.POST or None, initial=initial)
+    nf_result = None
+    book_hidden: dict[str, Any] = {}
+    book_scopes: list[str] = []
     if request.method == "POST":
         if form.is_valid():
             d = form.cleaned_data
@@ -590,7 +664,38 @@ def book_visit(request: HttpRequest, code: str | None = None) -> HttpResponse:
             except CommandError as exc:
                 messages.error(request, refusal_text(exc, "planning.plan"))
             else:
-                if (
+                if request.POST.get("find") and has_permission(request.user, "planning.plan"):
+                    # v2 03B-3 (S3): read only; nothing is saved until a time is chosen
+                    from planning.next_free import Request as FreeRequest  # noqa: PLC0415
+                    from planning.next_free import next_free  # noqa: PLC0415
+
+                    hub = _book_hub(d)
+                    if hub is not None:
+                        nf_result = next_free(
+                            FreeRequest(
+                                site=target,
+                                hub=hub,
+                                minutes=int((end - start).total_seconds() // 60),
+                                tasks=d["tasks"],
+                                scopes=d["scopes"],
+                                travel_out_min=d["travel_out_min"],
+                                travel_back_min=d["travel_back_min"],
+                            )
+                        )
+                        book_hidden = {
+                            "site": target.code,
+                            "travel_out_min": d["travel_out_min"] or "",
+                            "travel_back_min": d["travel_back_min"] or "",
+                            "tasks": ", ".join(d["tasks"]),
+                            **({"hub": d["hub"]} if d.get("hub") else {}),
+                        }
+                        book_scopes = list(d["scopes"])
+                    else:
+                        messages.error(request, "Choose the hub first, then find the next free times.")
+                elif request.POST.get("slot_robot"):
+                    if (done := _book_slot(request, target, d, start, end)) is not None:
+                        return done
+                elif (
                     result := _run(
                         request,
                         p.request_visit,
@@ -623,6 +728,11 @@ def book_visit(request: HttpRequest, code: str | None = None) -> HttpResponse:
             "can_plan": has_permission(request.user, "planning.plan"),
             "who_plan": who_can("planning.plan"),
             "site_tz": shown.timezone if shown else None,
+            "nf": nf_result,
+            "nf_action": "book",
+            "book_action": request.path,
+            "book_hidden": book_hidden,
+            "book_scopes": book_scopes,
         },
     )
 

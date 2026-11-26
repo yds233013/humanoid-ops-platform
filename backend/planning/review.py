@@ -32,7 +32,7 @@ from operations import pauses
 from planning import options as popt
 from planning import services as p
 from planning import travel, zones
-from planning.board import crew_names, home_name, pause_banner, person_name
+from planning.board import crew_names, home_name, legacy_travel_text, pause_banner, person_name
 from planning.models import Visit, VisitRevision
 from planning.plain import plain_blocker, plain_blockers
 
@@ -127,6 +127,12 @@ class Review:
     def proposed(self) -> bool:
         return bool(self.changes)
 
+    @property
+    def nothing_fits(self) -> bool:
+        """Spec S2 "No option works": some part of the plan (robot, lead, second or vehicle) has no free or
+        at-risk option for this time. The page then offers the next free times (S3)."""
+        return any(not (g.free or g.at_risk) for g in self.groups)
+
 
 # ------------------------------------------------------------------ options
 def _robot_line(o: popt.Option, hub_name: str, charge_on: bool) -> tuple[str, str]:
@@ -154,7 +160,7 @@ def _person_line(o: popt.Option) -> tuple[str, str]:
 
 def _vehicle_line(o: popt.Option) -> tuple[str, str]:
     group = "free" if o.status == popt.FREE else "not_possible"
-    return f"{o.code} · {o.note}", group
+    return f"Vehicle {o.code} · {o.note}", group
 
 
 def _groups(
@@ -345,15 +351,9 @@ def checks_for(
             )
         )
     elif zone is None:
-        # a home without a zone keeps the minutes recorded on the visit, as before 03B (03B-1 rule)
-        out.append(
-            Check(
-                "travel",
-                "Travel time",
-                PASS,
-                f"This home has no zone yet, so the visit uses its recorded {recorded}.",
-            )
-        )
+        # a home without a zone keeps the minutes recorded on the visit, as before 03B (03B-1 rule); the EM
+        # (03B closure) wants it said, in the at-risk style
+        out.append(Check("travel", "Travel time", RISK, legacy_travel_text(travel_out, travel_back)))
     else:
         # a zoned home needs an approved matrix value; a missing pair blocks new dispatch (10.H, 13.4)
         why = (
@@ -510,9 +510,15 @@ def build_review(
         elif asked:
             picks[g.kind] = current[g.kind]
         else:
-            # no choice made yet: keep what works, replace what is not possible with the best free option
-            keep = current[g.kind] and any(c.code == current[g.kind] for c in g.free + g.at_risk)
-            picks[g.kind] = current[g.kind] if keep else (_best(g) or current[g.kind])
+            # no choice made yet: keep what is free; replace what is at risk with a free option when there is
+            # one, and what is not possible with the best option (v2 03B-3: the best option is preselected, so
+            # resolving an attention item is card -> Review options -> Save plan)
+            free = current[g.kind] and any(c.code == current[g.kind] for c in g.free)
+            risky = current[g.kind] and any(c.code == current[g.kind] for c in g.at_risk)
+            if free or (risky and not g.free):
+                picks[g.kind] = current[g.kind]
+            else:
+                picks[g.kind] = _best(g) or current[g.kind]
     if picks.get("second") and picks.get("second") == picks.get("lead") and not asked:
         alt = next((c.code for c in groups[2].free if c.code != picks["lead"]), "")
         picks["second"] = alt or picks["second"]

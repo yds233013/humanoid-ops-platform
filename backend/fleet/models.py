@@ -30,7 +30,8 @@ def _in(field: str, choices: list[tuple[str, str]]) -> Q:
 
 # v2 03A-1 (contract 11.3): the only settings a hub row may override. Safety settings (the maintenance gate,
 # freshness, ...) stay global: a hub can never relax them.
-PER_HUB_SETTING_KEYS = ("stock_minimums", "stock_per_visit")
+# v2 03B-3: plus the hub's operating hours (when visits may be on site; the next free time search).
+PER_HUB_SETTING_KEYS = ("stock_minimums", "stock_per_visit", "hub_operating_hours")
 
 
 class DeploymentSetting(models.Model):

@@ -352,6 +352,8 @@ SECTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("Departure readiness", "/readiness/", "readiness.read"),
         ("Field runs", "/execution/", "execution.read"),
         ("My visits", "/execution/mine/", "execution.read"),
+        # v2 03B-3 (S4): the regional pause, one click from Dispatch
+        ("Regional pause", "/planning/pause/", "operations.read"),
     ],
     "fleet": [
         ("Robots", "/fleet/", "fleet.read"),

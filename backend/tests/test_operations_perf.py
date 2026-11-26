@@ -22,6 +22,7 @@ import importlib.util
 import inspect
 import json
 import math
+import re
 import time
 from datetime import timedelta
 from typing import Any
@@ -1008,3 +1009,110 @@ def test_inbox_profile(request, monkeypatch):
                 f"\n===== EXPLAIN (ANALYZE, BUFFERS) slowest evaluator statement ({_ms:.1f} ms):\n{full}\n{params}"
             )
             print("\n".join(_explain(cur, full, params)))
+
+
+# ================================================================== v2 03B-3: the dispatch board on three hubs
+BOARD_MS = 2000  # contract section 8: p95 at most 2 s (400 ms target) on a 3-hub fixture of 200 robots
+BOARD_HUBS = (("HB", "Hub B", 60), ("HC", "Hub C", 40))  # + 100 robots at HUB-1 = 200
+BOARD_VISITS_PER_HUB = 8
+
+
+@pytest.mark.perf
+@pytest.mark.django_db(transaction=True)
+def test_dispatch_board_p95_on_a_three_hub_fixture(request, monkeypatch):
+    """/planning/board/ as the regional ops lead on 3 hubs and 200 robots (the scale fixture's 100 robots and
+    1,000 visits at HUB-1, plus 60 and 40 robots with crews, vans and visits at hubs B and C, all through the
+    commands). Reports p95 and the statement count, which is the same for one hub and for three."""
+    if not _perf_selected(request.config):
+        pytest.skip("run with -m perf")
+    from django.db import transaction
+    from django.test import Client
+
+    import platform_core.interaction as ia
+    from planning import services as ps
+    from platform_core import workspace as wsp
+    from tests.conftest import make_user
+    from tests.planning_world import at
+
+    monkeypatch.setattr(ia.secrets, "randbelow", lambda n: 1)  # no opportunistic token clean-up in the counts
+    with transaction.atomic():
+        w, _at, _cases = build_scale_for_board()
+    admin = make_user("perf_board_admin", "admin")
+    day = DAY_FOR_BOARD
+    lo, hi_dt = day_bounds_for_quals()
+    for code, name, n in BOARD_HUBS:
+        wsp.create_hub(admin, code=code, name=name, area="", time_zone="America/Los_Angeles")
+        robots = [ow.add_robot(w, f"{code}-{i:03d}", hub_code=code) for i in range(n)]
+        for c in range(2):
+            pair = []
+            for role, kinds in (
+                ("L", ["field_lead", "robot_handler"]),
+                ("S", ["field_operator", "robot_handler"]),
+            ):
+                u = make_user(f"pb_{code}_{c}{role}")  # a person needs no grant to be on a crew
+                pc = f"PB-{code}{c}{role}"
+                ps.register_person(w.ops, username=u.username, code=pc, hub_code=code)
+                for k in kinds:
+                    ps.grant_qualification(w.ops, person_code=pc, kind=k, valid_from=lo, valid_to=hi_dt)
+                pair.append(pc)
+            ps.register_vehicle(
+                w.ops, code=f"VB-{code}{c}", robot_capacity=1, restraint_kit="SYN kit", hub_code=code
+            )
+            for v in range(BOARD_VISITS_PER_HUB // 2):
+                h0 = 8 + v * 3
+                visit = ps.request_visit(
+                    w.ops, site_code="S-1", on_site_start=at(day, h0), on_site_end=at(day, h0 + 1),
+                    travel_out_min=20, travel_back_min=20, tasks=["T-04"], required_scopes=["presence"],
+                    hub_code=code,
+                )["entity_id"]  # fmt: skip
+                ps.plan_visit(w.ops, visit_code=visit, robot_code=robots[c * 20 + v], lead_code=pair[0],
+                              second_code=pair[1], vehicle_code=f"VB-{code}{c}")  # fmt: skip
+    from fleet.models import Robot
+
+    assert Robot.objects.count() == 200
+    perf_user = make_user("perf_board_ops", "ops_lead")
+    c = Client()
+    c.force_login(perf_user)
+    url = f"/planning/board/?day={day.isoformat()}"
+    results = {}
+    for label, path in (("one hub (HB)", url + "&hub=HB"), ("three hubs", url)):
+        assert c.get(path).status_code == 200  # warm-up
+        times, stmts = [], set()
+        for _ in range(RUNS):
+            counter = Counter()
+            t0 = time.perf_counter()
+            with connection.execute_wrapper(counter):
+                resp = c.get(path)
+            times.append((time.perf_counter() - t0) * 1000)
+            stmts.add(counter.n)
+            assert resp.status_code == 200
+        results[label] = {
+            "p95_ms": round(p95(times), 1),
+            "median_ms": round(sorted(times)[RUNS // 2], 1),
+            "budget_ms": BOARD_MS,
+            "statements": sorted(stmts),
+            "visits": len(set(re.findall(r'data-row="([^"]+)"', resp.content.decode()))),
+        }
+    print("\n/planning/board/ on the 3-hub, 200-robot fixture:", json.dumps(results, indent=1))
+    three, one = results["three hubs"], results["one hub (HB)"]
+    assert three["p95_ms"] <= BOARD_MS, three
+    assert len(three["statements"]) == 1 and three["statements"] == one["statements"], results
+
+
+def build_scale_for_board() -> tuple[Any, Any, dict[str, Any]]:
+    """The scale fixture with 100 robots (1,000 visits) at HUB-1: hubs B and C bring the total to 200."""
+    w = ow.scale_world(robots=100)
+    for k, v in THRESHOLDS.items():
+        set_setting(k, v)
+    return w, db_now(), {}
+
+
+def day_bounds_for_quals() -> tuple[Any, Any]:
+    from datetime import UTC, datetime
+
+    from django.utils import timezone
+
+    return timezone.now() - timedelta(days=30), datetime(2027, 6, 1, tzinfo=UTC)
+
+
+DAY_FOR_BOARD = ow.DAY + timedelta(days=2)  # a scale-fixture day: visit k=1 of every HUB-1 robot

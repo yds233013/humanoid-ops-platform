@@ -1,10 +1,13 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Book a visit{% endblock %}
 {% block content %}
-{% page_header title="Book a visit" back_url="/planning/" back_label="Planner" %}Step 1 of 3: request the time. Next you choose the robot and crew, then confirm.{% endpage_header %}
-{% if site %}<div class="notice {% if status.ready %}neutral{% else %}warn{% endif %}">{{ site.code }}: {{ status.text }}{% if status.detail %}. {{ status.detail }}{% endif %}{% if not status.ready %} You can still request the visit, but it cannot be confirmed until the home is ready. <a href="/planning/sites/{{ site.code }}/">Open the customer page</a>.{% endif %}</div>{% endif %}
-{% if can_plan %}<div class="card"><form method="post" action="{% if site %}/planning/sites/{{ site.code }}/book/{% else %}/planning/book/{% endif %}">{% csrf_token %}{% form_token %}
+{% page_header title="Book a visit" back_url="/planning/board/" back_label="Dispatch" %}Step 1 of 3: request the time. Next you choose the robot and crew, then confirm. Or find the next free time: it picks a robot, a crew and a vehicle that fit.{% endpage_header %}
+{% if site %}<div class="notice {% if status.ready %}neutral{% else %}warn{% endif %}">{{ site|home_label }}: {{ status.text }}{% if status.detail %}. {{ status.detail }}{% endif %}{% if not status.ready %} You can still request the visit, but it cannot be confirmed until the home is ready. <a href="/planning/sites/{{ site.code }}/">Open the customer page</a>.{% endif %}</div>{% endif %}
+{% if can_plan %}
+{% if nf %}<section class="card" aria-label="Next free times">{% include "planning/_next_free.html" %}</section>{% endif %}
+<div class="card"><form method="post" action="{% if site %}/planning/sites/{{ site.code }}/book/{% else %}/planning/book/{% endif %}">{% csrf_token %}{% form_token %}
 {% for f in form %}{% if f.name == "start" %}<p class="muted">Times are in the home's time zone{% if site_tz %}: {{ site_tz }}{% endif %}.</p>{% endif %}{% include "planning/_field.html" %}{% endfor %}
-<button class="primary">Request visit</button></form></div>
+<div class="row"><button class="primary">Request visit</button><button type="submit" name="find" value="1" data-find-free="1">Find the next free time</button></div>
+<p class="muted">Finding a free time saves nothing. It looks from now over the dispatch look-ahead, inside the hub's operating hours, for a robot, a crew and a vehicle at the hub, keeping the visit's length.</p></form></div>
 {% else %}<p class="waiting">{{ who_plan }}</p>{% endif %}
 {% endblock %}

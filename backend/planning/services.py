@@ -513,14 +513,14 @@ def evaluate(
         if res is None:
             continue
         for purpose, s0, s1 in spans:
-            clash = (
-                Reservation.objects.filter(
-                    resource=res, released_at__isnull=True, starts_at__lt=s1, ends_at__gt=s0
-                )
-                .exclude(revision__visit=visit)
-                .select_related("revision__visit")
-                .first()
+            others = Reservation.objects.filter(
+                resource=res, released_at__isnull=True, starts_at__lt=s1, ends_at__gt=s0
             )
+            if visit is not None and visit.pk is not None:
+                # v2 03B-3: by id, so a not-yet-saved probe visit (the next free time search for a booking
+                # request) excludes nothing; a saved visit excludes its own reservations, as before
+                others = others.exclude(revision__visit_id=visit.pk)
+            clash = others.select_related("revision__visit").first()
             if clash:
                 _add(
                     b,

@@ -184,10 +184,11 @@ def add_robot(
     lifecycle: str = "in_service",
     auth: bool = True,
     periodic: bool = True,
+    hub_code: str | None = None,
 ) -> str:
     """Register a robot; optionally record a manifest (+ a periodic inspection on it, X-3), walk the lifecycle
-    and grant base authorization."""
-    fs.register_robot(w.ops, code=code, serial=f"{w.prefix}SYN-{code}")
+    and grant base authorization. ``hub_code``: v2 03B-3, its home hub when the workspace has several."""
+    fs.register_robot(w.ops, code=code, serial=f"{w.prefix}SYN-{code}", hub_code=hub_code)
     if pattern is not None:
         fs.record_manifest(
             w.eng, robot_code=code, pattern_code=pattern, autonomy_version="a1", safety_config_hash="h" * 64

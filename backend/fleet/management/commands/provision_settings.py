@@ -11,10 +11,10 @@ safe direction); ``false`` over an existing ``true`` deactivates it and needs ``
 audited and run under the settings lock, so no plan, authorization or departure straddles the switch.
 
 v2 03A-1 (docs/13_v2_phase03_contract.md 11.3): ``--hub CODE`` writes that hub's OWN row of a per-hub setting,
-which overrides the global row for that hub. Only ``stock_minimums`` and ``stock_per_visit`` can be set per
-hub; every other key (the maintenance gate and every safety setting) stays global and is refused with
-``--hub``. The same lock, validation, idempotency, ``--allow-change`` rule and audit apply; the audit names
-the hub.
+which overrides the global row for that hub. Only ``stock_minimums``, ``stock_per_visit`` and (v2 03B-3)
+``hub_operating_hours`` can be set per hub; every other key (the maintenance gate and every safety setting)
+stays global and is refused with ``--hub``. The same lock, validation, idempotency, ``--allow-change`` rule
+and audit apply; the audit names the hub.
 """
 
 import os
@@ -35,6 +35,12 @@ GATE = "maintenance_gate_active"
 def _activation(key: str, value: str) -> bool:
     """v2 02C: turning the maintenance gate ON is the safe direction and needs no --allow-change."""
     return key == GATE and value == "true"
+
+
+def _keys_text() -> str:
+    """``stock_minimums, stock_per_visit and hub_operating_hours``"""
+    keys = list(PER_HUB_SETTING_KEYS)
+    return ", ".join(keys[:-1]) + " and " + keys[-1]
 
 
 def _opt(key: str) -> str:
@@ -58,8 +64,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--hub",
             default=None,
-            help="write this hub's own value (overrides the global value at that hub); only "
-            + " and ".join(PER_HUB_SETTING_KEYS),
+            help="write this hub's own value (overrides the global value at that hub); only " + _keys_text(),
         )
         parser.add_argument(
             "--with-defaults",
@@ -86,7 +91,7 @@ class Command(BaseCommand):
             if other:
                 raise CommandError(
                     "Nothing was changed. Only "
-                    + " and ".join(PER_HUB_SETTING_KEYS)
+                    + _keys_text()
                     + " can be set per hub; "
                     + ", ".join(other)
                     + " stay global (run without --hub)."

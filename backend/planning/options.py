@@ -109,13 +109,17 @@ def _until(e: datetime, ref: datetime) -> str:
 
 
 class _Busy:
-    """Active reservations of OTHER visits overlapping [lo, hi), grouped per resource and visit."""
+    """Active reservations of OTHER visits overlapping [lo, hi), grouped per resource and visit.
 
-    def __init__(self, visit: Visit, lo: datetime, hi: datetime) -> None:
+    v2 03B-3: the rows are indexed by (kind, resource id) once, so the same read answers many windows (the
+    next free time search asks one per candidate time). The answers are the same as a scan of every row."""
+
+    def __init__(self, visit: Visit | None, lo: datetime, hi: datetime) -> None:
+        qs = Reservation.objects.filter(released_at__isnull=True, starts_at__lt=hi, ends_at__gt=lo)
+        if visit is not None and visit.pk is not None:
+            qs = qs.exclude(revision__visit_id=visit.pk)
         self.rows = list(
-            Reservation.objects.filter(released_at__isnull=True, starts_at__lt=hi, ends_at__gt=lo)
-            .exclude(revision__visit=visit)
-            .values_list(
+            qs.values_list(
                 "resource__kind",
                 "resource__robot_id",
                 "resource__person_id",
@@ -123,16 +127,21 @@ class _Busy:
                 "revision__visit__code",
                 "starts_at",
                 "ends_at",
-            )
-            .order_by("starts_at")
+            ).order_by("starts_at")
         )
+        self.by: dict[tuple[str, int], list[tuple[Any, ...]]] = {}
+        col = {"robot": 1, "person": 2, "vehicle": 3}
+        for row in self.rows:
+            kind = str(row[0])
+            pk: Any = row[col[kind]] if kind in col else None
+            if pk is not None:
+                self.by.setdefault((kind, int(pk)), []).append(row)
 
     def clash(self, kind: str, pk: int, s0: datetime, s1: datetime) -> tuple[str, datetime, datetime] | None:
         """(visit code, its first start, its last end) of the earliest overlapping booking, or None."""
-        col = {"robot": 1, "person": 2, "vehicle": 3}[kind]
         hits: dict[str, list[datetime]] = {}
-        for row in self.rows:
-            if row[0] == kind and row[col] == pk and row[5] < s1 and row[6] > s0:
+        for row in self.by.get((kind, pk), ()):
+            if row[5] < s1 and row[6] > s0:
                 hits.setdefault(row[4], []).extend([row[5], row[6]])
         if not hits:
             return None
@@ -140,16 +149,24 @@ class _Busy:
         return code, min(hits[code]), max(hits[code])
 
 
-def plan_options(visit: Visit) -> PlanOptions:
-    rev = visit.current_revision
-    assert rev is not None
-    start, end = rev.on_site_start, rev.on_site_end
-    t_out, t_back = rev.travel_out_min or 0, rev.travel_back_min or 0
-    route = p.new_route(visit, start, end)  # v2 03B-1: a zoned visit's windows use the matrix in force
-    if route is not None:
-        t_out, t_back = route.out.minutes or 0, route.back.minutes or 0
-    insp = p._int_setting("pre_visit_inspection_min") or 0
+@dataclass
+class World:
+    """Everything the option labels read, read ONCE (a fixed number of statements). ``options_at`` then labels
+    the options for any window without another statement (v2 03B-3: the next free time search reuses it)."""
 
+    robot_rows: list[tuple[Any, ...]]
+    loads: dict[str, tuple[int, int]]  # pattern code -> (load/unload, charge turnaround) minutes; 0 unknown
+    robots: dict[int, Robot]
+    people: list[Person]
+    quals: dict[int, list[tuple[str, datetime, datetime]]]
+    vehicles: list[Any]  # Vehicle, annotated with ``moving``
+    busy: _Busy
+    insp: int
+    charge_on: bool = False
+    forecasts: dict[int, Any] = field(default_factory=dict)
+
+
+def read_robots() -> tuple[list[tuple[Any, ...]], dict[str, tuple[int, int]]]:
     with connection.cursor() as cur:
         cur.execute(ROBOT_SQL)
         robot_rows = cur.fetchall()
@@ -163,11 +180,63 @@ def plan_options(visit: Visit) -> PlanOptions:
             else 0
         )
         loads[code] = (load, charge)
-    current_pattern = next((r[2] for r in robot_rows if r[0] == rev.robot_id), None)
-    ref_load = loads.get(current_pattern or "", (0, 0))[0] or max((v[0] for v in loads.values()), default=0)
+    return robot_rows, loads
+
+
+def read_rest(
+    world_robots: tuple[list[tuple[Any, ...]], dict[str, tuple[int, int]]],
+    visit: Visit | None,
+    *,
+    busy: tuple[datetime, datetime],
+    quals: tuple[datetime, datetime],
+    insp: int,
+    forecast_at: datetime | None = None,
+) -> World:
+    """The rest of the World: reservations overlapping ``busy``; qualifications valid from at most
+    ``quals[0]`` to at least ``quals[1]`` (each kind's own window is checked in ``options_at``); robots,
+    people and vehicles. ``forecast_at``: the charge forecast at that departure (plan options only)."""
+    robot_rows, loads = world_robots
+    b = _Busy(visit, *busy)
+    robots = {r.pk: r for r in Robot.objects.filter(pk__in=[r[0] for r in robot_rows])}
+    # v2 02B (contract 11, 8.3): the charge forecast for this visit's departure, once for every robot. A robot
+    # is left out ONLY when the approved charge turnaround proves it cannot be charged in time; Unknown stays
+    # selectable and says so. Off (no label) while ops_soc_fresh_min is not provisioned.
+    charge_on = forecast_at is not None and charging.forecast_configured()
+    forecasts = (
+        charging.robot_forecasts([r[0] for r in robot_rows if r[3]], forecast_at)
+        if charge_on and forecast_at is not None
+        else {}
+    )
+    people = list(Person.objects.select_related("user").order_by("code"))
+    q: dict[int, list[tuple[str, datetime, datetime]]] = {}
+    for pid, kind, v0, v1 in Qualification.objects.filter(
+        revoked_at__isnull=True,
+        kind__in=["field_lead", "field_operator", "robot_handler"],
+        valid_from__lte=quals[0],  # each kind's own window is checked in options_at
+        valid_to__gte=quals[1],
+    ).values_list("person_id", "kind", "valid_from", "valid_to"):
+        q.setdefault(pid, []).append((kind, v0, v1))
+    # v2 03A-2: whether it is on its way to another hub (its latest transfer step not received), same read
+    moving = RawSQL(
+        "(SELECT t.state <> 'received' FROM fleet_hub_transfer t WHERE t.vehicle_id = planning_vehicle.id"
+        " ORDER BY t.id DESC LIMIT 1)",
+        [],
+    )
+    vehicles = list(Vehicle.objects.annotate(moving=moving).order_by("code"))
+    return World(robot_rows, loads, robots, people, q, vehicles, b, insp, charge_on, forecasts)
+
+
+def windows(
+    world: World, start: datetime, end: datetime, t_out: int, t_back: int, ref_pattern: str | None = None
+) -> dict[str, Any]:
+    """The planner's own timeline windows for an on-site span (unknown durations counted as 0 minutes)."""
+    insp = world.insp
+    ref_load = world.loads.get(ref_pattern or "", (0, 0))[0] or max(
+        (v[0] for v in world.loads.values()), default=0
+    )
 
     def robot_window(pattern: str | None) -> tuple[datetime, datetime]:
-        load, charge = loads.get(pattern or "", (0, 0))
+        load, charge = world.loads.get(pattern or "", (0, 0))
         return (
             start - timedelta(minutes=t_out + load + insp),
             end + timedelta(minutes=t_back + load + charge),
@@ -175,31 +244,36 @@ def plan_options(visit: Visit) -> PlanOptions:
 
     shift = (start - timedelta(minutes=t_out + ref_load + insp), end + timedelta(minutes=t_back + ref_load))
     handling = (start - timedelta(minutes=t_out + ref_load), shift[1])
-    trip = handling
-    lo = min([shift[0]] + [robot_window(r[2])[0] for r in robot_rows])
-    hi = max([shift[1]] + [robot_window(r[2])[1] for r in robot_rows])
-    busy = _Busy(visit, lo, hi)
-    out = PlanOptions()
+    return {"robot": robot_window, "shift": shift, "handling": handling, "trip": handling}
+
+
+def options_at(
+    world: World,
+    hub_id: int | None,
+    start: datetime,
+    end: datetime,
+    t_out: int,
+    t_back: int,
+    *,
+    selected: tuple[Any, Any, Any, Any] = (None, None, None, None),
+    ref_pattern: str | None = None,
+) -> PlanOptions:
+    """The labelled options for one window, from ``world`` only (no statement). ``selected``: the robot, lead,
+    second and vehicle ids of the current plan."""
+    w = windows(world, start, end, t_out, t_back, ref_pattern)
+    robot_window, shift, handling, trip = w["robot"], w["shift"], w["handling"], w["trip"]
+    busy = world.busy
+    out = PlanOptions(charge_on=world.charge_on)
 
     # robots: the planner's eligibility (same view the fleet overview uses), then conflicts
-    robots = {r.pk: r for r in Robot.objects.filter(pk__in=[r[0] for r in robot_rows])}
-    # v2 02B (contract 11, 8.3): the charge forecast for this visit's departure, once for every robot. A robot
-    # is left out ONLY when the approved charge turnaround proves it cannot be charged in time; Unknown stays
-    # selectable and says so. Off (no label) while ops_soc_fresh_min is not provisioned.
-    out.charge_on = charging.forecast_configured()
-    forecasts = (
-        charging.robot_forecasts([r[0] for r in robot_rows if r[3]], start - timedelta(minutes=t_out))
-        if out.charge_on
-        else {}
-    )
-    for robot_id, code, pattern, eligible, reasons, *loc_row in robot_rows:
-        f = forecasts.get(robot_id)
+    for robot_id, code, pattern, eligible, reasons, *loc_row in world.robot_rows:
+        f = world.forecasts.get(robot_id)
         where = location_from_row(loc_row)
         risk = ""
         if not eligible:
             shorts = list(dict.fromkeys(robot_reason(x).short for x in reasons))
             status, note = UNUSABLE, "not ready: " + ", ".join(shorts)
-        elif (why := where.planning_problem_for(visit.hub_id, *robot_window(pattern))) is not None:
+        elif (why := where.planning_problem_for(hub_id, *robot_window(pattern))) is not None:
             # v2 03A-2 section 12: the future-planning predicate for this visit's hub and window
             status, note = (
                 UNUSABLE,
@@ -226,8 +300,8 @@ def plan_options(visit: Visit) -> PlanOptions:
                 code,
                 f"{code} · {note}" + (f" · {risk}" if risk else ""),
                 status,
-                robot_id == rev.robot_id,
-                robots.get(robot_id),
+                robot_id == selected[0],
+                world.robots.get(robot_id),
                 note,
                 risk,
             )
@@ -235,30 +309,20 @@ def plan_options(visit: Visit) -> PlanOptions:
     out.robots = _sort(out.robots)
 
     # people: qualifications valid through the whole activity (as planning.services.evaluate), then conflicts
-    people = list(Person.objects.select_related("user").order_by("code"))
-    quals: dict[int, list[tuple[str, datetime, datetime]]] = {}
-    for pid, kind, v0, v1 in Qualification.objects.filter(
-        revoked_at__isnull=True,
-        kind__in=["field_lead", "field_operator", "robot_handler"],
-        valid_from__lte=handling[0],  # each kind's own window is checked below
-        valid_to__gte=shift[1],
-    ).values_list("person_id", "kind", "valid_from", "valid_to"):
-        quals.setdefault(pid, []).append((kind, v0, v1))
-
-    def has(pid: int, kinds: list[str], w: tuple[datetime, datetime]) -> bool:
-        return any(k in kinds and v0 <= w[0] and v1 >= w[1] for k, v0, v1 in quals.get(pid, []))
+    def has(pid: int, kinds: list[str], win: tuple[datetime, datetime]) -> bool:
+        return any(k in kinds and v0 <= win[0] and v1 >= win[1] for k, v0, v1 in world.quals.get(pid, []))
 
     for _role, kinds, words, bucket, selected_id in (
-        ("lead", ["field_lead"], "not qualified as lead", out.leads, rev.lead_id),
+        ("lead", ["field_lead"], "not qualified as lead", out.leads, selected[1]),
         (
             "second",
             ["field_operator", "field_lead"],
             "not qualified as field operator",
             out.seconds,
-            rev.second_id,
+            selected[2],
         ),
     ):
-        for person in people:
+        for person in world.people:
             if not has(person.pk, kinds, shift):
                 status, note = UNUSABLE, words
             elif not has(person.pk, ["robot_handler"], handling):
@@ -272,19 +336,18 @@ def plan_options(visit: Visit) -> PlanOptions:
                     person.code, f"{person.label} · {note}", status, person.pk == selected_id, person, note
                 )
             )
-        bucket[:] = _sort(bucket)
+        # v2 03B-3: people based at the visit's hub first (a home hub confers no authority; it is only where
+        # the crew starts), then the usual order
+        bucket[:] = sorted(
+            bucket,
+            key=lambda o: (_RANK[o.status], hub_id is not None and o.obj.hub_id != hub_id, o.code),
+        )
 
     # vehicles: capacity and restraint kit recorded (as evaluate requires), then conflicts
-    # v2 03A-2: whether it is on its way to another hub (its latest transfer step not received), same read
-    moving = RawSQL(
-        "(SELECT t.state <> 'received' FROM fleet_hub_transfer t WHERE t.vehicle_id = planning_vehicle.id"
-        " ORDER BY t.id DESC LIMIT 1)",
-        [],
-    )
-    for v in Vehicle.objects.annotate(moving=moving).order_by("code"):
-        if v.moving:
+    for v in world.vehicles:
+        if getattr(v, "moving", None):
             status, note = UNUSABLE, "on its way to another hub"
-        elif v.hub_id != visit.hub_id:
+        elif v.hub_id != hub_id:
             status, note = UNUSABLE, "at another hub"
         elif v.robot_capacity is None:
             status, note = UNUSABLE, "capacity not recorded"
@@ -294,9 +357,45 @@ def plan_options(visit: Visit) -> PlanOptions:
             status, note = BUSY, f"busy {c[0]} until {_until(c[2], end)}"
         else:
             status, note = FREE, "free"
-        out.vehicles.append(Option(v.code, f"{v.code} · {note}", status, v.pk == rev.vehicle_id, v, note))
+        out.vehicles.append(Option(v.code, f"{v.code} · {note}", status, v.pk == selected[3], v, note))
     out.vehicles = _sort(out.vehicles)
     return out
+
+
+def plan_options(visit: Visit) -> PlanOptions:
+    rev = visit.current_revision
+    assert rev is not None
+    start, end = rev.on_site_start, rev.on_site_end
+    t_out, t_back = rev.travel_out_min or 0, rev.travel_back_min or 0
+    route = p.new_route(visit, start, end)  # v2 03B-1: a zoned visit's windows use the matrix in force
+    if route is not None:
+        t_out, t_back = route.out.minutes or 0, route.back.minutes or 0
+    insp = p._int_setting("pre_visit_inspection_min") or 0
+    rr = read_robots()
+    robot_rows, loads = rr
+    current_pattern = next((r[2] for r in robot_rows if r[0] == rev.robot_id), None)
+    probe = World(robot_rows, loads, {}, [], {}, [], None, insp)  # type: ignore[arg-type]
+    w = windows(probe, start, end, t_out, t_back, current_pattern)
+    lo = min([w["shift"][0]] + [w["robot"](r[2])[0] for r in robot_rows])
+    hi = max([w["shift"][1]] + [w["robot"](r[2])[1] for r in robot_rows])
+    world = read_rest(
+        rr,
+        visit,
+        busy=(lo, hi),
+        quals=(w["handling"][0], w["shift"][1]),
+        insp=insp,
+        forecast_at=start - timedelta(minutes=t_out),
+    )
+    return options_at(
+        world,
+        visit.hub_id,
+        start,
+        end,
+        t_out,
+        t_back,
+        selected=(rev.robot_id, rev.lead_id, rev.second_id, rev.vehicle_id),
+        ref_pattern=current_pattern,
+    )
 
 
 def _free(opts: list[Option]) -> list[Option]:

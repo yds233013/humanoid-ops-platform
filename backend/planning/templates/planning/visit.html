@@ -2,7 +2,6 @@
 {% block title %}{{ home_title }} ({{ visit.code }}){% endblock %}
 {% block extra_css %}
 .code{font-variant-numeric:tabular-nums} #changed,#review,#by-hand{scroll-margin-top:72px}
-.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .review h3{margin:var(--s4) 0 var(--s2)} .review h3:first-of-type{margin-top:0}
 .why,.checks,.opts,.np{list-style:none;margin:0;padding:0}
 .why li,.checks li{display:flex;gap:var(--s2);align-items:flex-start;padding:var(--s2) 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)} .why li:last-child,.checks li:last-child{border-bottom:0}
@@ -24,7 +23,7 @@ details.fold>summary{padding:11px 0;line-height:22px} .review button,.review inp
 @media (max-width:700px){.groups{grid-template-columns:1fr} .review .btn,.review button{width:100%;justify-content:center} .diff th[scope=row]{width:auto}}
 {% endblock %}
 {% block content %}
-{% page_header title=home_title back_url=board_url back_label="Dispatch board" %}<span class="code">{{ visit.code }} · {{ visit.site|home_label }}</span> · {{ hub.name }} · {{ visit|visit_status }} · revision {{ rev.revision_no }} · <a href="/readiness/visits/{{ visit.code }}/">Departure readiness</a>{% endpage_header %}
+{% page_header title=home_title back_url=board_url back_label="Dispatch board" %}{{ hub.name }} · {{ visit|visit_status }} · <span class="code">visit {{ visit.code }} · {{ visit.site|home_label }} · revision {{ rev.revision_no }}</span> · <a href="/readiness/visits/{{ visit.code }}/">Departure readiness</a>{% endpage_header %}
 {% if changed %}<section class="card changed" id="changed" data-changed="{{ changed.revision }}" aria-labelledby="changed-h"><h2 id="changed-h">What changed</h2>
 {% if changed.rows %}<table class="diff"><thead><tr><th scope="col">What</th><th scope="col">Before</th><th scope="col">After</th></tr></thead><tbody>{% for d in changed.rows %}<tr><th scope="row">{{ d.title }}</th><td>{{ d.before }}</td><td><span aria-hidden="true">→ </span>{{ d.after }}</td></tr>{% endfor %}</tbody></table>
 {% else %}<p class="calm">The robot, crew, vehicle and time are the same as before; the plan was checked and saved again.</p>{% endif %}
@@ -38,7 +37,8 @@ details.fold>summary{padding:11px 0;line-height:22px} .review button,.review inp
   {% if plain and review %}<p class="calm">What needs attention is listed under Review options below.</p>{% elif plain %}<h3>What needs attention</h3>{% include "planning/_blockers.html" %}{% elif visit.status != "cancelled" %}<p>Nothing is blocking this plan.</p>{% endif %}
   {% if charge %}<p data-charge="{{ charge.state }}"><b>Charge at departure:</b> {% if charge.state == "enough" %}{% chip "neutral" "Enough" %}{% elif charge.state == "needs_charge" %}{% chip "warn" "Needs charge" %}{% else %}{% chip "warn" "Charge forecast unknown" %}{% endif %} {{ charge.reason|capfirst }}. <span class="muted">Planning information: departure still needs the battery check.</span></p>{% endif %}
   {% if stock_reserved or stock_needs %}<p data-stock="{% if stock_needs %}{% for n in stock_needs %}{% if n.short %}short{% endif %}{% endfor %}{% else %}ok{% endif %}"><b>Stock:</b> {% for r in stock_reserved %}{{ r.quantity }} {{ r.item.name }} reserved{% if not forloop.last %}, {% endif %}{% endfor %}{% for n in stock_needs %}{% if stock_reserved or not forloop.first %}; {% endif %}{% if n.short %}{% chip "warn" "At risk" %} {{ n.reason }}{% else %}{{ n.missing }} {{ n.item_name }} not reserved yet{% endif %}{% endfor %}. <a href="/hub/stock/">Stock page</a> <span class="muted">Planning information: departure still needs the equipment check.</span></p>{% endif %}
-  <p class="muted">On site <time datetime="{{ start|iso_instant }}">{{ start|local_dt }}</time> to <time datetime="{{ end|iso_instant }}">{{ end|local_time_tz }}</time> · travel {{ rev.travel_out_min|default:"unknown" }} / {{ rev.travel_back_min|default:"unknown" }} min · tasks {{ rev.tasks|join:", "|default:"-" }}</p>
+  <p class="muted">On site <time datetime="{{ start|iso_instant }}">{{ start|local_dt }}</time> to <time datetime="{{ end|iso_instant }}">{{ end|local_time_tz }}</time>{% if zone %} · zone {{ zone.name }} · travel {{ rev.travel_out_min|default:"unknown" }} min out, {{ rev.travel_back_min|default:"unknown" }} min back{% endif %} · tasks {{ rev.tasks|join:", "|default:"-" }}</p>
+  {% if legacy %}<p class="pb at_risk" data-legacy="1"><span aria-hidden="true">▲</span> <span class="sr">At risk: </span>{{ legacy }}. Set the home's zone so the approved travel matrix is used.</p>{% endif %}
 </div>
 {% if visit.status != "cancelled" %}{% include "planning/_review.html" %}{% endif %}
 {% if visit.status != "cancelled" %}

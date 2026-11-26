@@ -8,6 +8,7 @@
 {% elif not review %}<p class="calm">See the robots, crews and vehicles that fit this time, best first, and what each change would check before you save it.</p>
 <p><a class="btn" href="?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options</a></p>
 {% else %}
+{% if nf %}{% include "planning/_next_free.html" %}{% endif %}
 <form method="get" action="#review" class="pick" data-preview-form="1">
 <input type="hidden" name="review" value="1">{% if q_hub %}<input type="hidden" name="hub" value="{{ request.GET.hub }}">{% endif %}
 <h3>Options, best first</h3>
@@ -26,7 +27,7 @@
 <fieldset class="grp"><legend>Time (optional)</legend>
 <div class="field"><label for="rv-start">New start ({{ site_tz }})</label><input id="rv-start" type="datetime-local" name="start" value="{{ review.new_start }}"></div>
 <div class="field"><label for="rv-end">New end</label><input id="rv-end" type="datetime-local" name="end" value="{{ review.new_end }}"></div>
-<p class="help muted">Leave empty to keep {{ start|local_dt }}–{{ end|local_time_tz }}.</p>
+<p class="help muted">Leave empty to keep {{ start|local_dt }}–{{ end|local_time_tz }}.{% if not nf %} <a href="?review=1&amp;next=1{% if q_hub %}&amp;{{ q_hub }}{% endif %}#next-free" data-find-next="1">Find the next free time</a>{% endif %}</p>
 </fieldset>
 </div>
 <p><button type="submit"{% if not review.proposed %} class="primary"{% endif %}>Check this change</button></p>

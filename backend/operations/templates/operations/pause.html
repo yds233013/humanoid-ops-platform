@@ -1,26 +1,36 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Regional pause{% endblock %}
+{% block extra_css %}
+.hubcard h2{display:flex;align-items:baseline;gap:var(--s2);flex-wrap:wrap} .hubcard h2 .code,.zrow .code{color:var(--soft);font-weight:400;font-size:var(--fs-sm)}
+.zlist{list-style:none;margin:0;padding:0} .zrow{display:flex;justify-content:space-between;align-items:center;gap:var(--s2) var(--s4);flex-wrap:wrap;padding:var(--s2) 0;border-top:1px solid var(--line)}
+.zrow:first-child{border-top:0} .zrow .what{display:flex;flex-direction:column;gap:2px;min-width:0} .zrow .what b{font-weight:600}
+.zrow .btn,.pausedlist .btn{min-height:44px;display:inline-flex;align-items:center}
+.pausedlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--s3)} .pausedlist .pb{margin:0}
+.pausedlist .acts{margin-top:var(--s2);display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center}
+.hist td:first-child{white-space:nowrap}
+@media (max-width:700px){.zrow .btn,.pausedlist .btn{width:100%;justify-content:center}}
+{% endblock %}
 {% block content %}
-{% page_header title="Regional pause" back_url="/planning/" back_label="Dispatch" %}Stop new departures for a hub or one of its zones. Visits can still be planned; nothing is recalled and robots already out keep recording.{% endpage_header %}
-<section class="card" aria-labelledby="pause-now">
+{% page_header title="Regional pause" back_url="/planning/board/" back_label="Dispatch" %}Stop new departures from a hub, or to one of its zones, for weather or an incident nearby. Visits can still be planned. Nothing is recalled, and robots already out keep recording.{% endpage_header %}
+<section class="card" aria-labelledby="pause-now" data-section="paused-now">
 <h2 id="pause-now">Paused now</h2>
-{% if any_active %}<ul class="plainlist">
-{% for r in rows %}{% for p in r.active %}<li class="pb paused" data-pause="{{ p.pause_id }}"><b>◆ Paused</b> Departures {% if p.scope == "hub" %}from{% else %}to{% endif %} {{ p.where }} are paused since <time datetime="{{ p.since|date:'c' }}">{{ p.since|local_dt }}</time>: {{ p.reason }}
-<div class="muted">{{ paused_text }}. Planning can go ahead.</div>
-{% if can_lift %}<a class="btn" href="/planning/pause/lift/{{ p.pause_id }}/">Lift this pause</a>{% else %}<div class="muted">{% refusal_note "operations.lift_pause" %}</div>{% endif %}</li>{% endfor %}{% endfor %}
-</ul>{% else %}{% include "ui/empty.html" with title="Nothing is paused" text=" No hub or zone you can see is paused." %}{% endif %}
+{% if any_active %}<ul class="pausedlist">
+{% for r in rows %}{% for p in r.active %}<li data-pause="{{ p.pause_id }}"><p class="pb paused"><b>◆ Paused</b> {{ p.banner }}</p>
+<p class="muted">{{ p.where }} · {{ p.affected }} visit{{ p.affected|pluralize }} cannot be authorized to leave while it lasts.</p>
+<div class="acts">{% if can_lift %}<a class="btn primary" href="/planning/pause/lift/{{ p.pause_id }}/">Lift this pause</a>{% else %}{% refusal_note "operations.lift_pause" %}{% endif %}</div></li>{% endfor %}{% endfor %}
+</ul>{% else %}{% include "ui/empty.html" with title="Nothing is paused" text=" No hub or zone you can see is paused. Departures follow their own readiness checks." %}{% endif %}
 </section>
-{% for r in rows %}<section class="card" aria-labelledby="hub-{{ r.hub.code }}">
-<h2 id="hub-{{ r.hub.code }}">{{ r.hub.name }} <span class="muted">({{ r.hub.code }})</span></h2>
-{% if r.can_pause %}<ul class="plainlist">
-<li><a class="btn" href="/planning/pause/{{ r.hub.code }}/">Pause departures from {{ r.hub.name }}</a> <span class="muted">every zone of this hub, and visits dispatched from it</span></li>
-{% for z in r.zones %}<li><a class="btn" href="/planning/pause/{{ r.hub.code }}/{{ z.code }}/">Pause zone {{ z.name }}</a> <span class="muted">({{ z.code }})</span></li>{% empty %}<li class="muted">This hub has no zones yet. A whole-hub pause still works.</li>{% endfor %}
-</ul>{% else %}<p class="muted">You can't pause departures at {{ r.hub.name }}. Ask a regional ops lead or someone with the safety pause permission there.</p>{% endif %}
-</section>{% empty %}{% include "ui/empty.html" with title="No hubs" text=" You hold no role at any hub, so nothing is shown." %}{% endfor %}
-<section class="card" aria-labelledby="pause-history">
+{% for r in rows %}<section class="card hubcard" aria-labelledby="hub-{{ r.hub.code }}" data-hub="{{ r.hub.code }}">
+<h2 id="hub-{{ r.hub.code }}">{{ r.hub.name }} <span class="code">{{ r.hub.code }}</span></h2>
+{% if r.can_pause %}<ul class="zlist">
+<li class="zrow" data-scope="hub"><span class="what"><b>All of {{ r.hub.name }}</b><span class="muted">Every visit dispatched from this hub, whatever its zone</span></span>{% if r.hub_paused %}<span class="status t-warn"><span class="shape" aria-hidden="true">◆</span>Paused</span>{% else %}<a class="btn" href="/planning/pause/{{ r.hub.code }}/">Pause departures from {{ r.hub.name }}</a>{% endif %}</li>
+{% for z in r.zones %}<li class="zrow" data-zone="{{ z.code }}"><span class="what"><b>{{ z.name }}</b><span class="muted">Zone {{ z.code }} · visits to homes in this zone</span></span>{% if z.paused %}<span class="status t-warn"><span class="shape" aria-hidden="true">◆</span>Paused</span>{% else %}<a class="btn" href="/planning/pause/{{ r.hub.code }}/{{ z.code }}/">Pause zone {{ z.name }}</a>{% endif %}</li>{% empty %}<li class="zrow muted">This hub has no zones yet. A whole-hub pause still works.</li>{% endfor %}
+</ul><p class="muted">A zone pause also covers visits to {{ r.hub.name }}'s homes that have no zone yet: an unknown zone never gets past a pause.</p>{% else %}<p class="waiting" data-refused="1">You can't pause departures at {{ r.hub.name }}. Ask a regional ops lead, or someone with the safety pause permission at {{ r.hub.name }}.</p>{% endif %}
+</section>{% empty %}{% include "ui/empty.html" with title="No hubs to show" text=" You hold no role at any hub, so nothing is shown. Ask an admin for a role." %}{% endfor %}
+<section class="card" aria-labelledby="pause-history" data-section="history">
 <h2 id="pause-history">History</h2>
-{% if history %}<div class="tablewrap"><table><thead><tr><th>When</th><th>What</th><th>Where</th><th>Reason</th><th>By</th></tr></thead><tbody>
-{% for h in history %}<tr><td><time datetime="{{ h.at|date:'c' }}">{{ h.at|local_dt }}</time></td><td>{% if h.kind == "pause" %}◆ Paused{% else %}● Lifted{% endif %}</td><td>{{ h.hub_name }} <span class="muted">({{ h.hub_code }})</span>{% if h.zone_code %}, zone {{ h.zone_name }} <span class="muted">({{ h.zone_code }})</span>{% endif %}</td><td>{{ h.reason }}</td><td>{{ h.actor }}</td></tr>{% endfor %}
-</tbody></table></div>{% else %}{% include "ui/empty.html" with title="No pauses yet" text=" Every pause and lift is listed here and kept in the audit log." %}{% endif %}
+{% if history %}<div class="tablewrap"><table class="stack hist"><thead><tr><th scope="col">When</th><th scope="col">What</th><th scope="col">Where</th><th scope="col">Reason</th><th scope="col">By</th></tr></thead><tbody>
+{% for h in history %}<tr data-history="{{ h.kind }}"><td data-label="When"><time datetime="{{ h.at|iso_instant }}">{{ h.at|local_dt }}</time></td><td data-label="What">{% if h.kind == "pause" %}<span class="status t-warn"><span class="shape" aria-hidden="true">◆</span>Paused</span>{% else %}<span class="status"><span class="shape" aria-hidden="true">●</span>Lifted</span>{% endif %}</td><td data-label="Where">{% if h.zone_code %}{{ h.zone_name }}, {% endif %}{{ h.hub_name }} <span class="muted">{% if h.zone_code %}{{ h.zone_code }} · {% endif %}{{ h.hub_code }}</span></td><td data-label="Reason">{{ h.reason }}</td><td data-label="By">{{ h.actor }}</td></tr>{% endfor %}
+</tbody></table></div><p class="muted">Every pause and lift is also kept in the audit log.</p>{% else %}{% include "ui/empty.html" with title="No pauses yet" text=" Every pause and lift is listed here and kept in the audit log." %}{% endif %}
 </section>
 {% endblock %}

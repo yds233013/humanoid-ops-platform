@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import time as dtime
 from typing import Any
 
 from django.db import connection
@@ -23,7 +24,7 @@ class Spec:
     key: str
     label: str
     purpose: str
-    kind: str  # "text" | "minutes" | "timezone" | "boolean"
+    kind: str  # "text" | "minutes" | "timezone" | "boolean" | "stock_levels" | "days" | "hours"
     required: bool = False
     default: str | None = None  # offered only with --with-defaults
 
@@ -114,6 +115,22 @@ SPECS: tuple[Spec, ...] = (
         "is At risk. An item not listed is not counted per visit.",
         "stock_levels",
     ),
+    # v2 03B-3 (contract 13.4 item 4, 13.5): the next-free-time search. The look-ahead is global; the
+    # operating hours are per hub (``--hub CODE``), with the global row as the fallback. Absent = the search
+    # says it cannot run, and why.
+    Spec(
+        "dispatch_lookahead_days",
+        "Dispatch look-ahead (days)",
+        "How many days ahead the next free time search looks for a robot, a crew and a vehicle.",
+        "days",
+    ),
+    Spec(
+        "hub_operating_hours",
+        "Hub operating hours",
+        "When visits may be on site, in the hub's own time zone (HH:MM-HH:MM, for example 08:00-20:00). "
+        "Set per hub with --hub; the value without a hub applies to every hub that has none.",
+        "hours",
+    ),
 )
 BY_KEY = {s.key: s for s in SPECS}
 ALLOWED_KEYS = tuple(BY_KEY)
@@ -135,6 +152,17 @@ def validate(key: str, raw: str) -> str:
         return value
     if spec.kind == "stock_levels":
         return normalize_stock_levels(key, value)
+    if spec.kind == "days":
+        if not value.isdigit() or not 1 <= int(value) <= MAX_LOOKAHEAD_DAYS:
+            raise ValueError(f"{key} must be a whole number of days from 1 to {MAX_LOOKAHEAD_DAYS}")
+        return str(int(value))
+    if spec.kind == "hours":
+        hours = parse_hours(value)
+        if hours is None:
+            raise ValueError(
+                f"{key} must look like 08:00-20:00 (opening before closing, on the same day, 24-hour clock)"
+            )
+        return f"{hours[0]:%H:%M}-{hours[1]:%H:%M}"
     if spec.kind == "timezone":
         if len(value) > TIMEZONE_MAX_LEN or not python_knows_timezone(value):
             raise ValueError(f"{key} must be a known time zone name such as America/Los_Angeles")
@@ -147,6 +175,19 @@ def validate(key: str, raw: str) -> str:
     if not value or len(value) > MAX_TEXT or any(ord(c) < 32 for c in value):
         raise ValueError(f"{key} must be 1 to {MAX_TEXT} characters of plain text")
     return value
+
+
+MAX_LOOKAHEAD_DAYS = 31
+HOURS_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def parse_hours(raw: str | None) -> tuple[dtime, dtime] | None:
+    """``08:00-20:00`` -> (08:00, 20:00); None when malformed or not opening before closing."""
+    m = HOURS_RE.match((raw or "").replace(" ", ""))
+    if m is None:
+        return None
+    a, b = dtime(int(m[1]), int(m[2])), dtime(int(m[3]), int(m[4]))
+    return (a, b) if a < b else None
 
 
 STOCK_CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{0,11}$")
