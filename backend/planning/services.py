@@ -429,7 +429,12 @@ def evaluate(
                 b,
                 "paused",
                 "PAUSED",
-                f"{PAUSED_TEXT}. Departures for {paused.where} are paused: {paused.reason}",
+                f"{PAUSED_TEXT}. Departures for {paused.where} are paused: {paused.reason}"
+                + (
+                    " (this visit's zone is unknown, so every zone pause at its hub covers it)"
+                    if paused.scope == "zone" and visit.zone_id is None
+                    else ""
+                ),
                 "Planning can go ahead; the regional ops lead lifts the pause before anyone can leave",
             )
 

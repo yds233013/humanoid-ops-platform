@@ -109,6 +109,8 @@ BEGIN
                  THEN ' (this visit''s zone is unknown, so every zone pause at its hub covers it)' ELSE '' END;
 END $fn$;
 REVOKE ALL ON FUNCTION operations_pause_gate_problem(bigint) FROM PUBLIC;
+-- the departure gate fires as the inserting role (ops_app records departures); it only locks and reads
+GRANT EXECUTE ON FUNCTION operations_pause_gate_problem(bigint) TO {APP};
 
 CREATE OR REPLACE FUNCTION operations_authorization_pause_gate() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $fn$
