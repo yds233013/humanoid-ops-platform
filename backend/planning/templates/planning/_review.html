@@ -1,39 +1,17 @@
 {% load ui %}<section class="card review" id="review" aria-labelledby="review-h" data-review="{% if review %}open{% else %}closed{% endif %}">
 <h2 id="review-h">Review options</h2>
 {% if review %}<h3>Why this visit needs attention</h3>
-{% with items=review.why|default:plain %}{% if items %}<ul class="why">{% for x in items %}<li class="lv-{{ x.level }}"><span class="mk" aria-hidden="true">{% if x.level == "blocked" %}■{% elif x.level == "paused" %}◆{% else %}▲{% endif %}</span><span><span class="sr">{% if x.level == "blocked" %}Blocked: {% elif x.level == "paused" %}Paused: {% else %}At risk: {% endif %}</span>{{ x.sentence }}{% if x.action %} <span class="muted">{{ x.action }}</span>{% endif %}</span></li>{% endfor %}</ul>
-{% else %}<p class="calm" data-why="none">Nothing blocks this plan right now. You can still look at other options.</p>{% endif %}{% endwith %}
+{% with items=review.why %}{% if review.blocker %}<div class="blockmsg" role="alert" data-blocker="{{ review.blocker.code }}"><p><span class="mk" aria-hidden="true">■</span> <b>{{ review.blocker.what }}.</b> {{ review.blocker.why }}.</p>
+<p>{{ review.blocker.who }}.{% if can_fix_blocker %} <a class="btn primary" href="{{ review.blocker.url }}" data-action="fix-blocker">{{ review.blocker.link }}</a>{% endif %}</p></div>{% endif %}{% if items %}<ul class="why">{% for x in items %}<li class="lv-{{ x.level }}"><span class="mk" aria-hidden="true">{% if x.level == "blocked" %}■{% elif x.level == "paused" %}◆{% else %}▲{% endif %}</span><span><span class="sr">{% if x.level == "blocked" %}Blocked: {% elif x.level == "paused" %}Paused: {% else %}At risk: {% endif %}</span>{{ x.sentence }}{% if x.action %} <span class="muted">{{ x.action }}</span>{% endif %}</span></li>{% endfor %}</ul>
+{% elif not review.blocker %}<p class="calm" data-why="none">Nothing blocks this plan right now. You can still look at other options.</p>{% endif %}{% endwith %}
 {% endif %}{% if departed %}<p class="waiting" data-departed="1">This visit has departed, so it can no longer be re-planned.</p>
 {% elif not can.plan %}<p class="waiting" data-refused="1">{{ refuse_plan }}</p>
 {% elif not review %}<p class="calm">See the robots, crews and vehicles that fit this time, best first, and what each change would check before you save it.</p>
 <p><a class="btn" href="?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options</a></p>
 {% else %}
-{% if nf %}{% include "planning/_next_free.html" %}{% endif %}
-<form method="get" action="#review" class="pick" data-preview-form="1">
-<input type="hidden" name="review" value="1">{% if q_hub %}<input type="hidden" name="hub" value="{{ request.GET.hub }}">{% endif %}
-<h3>Options, best first</h3>
-<p class="muted">Free options come first, then options that are at risk. Options that are not possible are folded away with their reason. Nothing is saved until you press Save plan.</p>
-<div class="groups">
-{% for g in review.groups %}<fieldset class="grp" data-group="{{ g.kind }}"><legend>{{ g.title }}</legend>
-{% if g.free_shown or g.at_risk %}<ul class="opts">
-{% for c in g.free_shown %}<li><label class="opt"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"{% if c.picked %} checked{% endif %}><span>{{ c.line }}{% if c.current %} <span class="cur">current</span>{% endif %}</span></label></li>{% endfor %}
-{% for c in g.risk_shown %}<li><label class="opt risk"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"{% if c.picked %} checked{% endif %}><span><span class="mk" aria-hidden="true">▲</span> <span class="sr">At risk: </span>{{ c.line }}{% if c.current %} <span class="cur">current</span>{% endif %}</span></label></li>{% endfor %}
-</ul>
-{% if g.free_more %}<details class="fold"><summary>{{ g.free_more|length }} more free</summary><ul class="opts">{% for c in g.free_more %}<li><label class="opt"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"><span>{{ c.line }}</span></label></li>{% endfor %}</ul></details>{% endif %}
-{% if g.risk_more %}<details class="fold"><summary>{{ g.risk_more|length }} more at risk</summary><ul class="opts">{% for c in g.risk_more %}<li><label class="opt risk"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"><span><span class="mk" aria-hidden="true">▲</span> <span class="sr">At risk: </span>{{ c.line }}</span></label></li>{% endfor %}</ul></details>{% endif %}
-{% else %}<p class="calm" data-no-options="{{ g.kind }}">No {{ g.title|lower }} is free for this time.</p>{% endif %}
-{% if g.not_possible %}<details class="fold" data-not-possible="{{ g.kind }}"><summary>Not possible ({{ g.not_possible|length }})</summary><ul class="np">{% for c in g.not_possible %}<li><span class="mk" aria-hidden="true">✕</span> {{ c.line }}{% if c.current %} <span class="cur">current</span>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
-</fieldset>{% endfor %}
-<fieldset class="grp"><legend>Time (optional)</legend>
-<div class="field"><label for="rv-start">New start ({{ site_tz }})</label><input id="rv-start" type="datetime-local" name="start" value="{{ review.new_start }}"></div>
-<div class="field"><label for="rv-end">New end</label><input id="rv-end" type="datetime-local" name="end" value="{{ review.new_end }}"></div>
-<p class="help muted">Leave empty to keep {{ start|local_dt }}–{{ end|local_time_tz }}.{% if not nf %} <a href="?review=1&amp;next=1{% if q_hub %}&amp;{{ q_hub }}{% endif %}#next-free" data-find-next="1">Find the next free time</a>{% endif %}</p>
-</fieldset>
-</div>
-<p><button type="submit"{% if not review.proposed %} class="primary"{% endif %}>Check this change</button></p>
-</form>
 {% if review.proposed %}<div class="proposal" data-proposal="1">
-<h3>Proposed change</h3>
+<h3>{% if review.auto %}Best option, ready to save{% else %}Proposed change{% endif %}</h3>
+{% if review.auto %}<p class="calm" data-auto="1">We picked the option with the fewest risks for this time. Press Save plan to use it, or pick something else below.</p>{% endif %}
 <table class="diff"><thead><tr><th scope="col">What</th><th scope="col">Now</th><th scope="col">Proposed</th></tr></thead><tbody>
 {% for d in review.changes %}<tr><th scope="row">{{ d.title }}</th><td>{{ d.before }}</td><td><span aria-hidden="true">→ </span>{{ d.after }}</td></tr>{% endfor %}
 </tbody></table>
@@ -46,8 +24,35 @@
 {% for k, v in review.picks.items %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
 <input type="hidden" name="start" value="{{ review.new_start }}"><input type="hidden" name="end" value="{{ review.new_end }}">{% if q_hub %}<input type="hidden" name="hub" value="{{ request.GET.hub }}">{% endif %}
 <div class="field"><label for="rv-reason">Reason for the change <span class="req">(optional)</span></label><input id="rv-reason" name="reason" maxlength="200" value="Reassigned from Review options"><span class="help">A short reason in your own words. Do not include names or medical details.</span></div>
-<button class="primary" type="submit">Save plan</button>
+<div class="row"><button class="primary" type="submit">Save plan</button><a class="btn" href="{{ review.keep_url }}{% if q_hub %}&amp;{{ q_hub }}{% endif %}#review" data-keep="1">Keep the current plan</a></div>
 </form>
-</div>{% else %}<p class="calm" data-proposal="none">This is the current plan. Pick a different robot, crew, vehicle or time, then press Check this change.</p>{% endif %}
+</div>{% else %}{% if not review.blocker %}<p class="calm" data-proposal="none">This is the current plan, and nothing better is free for this time. Pick a different robot, crew, vehicle or time below to check it.</p>{% endif %}{% endif %}
+{% if review.blocker %}<details class="fold" data-options-folded="1"><summary>Options (none can fix this)</summary>{% endif %}
+<form method="get" action="#review" class="pick" data-preview-form="1">
+<input type="hidden" name="review" value="1">{% if q_hub %}<input type="hidden" name="hub" value="{{ request.GET.hub }}">{% endif %}
+{% if not review.blocker %}<h3>Options, best first</h3>{% endif %}
+<p class="muted">Free options come first, then options that are at risk. Options that are not possible are folded away with their reason. Nothing is saved until you press Save plan.</p>
+<div class="groups">
+{% for g in review.groups %}<fieldset class="grp" data-group="{{ g.kind }}"><legend>{{ g.title }}</legend>
+{% if g.free_shown or g.at_risk %}<ul class="opts">
+{% for c in g.free_shown %}<li><label class="opt"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"{% if c.picked %} checked{% endif %}><span>{{ c.line }}{% if c.current %} <span class="cur">current</span>{% endif %}</span></label></li>{% endfor %}
+{% for c in g.risk_shown %}<li><label class="opt risk"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"{% if c.picked %} checked{% endif %}><span><span class="mk" aria-hidden="true">▲</span> <span class="sr">At risk: </span>{{ c.line }}{% if c.current %} <span class="cur">current</span>{% endif %}</span></label></li>{% endfor %}
+</ul>
+{% if g.free_more %}<details class="fold"><summary>{{ g.free_more|length }} more free</summary><ul class="opts">{% for c in g.free_more %}<li><label class="opt"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"><span>{{ c.line }}</span></label></li>{% endfor %}</ul></details>{% endif %}
+{% if g.risk_more %}<details class="fold"><summary>{{ g.risk_more|length }} more at risk</summary><ul class="opts">{% for c in g.risk_more %}<li><label class="opt risk"><input type="radio" name="{{ g.kind }}" value="{{ c.code }}"><span><span class="mk" aria-hidden="true">▲</span> <span class="sr">At risk: </span>{{ c.line }}</span></label></li>{% endfor %}</ul></details>{% endif %}
+{% else %}<p class="calm" data-no-options="{{ g.kind }}">No {{ g.title|lower }} is free for this time.</p>{% endif %}
+{% if g.not_possible %}<details class="fold" data-not-possible="{{ g.kind }}"><summary>Not possible ({{ g.not_possible|length }})</summary><ul class="np">{% for c in g.not_possible %}<li><span class="mk" aria-hidden="true">✕</span> {{ c.line }}{% if c.current %} <span class="cur">current</span>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
+{% if g.elsewhere %}<p class="calm" data-elsewhere="{{ g.kind }}">{{ g.elsewhere }} at other hubs, not listed.</p>{% endif %}
+</fieldset>{% endfor %}
+<fieldset class="grp"><legend>Time (optional)</legend>
+<div class="field"><label for="rv-start">New start ({{ site_tz }})</label><input id="rv-start" type="datetime-local" name="start" value="{{ review.new_start }}"></div>
+<div class="field"><label for="rv-end">New end</label><input id="rv-end" type="datetime-local" name="end" value="{{ review.new_end }}"></div>
+<p class="help muted">Leave empty to keep {{ start|local_dt }}–{{ end|local_time_tz }}.{% if not nf %} <a href="?review=1&amp;next=1{% if q_hub %}&amp;{{ q_hub }}{% endif %}#next-free" data-find-next="1">Find the next free time</a>{% endif %}</p>
+</fieldset>
+</div>
+<p><button type="submit">Check this change</button></p>
+</form>
+{% if review.blocker %}</details>{% endif %}
+{% if nf %}{% include "planning/_next_free.html" %}{% endif %}
 {% endif %}
 </section>

@@ -4,11 +4,16 @@
 #attention,#hubs,.hub{scroll-margin-top:72px}
 .code{color:var(--soft);font-weight:400;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
 .bhead{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s3);flex-wrap:wrap;margin:var(--s2) 0 var(--s3)}
-.bhead .sub{color:var(--soft);font-size:var(--fs-sm);margin-top:var(--s1)} .bhead .actions{display:flex;gap:var(--s2);flex-wrap:wrap}
+.bhead .sub{color:var(--soft);font-size:var(--fs-sm);margin:var(--s1) 0 0} .bhead .actions{display:flex;gap:var(--s2);flex-wrap:wrap}
 .btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-height:44px}
-.planline{margin:0 0 var(--s4);padding:var(--s2) var(--s3);border-left:4px solid var(--blueline);background:var(--card);border-radius:0 var(--radius) var(--radius) 0;font-size:var(--fs-sm)}
-.controls{display:flex;gap:var(--s3) var(--s5);flex-wrap:wrap;align-items:flex-end;margin:0 0 var(--s4)}
-.controls .grp{display:flex;flex-direction:column;gap:var(--s1)} .controls .grp>.lbl{font-size:var(--fs-xs);font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.4px}
+.planline{margin:0 0 var(--s4);padding:0 var(--s3);border-left:4px solid var(--blueline);background:var(--card);border-radius:0 var(--radius) var(--radius) 0;font-size:var(--fs-sm)}
+.planline summary{cursor:pointer;list-style:none;padding:var(--s3) 0;min-height:44px;box-sizing:border-box} .planline summary::-webkit-details-marker{display:none}
+.planline .morelink{color:var(--blue);font-weight:600;text-decoration:underline} .planline[open] .morelink{display:none} .planline p{margin:0 0 var(--s3)}
+.scopebtn{font-weight:600}
+.filters{display:flex;gap:var(--s3) var(--s5);flex-wrap:wrap;align-items:flex-end;margin:0 0 var(--s5);padding:var(--s3) var(--s4);background:var(--card);border:1px solid var(--line);border-radius:var(--radius);scroll-margin-top:72px}
+.glist{list-style:none;margin:0;padding:0} .glist a{display:flex;flex-wrap:wrap;gap:0 var(--s2);align-items:baseline;min-height:44px;padding:var(--s2) 0;border-top:1px solid var(--line);color:var(--ink);text-decoration:none;font-size:var(--fs-sm)} .glist a:hover b{text-decoration:underline}
+.bcard details.fold>summary{padding:var(--s3) 0;min-height:44px;box-sizing:border-box}
+.filters .grp{display:flex;flex-direction:column;gap:var(--s1)} .filters .grp>.lbl{font-size:var(--fs-xs);font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.4px}
 .seg{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center}
 .seg a{text-decoration:none;display:inline-flex;align-items:center;min-height:44px;min-width:44px;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:var(--fs-sm)}
 .seg a[aria-current]{background:var(--head);color:var(--head-ink);border-color:var(--head)}
@@ -56,7 +61,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 @media (max-width:700px){
   .strip{grid-template-columns:1fr 1fr 1fr;gap:var(--s2)} .tile{padding:var(--s2) var(--s3)} .tile .n{font-size:var(--fs-xl)}
   .bhead h1{font-size:var(--fs-xl)} .bhead .actions{width:100%} .bhead .actions .btn{flex:1}
-  .controls{flex-direction:column;align-items:stretch} .datepick input{flex:1}
+  .filters{flex-direction:column;align-items:stretch} .datepick input{flex:1} .bhead .actions .scopebtn{flex-basis:100%}
   .cards{grid-template-columns:1fr} .bcard .btn{width:100%}
   .hubs-all .compact{display:none} .hubs-all .openhub{display:flex}
   .openhub{justify-content:space-between;align-items:center;padding:var(--s3) var(--s4);min-height:44px;font-weight:600;font-size:var(--fs-sm);text-decoration:none}
@@ -67,24 +72,11 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 {% block content %}
 <div class="bhead">
   <div><h1>Dispatch</h1>
-  <div class="sub"><span data-day="{{ b.day_key }}">{{ day_label }}{% if b.day_key == "today" or b.day_key == "tomorrow" %}, {{ b.day|date:"D j M" }}{% endif %}</span> · {{ scope_label|capfirst }} · times in {% workspace_tz_label %}</div></div>
-  <div class="actions"><a class="btn" href="/planning/{% if q_hub %}?{{ q_hub }}{% endif %}">Week list</a>{% if can_book %}<a class="btn" href="/planning/book/">Book a visit</a>{% endif %}</div>
+  <p class="sub"><span data-day="{{ b.day_key }}">{{ day_label }}{% if b.day_key == "today" or b.day_key == "tomorrow" %}, {{ b.day|date:"D j M" }}{% endif %}</span> · {{ scope_label|capfirst }} · times in {% workspace_tz_label %}</p></div>
+  <div class="actions"><a class="btn scopebtn" href="#filters" data-jump="filters">{{ day_label }} · {{ scope_label|capfirst }} <span aria-hidden="true">▾</span><span class="sr"> (change the day or hub)</span></a><a class="btn" href="/planning/{% if q_hub %}?{{ q_hub }}{% endif %}">Week list</a>{% if can_book %}<a class="btn" href="/planning/book/">Book a visit</a>{% endif %}</div>
 </div>
-<p class="planline" data-planning-statement="1"><b>Planning is not departure.</b> "Available for planning" means the plan has no known blocker. It never means a robot may leave: departure is approved separately, on Departure readiness.</p>
-
-<div class="controls">
-  <div class="grp"><span class="lbl" id="daylbl">Day</span>
-  <div class="seg" role="group" aria-labelledby="daylbl">
-    <a href="?{% if q_hub %}{{ q_hub }}{% endif %}"{% if b.day_key == "today" %} aria-current="date"{% endif %}>Today</a>
-    <a href="?day=tomorrow{% if q_hub %}&{{ q_hub }}{% endif %}"{% if b.day_key == "tomorrow" %} aria-current="date"{% endif %}>Tomorrow</a>
-    <form method="get" class="datepick">{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}<label class="sr" for="day-input">Date</label><input id="day-input" type="date" name="day" value="{{ day_iso }}" aria-label="Date"><button type="submit">Show</button></form>
-  </div></div>
-  {% if scope.show_filter %}<div class="grp"><span class="lbl" id="hublbl">Hub</span>
-  <nav class="seg" aria-labelledby="hublbl">
-    <a href="?{% if b.day_key != 'today' %}day={{ b.day_key }}{% endif %}"{% if not scope.code and not scope.refused_code %} aria-current="page"{% endif %}>{% if scope.regional %}All hubs{% else %}All my hubs{% endif %}</a>
-    {% for h in scope.hubs %}<a href="?hub={{ h.code|urlencode }}{% if b.day_key != 'today' %}&day={{ b.day_key }}{% endif %}"{% if scope.code == h.code %} aria-current="page"{% endif %}>{{ h.name }}</a>{% endfor %}
-  </nav></div>{% endif %}
-</div>
+<details class="planline" data-planning-statement="1"><summary><b>Planning is not departure:</b> nothing here clears a robot to leave. <span class="morelink">More</span></summary>
+<p>"Available for planning" means the plan has no known blocker. It never means a robot may leave: departure is approved separately, on Departure readiness, after the day's checks.</p></details>
 {% if scope.refused_code %}<p class="notice warn" role="alert" data-refused-hub="{{ scope.refused_code }}">You hold no role at hub {{ scope.refused_code }}. Nothing from it is shown.</p>{% endif %}
 
 <div class="strip" data-summary="1">
@@ -94,23 +86,44 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 </div>
 
 <section class="sec" id="attention" data-section="attention" aria-labelledby="attention-h">
-<h2 id="attention-h">Needs attention {% if b.attention_total %}<span class="count">({{ b.attention_total }})</span>{% endif %}</h2>
-{% if attention %}<ol class="cards">
-{% for r in attention %}<li><article class="bcard" data-status="{{ r.status }}" data-visit="{{ r.code }}">
+<h2 id="attention-h">Needs attention {% if b.attention_total %}<span class="count">({{ b.attention_total }} visit{{ b.attention_total|pluralize }})</span>{% endif %}</h2>
+{% if cards %}<ol class="cards">
+{% for c in cards %}<li>{% if c.grouped %}<article class="bcard group" data-status="{{ c.status }}" data-group="{{ c.cause.key }}" data-count="{{ c.count }}" data-hub="{{ c.first.hub_code }}">
+  <div class="top"><span class="status t-{{ c.tone }}"><span class="shape" aria-hidden="true">{{ c.shape }}</span>{{ c.words }}</span><span>{{ c.count }} visits</span></div>
+  <h3>{{ c.title|capfirst }}</h3>
+  <p class="where">{{ c.first.hub_name }} · first on site <time datetime="{{ c.earliest.start|iso_instant }}">{{ c.earliest.start|local_time_tz }}</time></p>
+  <div class="next">{% if c.can_fix %}<a class="btn primary" href="{{ c.cause.url }}" data-action="fix">{{ c.cause.fix }}<span class="sr"> ({{ c.cause.where }})</span></a><span class="who" data-who="1">{{ c.cause.where }} · you can do this.</span>
+  {% else %}<a class="btn" href="{{ c.cause.url }}" data-action="fix">Open {{ c.cause.where }}</a><span class="who" data-who="1">{{ c.who_fix|capfirst }} can {{ c.cause.fix|lower }}.</span>{% endif %}</div>
+  <details class="fold visits"><summary>Show the {{ c.count }} visits</summary><ul class="glist">{% for r in c.rows %}<li><a href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-group-visit="{{ r.code }}"><time datetime="{{ r.start|iso_instant }}">{{ r.start|local_time }}</time> <b>{{ r.home }}</b>{% if r.robot %} · Robot {{ r.robot }}{% endif %} <span class="code">{{ r.code }}</span></a></li>{% endfor %}</ul></details>
+</article>{% else %}{% with r=c.first %}<article class="bcard" data-status="{{ r.status }}" data-visit="{{ r.code }}">
   <div class="top"><span class="status t-{{ r.tone }}"><span class="shape" aria-hidden="true">{{ r.shape }}</span>{{ r.words }}</span>
   <span><time datetime="{{ r.start|iso_instant }}">{{ r.start|local_time_tz }}</time></span></div>
   <h3>{{ r.home }} <span class="code">{{ r.home_code }} · {{ r.code }}</span></h3>
-  <p class="where">{{ r.hub_name }} · leaves the hub <time datetime="{{ r.depart|iso_instant }}">{{ r.depart|local_time }}</time></p>
+  <p class="where">{{ r.hub_name }} · {% if r.depart %}leaves the hub <time datetime="{{ r.depart|iso_instant }}">{{ r.depart|local_time }}</time>{% else %}<span data-leave="unknown">Leave time unknown (travel time unknown)</span>{% endif %}</p>
   <p class="reason" data-reason="1">{{ r.reason }}</p>
   <div class="next">{% if b.can_plan %}<a class="btn primary" href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options<span class="sr"> for {{ r.home }}, {{ r.code }}</span></a>
   <span class="who" data-who="1">You can act on this (ops lead).</span>
   {% else %}<a class="btn" href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-action="review">Review options<span class="sr"> for {{ r.home }}, {{ r.code }}</span></a>
   <span class="who" data-who="1">Only an {{ b.who_plan }} can change it.</span>{% endif %}</div>
-</article></li>{% endfor %}
+</article>{% endwith %}{% endif %}</li>{% endfor %}
 </ol>
-{% if b.attention_total > attention|length %}<p class="more"><a href="?{% if q %}{{ q }}&{% endif %}attention=all#attention" data-show-all="{{ b.attention_total }}">Show all ({{ b.attention_total }})</a></p>
-{% elif show_all and b.attention_total > 5 %}<p class="more"><a href="?{{ q }}#attention">Show the first 5</a></p>{% endif %}
+{% if b.cards|length > cards|length %}<p class="more"><a href="?{% if q %}{{ q }}&{% endif %}attention=all#attention" data-show-all="{{ b.cards|length }}">Show all ({{ b.cards|length }})</a></p>
+{% elif show_all and b.cards|length > 5 %}<p class="more"><a href="?{{ q }}#attention">Show the first 5</a></p>{% endif %}
 {% else %}<div class="empty" data-empty="attention"><b>No visits need attention at {{ scope_label }} {% if b.day_key == "today" or b.day_key == "tomorrow" %}{{ b.day_key }}{% else %}on {{ day_label }}{% endif %}.</b>Nothing is blocked, paused or at risk.</div>{% endif %}
+</section>
+
+<section class="filters" id="filters" data-section="filters" aria-label="Day and hub">
+  <div class="grp"><span class="lbl" id="daylbl">Day</span>
+  <div class="seg" role="group" aria-labelledby="daylbl">
+    <a href="?{% if q_hub %}{{ q_hub }}{% endif %}"{% if b.day_key == "today" %} aria-current="date"{% endif %}>Today</a>
+    <a href="?day=tomorrow{% if q_hub %}&{{ q_hub }}{% endif %}"{% if b.day_key == "tomorrow" %} aria-current="date"{% endif %}>Tomorrow</a>
+    <form method="get" class="datepick">{% if scope.code %}<input type="hidden" name="hub" value="{{ scope.code }}">{% endif %}<label class="sr" for="day-input">Date</label><input id="day-input" type="date" name="day" value="{{ day_iso }}"><button type="submit">Show</button></form>
+  </div></div>
+  {% if scope.show_filter %}<div class="grp"><span class="lbl" id="hublbl">Hub</span>
+  <nav class="seg" aria-labelledby="hublbl">
+    <a href="?{% if b.day_key != 'today' %}day={{ b.day_key }}{% endif %}"{% if not scope.code and not scope.refused_code %} aria-current="page"{% endif %}>{% if scope.regional %}All hubs{% else %}All my hubs{% endif %}</a>
+    {% for h in scope.hubs %}<a href="?hub={{ h.code|urlencode }}{% if b.day_key != 'today' %}&day={{ b.day_key }}{% endif %}"{% if scope.code == h.code %} aria-current="page"{% endif %}>{{ h.name }}</a>{% endfor %}
+  </nav></div>{% endif %}
 </section>
 
 <section class="sec{% if not scope.selected %} hubs-all{% endif %}" id="hubs" data-section="hubs" aria-labelledby="hubs-h">
