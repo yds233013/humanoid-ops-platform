@@ -32,7 +32,7 @@ from accounts import services as account_services
 from accounts.models import RoleGrant
 from accounts.permissions import visible_hub_ids
 from execution import field_commands, field_sync
-from execution.models import Incident, Interruption, SessionEvent, TripEvent
+from execution.models import FieldCommand, Incident, Interruption, SessionEvent, TripEvent
 from execution.sessions import blocking_holds
 from fleet import services as fleet_services
 from platform_core import testhooks
@@ -147,7 +147,7 @@ def w() -> Any:
 
 
 # ------------------------------------------------------------------ response contract
-RESULT_KEYS = {"key", "outcome", "reason_code", "message", "seq", "recorded_at", "result"}
+RESULT_KEYS = {"key", "outcome", "reason_code", "message", "seq", "recorded_at", "result", "final"}
 TOP_KEYS = {"server_time", "run", "generation", "last_decided_seq", "next_expected_seq", "results"}
 
 
@@ -171,6 +171,7 @@ def test_response_schema_snapshot(w):
     assert held["outcome"] == "held" and held["recorded_at"] is None and held["result"] == {}
     assert online["outcome"] == "rejected" and online["reason_code"] == "ONLINE_ONLY"
     assert online["message"] == "Needs a connection. Do not start." and online["seq"] is None
+    assert (first["final"], held["final"], online["final"]) == (True, False, True)
     types = {
         "key": str,
         "outcome": str,
@@ -179,6 +180,7 @@ def test_response_schema_snapshot(w):
         "seq": (int, type(None)),
         "recorded_at": (str, type(None)),
         "result": dict,
+        "final": bool,
     }
     for r in resp["results"]:
         for name, t in types.items():
@@ -738,3 +740,122 @@ def test_field_key_reaches_the_domain_idempotency_of_incident_reports(w, monkeyp
     step = cmd("incident.report", payload=INCIDENT)
     assert outcomes(sync(client(w.field), w.run.code, [step])) == [("confirmed", "")]
     assert seen == [step["key"]]
+
+
+# ------------------------------------------------------------------ 14.9 (EM 03C closure): last_decided_outcome, final
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"last_decided_outcome": "maybe"},
+        {"last_decided_outcome": "CONFIRMED"},
+        {"last_decided_outcome": 1},
+        {"last_decided_outcome": True},
+        {"last_decided_outcome": "rejected", "last_decided_seq": None},  # an outcome of no step
+        {"last_decided_outcome": "rejected", "last_decided_seq": 0},
+    ],
+)
+def test_last_decided_outcome_outside_the_allowed_values_is_400(w, change):
+    step = {**cmd("interruption.open", payload={"reason": "SYNTHETIC"}, last=1), **change}
+    resp = post(client(w.field), body(w.run.code, [step]))
+    assert resp.status_code == 400 and resp.json()["error"] == "BAD_REQUEST"
+    assert not Interruption.objects.filter(run=w.run).exists()
+
+
+@pytest.mark.parametrize("seen", ["confirmed", "rejected", "abandoned", None])
+def test_last_decided_outcome_allowed_values_and_absent_field_are_accepted(w, seen):
+    step = cmd("interruption.open", payload={"reason": f"SYNTHETIC {seen}"}, last=1)
+    if seen is not None:
+        step["last_decided_outcome"] = seen
+    assert outcomes(sync(client(w.field), w.run.code, [step])) == [("confirmed", "")]
+
+
+def test_device_saw_a_rejection_protective_step_applies_and_nothing_is_inferred(w, monkeypatch):
+    """14.8 item 1: a device that saw an ordinary REJECTION must never have that step treated as confirmed. The
+    protective step applies; its stored causal reference keeps "rejected"; the next ordinary step re-checks the
+    real state (the vehicle never arrived, so it cannot depart)."""
+    seen: list[Any] = []
+    real = field_commands.apply
+
+    def spy(actor, run, command, payload, **kw):
+        seen.append(kw.get("causal"))
+        return real(actor, run, command, payload, **kw)
+
+    monkeypatch.setattr(field_sync.field_commands, "apply", spy)
+    c = client(w.field)
+    first = sync(c, w.run.code, [cmd("trip.arrived_site", 1, at=db_now() + timedelta(hours=5))])
+    assert outcomes(first) == [("rejected", "DEVICE_TIME_OUT_OF_BOUNDS")]
+    report = cmd("interruption.open", payload={"reason": "SYNTHETIC: crew stopped"}, last=1)
+    report["last_decided_outcome"] = "rejected"
+    resp = sync(c, w.run.code, [report, cmd("trip.departed_site", 2)])
+    assert resp["results"][0]["outcome"] == "confirmed"
+    assert seen[0] == {"last_decided_seq": 1, "generation": 1, "outcome": "rejected"}
+    stored = FieldCommand.objects.get(key=report["key"])
+    assert stored.causal["outcome"] == "rejected" and stored.causal["last_decided_seq"] == 1
+    # no prerequisite inferred: seq 1 is decided, not done; the dependent step is refused by the real state
+    assert resp["results"][1]["outcome"] == "rejected"
+    assert resp["results"][1]["reason_code"] == "STATE_CONFLICT"
+    assert trips(w) == []
+
+
+def test_last_decided_outcome_is_not_part_of_the_identity_digest(w):
+    """14.8 item 2 lists 9 identity fields; this one is not among them. A resend that changes only it is a
+    replay (the stored outcome and causal reference), never KEY_REUSED and never re-applied."""
+    c = client(w.field)
+    step = cmd("interruption.open", payload={"reason": "SYNTHETIC"}, last=1)
+    step["last_decided_outcome"] = "confirmed"
+    first = sync(c, w.run.code, [step])
+    again = sync(c, w.run.code, [{**step, "last_decided_outcome": "rejected"}])
+    assert again["results"] == first["results"] and again["results"][0]["outcome"] == "confirmed"
+    assert FieldCommand.objects.get(key=step["key"]).causal["outcome"] == "confirmed"
+    assert Interruption.objects.filter(run=w.run).count() == 1
+
+
+def test_not_permitted_is_not_final_and_is_rechecked_after_access_returns(w):
+    admin = make_user("fs_admin_final", "admin")
+    grants = list(RoleGrant.objects.filter(user=w.field, revoked_at__isnull=True))
+    for g in grants:
+        account_services.revoke_role(admin, grant_id=g.pk, reason="SYNTHETIC revoked")
+    c = client(w.field)
+    step = cmd("trip.arrived_site", 1)
+    refused = sync(c, w.run.code, [step])["results"][0]
+    assert (refused["outcome"], refused["reason_code"], refused["final"]) == (
+        "rejected",
+        "NOT_PERMITTED",
+        False,
+    )
+    assert refused["recorded_at"] is None  # not stored
+    RoleGrant.objects.create(user=w.field, role="field_operator", hub_id=w.run.visit.hub_id)
+    resent = sync(c, w.run.code, [step])["results"][0]  # the same key, re-checked
+    assert (resent["outcome"], resent["final"]) == ("confirmed", True)
+    assert trips(w) == ["arrived_site"]
+
+
+def test_final_flags_on_each_kind_of_answer(w, monkeypatch):
+    c = client(w.field)
+    resp = sync(
+        c,
+        w.run.code,
+        [
+            cmd("trip.arrived_site", 1),  # confirmed
+            cmd("trip.arrived_site", 2),  # durable domain rejection
+            obs(4),  # held
+            cmd("session.start"),  # ONLINE_ONLY, durable
+        ],
+    )
+    assert [(r["outcome"], r["final"]) for r in resp["results"]] == [
+        ("confirmed", True),
+        ("rejected", True),
+        ("held", False),
+        ("rejected", True),
+    ]
+
+    def transient(*a, **k):
+        raise field_commands.Transient("SYNTHETIC lock timeout")
+
+    monkeypatch.setattr(field_sync.field_commands, "apply", transient)
+    retry = sync(c, w.run.code, [obs(3)])["results"][0]
+    assert (retry["outcome"], retry["final"]) == ("retry", False)
+    monkeypatch.undo()
+    reused_key = cmd("trip.arrived_site", 1, key=resp["results"][0]["key"], payload={"changed": 1})
+    reused = sync(c, w.run.code, [reused_key])["results"][0]
+    assert (reused["reason_code"], reused["final"]) == ("KEY_REUSED", True)  # the key's answer never changes

@@ -11,9 +11,10 @@ Order of processing (each step only when the one before passed):
 2. **CSRF**, as for every session-authenticated POST: HTTP 403.
 3. **Size and shape.** More than 20 commands, a payload over 4 KB or a body over the cap: HTTP 413. Anything
    malformed: HTTP 400. Nothing is applied.
-4. **Run access.** The actor's crew run (lead or second of the departed revision), or any run for a REGIONAL
-   actor (14.4). Otherwise HTTP 403 ``NOT_YOUR_RUN``: the same body for a missing run, no run details, no
-   device report and no command-history write.
+4. **Run access** (14.9 deviation 2). A crew member of the run (lead or second of the departed revision), or
+   an ops lead with a grant at the run's hub (regional or that hub's), as the ledger decides. Otherwise one
+   whole-request HTTP 403 ``NOT_YOUR_RUN`` (14.9 deviation 4): the same body for a missing run, no run
+   details, no device report and no command-history write.
 5. **Device report** (``field_ledger.report_device``): the device's last reported unsent count.
 6. **Per command, each in its OWN database transaction**, in request order:
    ``with field_ledger.claim(key, identity) as c`` takes the run row lock, then
@@ -31,6 +32,16 @@ from the domain, a database error, or any exception before the transaction ends 
 back and answers ``retry`` (nothing claimed). An error while the transaction COMMITS means the server cannot
 say what happened: the request answers HTTP 503 ``OUTCOME_UNKNOWN`` and never a guessed result; the phone
 resends with the same keys and gets the stored outcome or a first application.
+
+Request field ``last_decided_outcome`` (14.9; optional, nullable): ``confirmed`` | ``rejected`` |
+``abandoned`` | null, the outcome of ``last_decided_seq`` as the DEVICE saw it, anything else is HTTP 400.
+Untrusted causal metadata: stored in the protective command's causal reference as ``outcome`` and passed to
+``field_commands.apply(causal=...)``; never part of the identity digest (the 9 fields of 14.8 item 2), so a
+resend that changes only it is still a replay; never read as a confirmation.
+
+Response field ``final`` on every result (14.9): true for ``confirmed`` and for rejections that will not be
+revisited; false for ``held``, ``retry`` and ``NOT_PERMITTED``. ``final=false`` means "may change if access
+changes (or the gap fills, or the server recovers): keep the step; for NOT_PERMITTED ask an ops lead".
 
 Times: every stored instant is UTC database time; the response shows ISO 8601 strings in the workspace zone.
 """
@@ -68,6 +79,13 @@ COMMAND_RE = re.compile(r"^[a-z_]{1,40}\.[a-z_]{1,40}$")
 
 SYNC_FIELDS = {"device_id", "run", "generation", "unsent_count", "commands"}
 COMMAND_FIELDS = {"key", "channel", "seq", "last_decided_seq", "command", "payload", "device_observed_at"}
+# v2 03C closure (EM, contract 14.9): optional and nullable. The outcome of last_decided_seq as the DEVICE
+# saw it; untrusted causal metadata, never in the identity digest (14.8 item 2 lists 9 fields; not this).
+OPTIONAL_COMMAND_FIELDS = {"last_decided_outcome"}
+DEVICE_OUTCOMES = ("confirmed", "rejected", "abandoned")
+# A result is NOT final when the answer can change without the phone changing anything: held, retry, and
+# NOT_PERMITTED (an access answer, re-checked on every resend; it changes when grants change).
+NOT_FINAL_CODES = frozenset({"NOT_PERMITTED"})
 ABANDON_FIELDS = {"run", "generation", "seq", "reason"}
 
 NOT_AUTHENTICATED = {"error": "NOT_AUTHENTICATED", "message": "Sign in again. Nothing was recorded."}
@@ -172,8 +190,10 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     return data
 
 
-def _exact_fields(obj: dict[str, Any], fields: set[str], what: str) -> None:
-    missing, extra = fields - obj.keys(), obj.keys() - fields
+def _exact_fields(
+    obj: dict[str, Any], fields: set[str], what: str, optional: frozenset[str] | set[str] = frozenset()
+) -> None:
+    missing, extra = fields - obj.keys(), obj.keys() - fields - optional
     if missing:
         raise BadRequest(f"{what} is missing: {', '.join(sorted(missing))}.")
     if extra:
@@ -242,7 +262,7 @@ def parse_sync(data: dict[str, Any]) -> dict[str, Any]:
             size = len(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
             if size > MAX_PAYLOAD_BYTES:
                 raise BadRequest(f"{what}: the payload is over 4 KB.", 413)
-        _exact_fields(cmd, COMMAND_FIELDS, what)
+        _exact_fields(cmd, COMMAND_FIELDS, what, OPTIONAL_COMMAND_FIELDS)
         channel = cmd["channel"]
         if channel not in CHANNELS:
             raise BadRequest(f"{what}: channel must be ordinary or protective.")
@@ -255,6 +275,13 @@ def parse_sync(data: dict[str, Any]) -> dict[str, Any]:
         last = cmd["last_decided_seq"]
         if last is not None:
             last = _int(last, f"{what}: last_decided_seq", 0)
+        seen = cmd.get("last_decided_outcome")
+        if seen is not None and seen not in DEVICE_OUTCOMES:
+            raise BadRequest(f"{what}: last_decided_outcome must be confirmed, rejected, abandoned or null.")
+        if seen is not None and not last:
+            raise BadRequest(
+                f"{what}: last_decided_outcome needs the last_decided_seq it describes (from 1)."
+            )
         name = cmd["command"]
         if not isinstance(name, str) or not COMMAND_RE.match(name):
             raise BadRequest(f"{what}: command must be a name such as trip.arrived_site.")
@@ -267,6 +294,7 @@ def parse_sync(data: dict[str, Any]) -> dict[str, Any]:
                 "channel": channel,
                 "seq": seq,
                 "last_decided_seq": last,
+                "last_decided_outcome": seen,
                 "command": name,
                 "payload": payload,
                 "device_observed_at": raw_time,
@@ -362,7 +390,17 @@ def _result(
         "seq": seq,
         "recorded_at": iso_local(recorded_at),
         "result": result or {},
+        "final": is_final(outcome, code),
     }
+
+
+def is_final(outcome: str, code: str) -> bool:
+    """True: the answer never changes for this key (confirmed, or a rejection that will not be revisited).
+    False: held, retry, or NOT_PERMITTED, which may change if access changes; the phone keeps the step and
+    the crew asks an ops lead (contract 14.9)."""
+    if outcome == "confirmed":
+        return True
+    return outcome == "rejected" and code not in NOT_FINAL_CODES
 
 
 def _from_stored(key: str, s: field_ledger.Stored) -> dict[str, Any]:
@@ -453,8 +491,14 @@ def _decide(
 
 
 def causal_of(cmd: dict[str, Any], generation: int) -> dict[str, Any]:
-    """The device's causal reference (14.8 item 1): only the keys field_commands and the ledger accept."""
-    return {"last_decided_seq": cmd["last_decided_seq"], "generation": generation}
+    """The device's causal reference (14.8 item 1; contract 14.9): only the keys field_commands accepts
+    (``last_decided_seq``, ``outcome``, ``generation``). The request's ``last_decided_outcome`` is stored
+    as ``outcome``: what the DEVICE saw, kept as data. It is never read as a confirmation and no
+    prerequisite is inferred from it; every command re-checks the server state."""
+    causal: dict[str, Any] = {"last_decided_seq": cmd["last_decided_seq"], "generation": generation}
+    if cmd.get("last_decided_outcome") is not None:
+        causal["outcome"] = cmd["last_decided_outcome"]
+    return causal
 
 
 def process_command(
