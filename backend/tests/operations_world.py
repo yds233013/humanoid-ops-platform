@@ -951,6 +951,8 @@ def scale_world(
     closed_runs_per_robot: int = 2,
     incidents: int = SCALE["incidents"],
     seed: int = 5,
+    crews: int = SCALE_CREWS,
+    hubs: int = 1,
 ) -> SimpleNamespace:
     """The Slice 5 scale fixture: 200 robots, 2,000 visits, 600 runs (2 closed per robot + 1 more departure per
     robot, left at a varied stage or closed), 300 incidents. SYNTHETIC data only.
@@ -976,7 +978,12 @@ def scale_world(
     Layout: crew c (persons PC-<c>L / PC-<c>S, vehicle VS-<c>) serves robots n with n % 40 == c; robot n's visit
     k is on DAY + k + 1 in 4-hour slot (n // 40) % 5, so no robot, crew or vehicle reservation overlaps.
     Returns the world with w.robot_codes, w.scale_open_stages {robot index: stage of its last run} and
-    w.timings (cumulative seconds per phase)."""
+    w.timings (cumulative seconds per phase).
+    Phase 05 (500-robot validation): ``crews`` (default 40) and ``hubs`` (default 1, the Slice 5 fixture
+    unchanged). With hubs > 1, HUB-2.. are created after the base world, and crew c (its two people, its van and
+    the robots it serves) belongs to hub ``c * hubs // crews`` (contiguous blocks, so the base world's robots and
+    crew 0 stay at the first hub). Visits are inserted with their robot's hub; the crew users get a field_operator
+    grant at their hub, and the base world's two field operators one at every new hub. w.hub_codes lists them."""
     import time
 
     rng = random.Random(seed)
@@ -989,29 +996,50 @@ def scale_world(
 
     from django.db import connection
 
+    from accounts.models import RoleGrant
     from planning import services as ps
+    from platform_core.models import Hub
     from tests.conftest import make_user
+
+    # ---------------------------------------------------------------- hubs (Phase 05; one hub by default)
+    first = Hub.objects.get()
+    hub_codes = [first.code]
+    for h in range(2, hubs + 1):
+        hub = Hub.objects.create(code=f"HUB-{h}", name=f"Synthetic hub {h}", time_zone=first.time_zone)
+        hub_codes.append(hub.code)
+        for u in (w.field, w.field2):
+            RoleGrant.objects.create(user=u, role="field_operator", hub=hub)
+    w.hub_codes = hub_codes
+
+    def hub_of(n: int) -> str | None:  # robot / crew index -> hub code (None: the only hub, as before)
+        return hub_codes[(n % crews) * hubs // crews] if hubs > 1 else None
 
     # ---------------------------------------------------------------- robots, crews, vehicles (commands)
     codes = list(w.robots)
     for n in range(len(codes) + 1, robots + 1):
-        codes.append(add_robot(w, f"R-{n:03d}"))
+        codes.append(add_robot(w, f"R-{n:03d}", hub_code=hub_of(n - 1)))
     lo, hi_dt = timezone.now() - timedelta(days=30), datetime(2027, 6, 1, tzinfo=UTC)
-    crews = []
-    for c in range(SCALE_CREWS):
+    crew_users = []
+    for c in range(crews):
         pair = []
         for role, kinds in (
             ("lead", ["field_lead", "robot_handler"]),
             ("second", ["field_operator", "robot_handler"]),
         ):
-            u = make_user(f"sc_crew_{role}_{c}", "field_operator")
+            if hubs > 1:
+                u = make_user(f"sc_crew_{role}_{c}")
+                RoleGrant.objects.create(user=u, role="field_operator", hub=Hub.objects.get(code=hub_of(c)))
+            else:
+                u = make_user(f"sc_crew_{role}_{c}", "field_operator")
             pcode = f"PC-{c}{role[0].upper()}"
-            ps.register_person(w.ops, username=u.username, code=pcode)
+            ps.register_person(w.ops, username=u.username, code=pcode, hub_code=hub_of(c))
             for k in kinds:
                 ps.grant_qualification(w.ops, person_code=pcode, kind=k, valid_from=lo, valid_to=hi_dt)
             pair.append(u)
-        ps.register_vehicle(w.ops, code=f"VS-{c}", robot_capacity=1, restraint_kit="SYN kit")
-        crews.append(pair)
+        ps.register_vehicle(
+            w.ops, code=f"VS-{c}", robot_capacity=1, restraint_kit="SYN kit", hub_code=hub_of(c)
+        )
+        crew_users.append(pair)
     lap("fleet_people_vehicles")
 
     with connection.cursor() as cur:
@@ -1037,7 +1065,7 @@ def scale_world(
                    NULL::text AS status
             FROM rb CROSS JOIN generate_series(0, %(vpr)s - 1) k(k)
             """,
-            {"codes": codes, "day": DAY, "crews": SCALE_CREWS, "slots": SCALE_SLOTS, "vpr": visits_per_robot},
+            {"codes": codes, "day": DAY, "crews": crews, "slots": SCALE_SLOTS, "vpr": visits_per_robot},
         )
         cur.execute(
             "UPDATE scale_plan SET status = CASE WHEN k <= %s THEN 'confirmed' END", [closed_runs_per_robot]
@@ -1057,8 +1085,10 @@ def scale_world(
         cur.execute(
             """
             WITH ins AS (
-              INSERT INTO planning_visit (code, status, created_at, cancelled_reason, created_by_id, site_id, version)
-              SELECT execution_code('V', nextval('planning_visit_code_seq')), 'requested', now(), '', %s, %s, 1
+              INSERT INTO planning_visit (code, status, created_at, cancelled_reason, created_by_id, site_id, version,
+                hub_id)
+              SELECT execution_code('V', nextval('planning_visit_code_seq')), 'requested', now(), '', %s, %s, 1,
+                (SELECT r.hub_id FROM fleet_robot r WHERE r.id = scale_plan.robot_id)
               FROM scale_plan ORDER BY n, k
               RETURNING id)
             SELECT array_agg(id ORDER BY id) FROM ins
@@ -1272,9 +1302,34 @@ def _scale_depart_wave(cur: Any, w: SimpleNamespace, k: int) -> None:
         """,
         {"by": w.ops.pk, "k": k},
     )
+    # Phase 05: issued in chunks of SCALE_CHUNK robots, so one statement stays well inside the app's 10 s
+    # statement_timeout at 500 robots (each row runs the whole write boundary; one 500-row statement took > 10 s).
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS scale_auth (visit_id bigint, auth_id bigint) ON COMMIT DROP")
+    cur.execute("SELECT coalesce(max(n), 0) FROM scale_plan")
+    top = int(cur.fetchone()[0])
+    for lo in range(0, top + 1, SCALE_CHUNK):
+        _scale_authorize(cur, w, k, lo, lo + SCALE_CHUNK)
+    # Slice 7 (EM ruling 1): the departure trigger asserts the settings lock; take it SHARED first.
+    cur.execute("SELECT pg_advisory_xact_lock_shared(64942988919)")
+    for lo in range(0, top + 1, SCALE_CHUNK):
+        cur.execute(
+            """
+            INSERT INTO readiness_departureevent (guard_snapshot, authorization_id, recorded_by_id, robot_id, visit_id)
+            SELECT a.guard_snapshot, a.id, %(ops)s, a.robot_id, a.visit_id
+            FROM scale_plan p JOIN scale_auth s ON s.visit_id = p.visit_id
+            JOIN readiness_departureauthorization a ON a.id = s.auth_id
+            WHERE p.k = %(k)s AND p.n >= %(lo)s AND p.n < %(hi)s
+            """,
+            {"ops": w.ops.pk, "k": k, "lo": lo, "hi": lo + SCALE_CHUNK},
+        )
+
+
+SCALE_CHUNK = 100
+
+
+def _scale_authorize(cur: Any, w: SimpleNamespace, k: int, lo: int, hi: int) -> None:
     cur.execute(
         """
-        CREATE TEMP TABLE IF NOT EXISTS scale_auth (visit_id bigint, auth_id bigint) ON COMMIT DROP;
         INSERT INTO scale_auth (visit_id, auth_id)
         SELECT p.visit_id, (readiness_issue_authorization(p.visit_id, %(ops)s, clock_timestamp() + interval '60 minutes',
             (SELECT jsonb_agg(e.id ORDER BY e.id) FROM readiness_readinessevidence e WHERE e.visit_id = p.visit_id),
@@ -1303,21 +1358,9 @@ def _scale_depart_wave(cur: Any, w: SimpleNamespace, k: int) -> None:
           JOIN fleet_robot rb ON rb.id = r.robot_id JOIN fleet_configurationmanifest m ON m.id = rb.current_manifest_id
           WHERE v.id = p.visit_id
         ) s
-        WHERE p.k = %(k)s
+        WHERE p.k = %(k)s AND p.n >= %(lo)s AND p.n < %(hi)s
         """,
-        {"ops": w.ops.pk, "k": k, "perf": w.field.pk, "ver": w.field2.pk},
-    )
-    # Slice 7 (EM ruling 1): the departure trigger asserts the settings lock; take it SHARED first.
-    cur.execute("SELECT pg_advisory_xact_lock_shared(64942988919)")
-    cur.execute(
-        """
-        INSERT INTO readiness_departureevent (guard_snapshot, authorization_id, recorded_by_id, robot_id, visit_id)
-        SELECT a.guard_snapshot, a.id, %(ops)s, a.robot_id, a.visit_id
-        FROM scale_plan p JOIN scale_auth s ON s.visit_id = p.visit_id
-        JOIN readiness_departureauthorization a ON a.id = s.auth_id
-        WHERE p.k = %(k)s
-        """,
-        {"ops": w.ops.pk, "k": k},
+        {"ops": w.ops.pk, "k": k, "perf": w.field.pk, "ver": w.field2.pk, "lo": lo, "hi": hi},
     )
 
 
