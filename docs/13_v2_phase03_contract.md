@@ -1117,3 +1117,23 @@ final protective rejection, and an update with queued commands.
 **Product debt for the final integrated review (not 03B or 03D blockers):** Today's issue-list pagination filters
 after its limit; plan-form resource labels lead with codes.
 
+
+**EM clarification (2026-11-26, binding):** an empty protective-state snapshot alone never clears a local protective
+report that is unsent or was rejected, because it may never have reached the server.
+- Unsent or sending: the banner stays; the only way out is sending it.
+- Rejected (final): the banner stays as "Not accepted" until an explicit reconciliation, `Q.resolveProtective(key,
+  note)`, allowed only online with a fresh snapshot showing no open protective state. The crew confirms with the ops
+  lead and writes a short note; the row is kept, marked resolved locally.
+- Accepted (confirmed): the banner clears when a snapshot fetched after the confirmation shows no open protective
+  state.
+
+### 15.11 Compressed finish plan (EM 2026-11-26) — feature freeze
+03D (full safety bar) → 04 read-only Operations briefing/assistant (optional; no LLM key → labelled "Operations
+briefing", never called an AI agent; 4 questions, sources linked, 12 fixed scenarios; cut first) → 05 500-robot
+validation (500 robots, 5 hubs, 5,000 visits, mixed states; p95 Hub/Today/Board/Readiness ≤ 2 s, sync-20 ≤ 1 s; three
+rounds; one targeted fix at most; else publish last verified scale) → 06 = 03E + 06 integrated acceptance (12 gates:
+full CI, end-to-end real-browser walkthrough, negative safety, direct-SQL as ops_app, role/hub isolation, offline
+failure injection, clean install, upgrade from Phase 02, backup/restore, no high defects, limitations, EM approval; plus
+the two product-debt fixes) → 07 README, architecture doc, 5–7 min walkthrough, release notes, public demo, tag v2.0.0
+after acceptance. Never cut: DB safety, authorization, offline durability, account isolation, acceptance, migration
+check, release rehearsal.
