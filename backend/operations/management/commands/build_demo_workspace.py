@@ -72,6 +72,8 @@ class Command(BaseCommand):
                 f"Predictor log: {summary.predictor_rows} observation(s). "
                 f"Kit short (its only At-risk cause from the build): {summary.kit_short_visit}."
             )
+        for line in demo.hub_lines(summary):  # v2 03B-3: the three hubs and their attention visits
+            self.stdout.write(line)
         self.stdout.write(f"Demo logins (password: the {demo.PASSWORD_ENV} environment variable):")
         for username, role, note in summary.logins:
             self.stdout.write(f"  {username:16s} {role:17s} {note}")

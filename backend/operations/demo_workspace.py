@@ -257,7 +257,93 @@ SETTINGS = {
     # v2 02D: demo stock thresholds (fictional; labelled on Settings > Operating settings like every setting)
     "stock_minimums": "RK=2,RC=2,WIPE=10,GLOVE=4",
     "stock_per_visit": "RK=1",
+    # v2 03B-3: the next free time search (demo values: a week ahead, visits on site 08:00-20:00; every hub
+    # also gets its own operating hours row with the same value)
+    "dispatch_lookahead_days": "7",
+    "hub_operating_hours": "08:00-20:00",
 }
+# ------------------------------------------------------------------ v2 03B-3: three fictional hubs
+# Zones per hub (code, name) and the hub's own zone (where its vans leave from and return to).
+HUB_ZONES: dict[str, list[tuple[str, str]]] = {
+    "OAK": [("DT", "Downtown"), ("HILLS", "East Bay hills"), ("LM", "Lake Merritt")],
+    "SJC": [("WG", "Willow Glen"), ("CAM", "Campbell"), ("SC", "Santa Clara")],
+    "SRF": [("SR", "San Rafael"), ("MV", "Mill Valley"), ("NOV", "Novato")],
+}
+HUB_HOME_ZONE = {"OAK": "DT", "SJC": "WG", "SRF": "SR"}
+# The travel matrix, ordered pairs (from, to) -> minutes. DEMO VALUES (source 'demo', labelled so on every
+# screen), invented, not measured. Marin's San Rafael -> Novato is deliberately missing: every visit to a
+# Novato home is "Travel time unknown" (blocked, never estimated: the fail-closed travel rule).
+DEMO_TRAVEL: dict[str, dict[tuple[str, str], int]] = {
+    "OAK": {("DT", "DT"): 15, ("DT", "LM"): 20, ("DT", "HILLS"): 35, ("LM", "DT"): 20, ("LM", "LM"): 10,
+            ("LM", "HILLS"): 30, ("HILLS", "DT"): 30, ("HILLS", "LM"): 30, ("HILLS", "HILLS"): 15},
+    "SJC": {("WG", "WG"): 15, ("WG", "CAM"): 25, ("WG", "SC"): 30, ("CAM", "WG"): 25, ("CAM", "CAM"): 15,
+            ("CAM", "SC"): 30, ("SC", "WG"): 35, ("SC", "CAM"): 30, ("SC", "SC"): 15},
+    "SRF": {("SR", "SR"): 15, ("SR", "MV"): 30, ("MV", "SR"): 30, ("MV", "MV"): 15, ("MV", "NOV"): 45,
+            ("NOV", "MV"): 45, ("NOV", "NOV"): 15, ("NOV", "SR"): 35},
+}  # fmt: skip
+UNKNOWN_PAIR = ("SRF", "SR", "NOV")
+# Oakland's towns by zone. San Ramon and Fremont are outside the zoned area for now: their homes keep the
+# travel minutes recorded on each visit ("Legacy travel estimate", EM 03B closure A).
+OAK_TOWN_ZONE = {
+    **dict.fromkeys(
+        ("Oakland", "Emeryville", "Alameda", "Berkeley", "Albany", "El Cerrito", "Richmond"), "DT"
+    ),
+    **dict.fromkeys(("Piedmont", "San Leandro", "Hayward"), "LM"),
+    **dict.fromkeys(("Castro Valley", "Orinda", "Lafayette", "Walnut Creek"), "HILLS"),
+}
+LEGACY_TOWNS = ("San Ramon", "Fremont")
+
+
+@dataclass(frozen=True)
+class RegionHub:
+    """A hub added in 03B-3: South Bay (SJC) and Marin (SRF)."""
+
+    code: str
+    name: str
+    area: str
+    robots: tuple[str, ...]  # registered here
+    # (username, roles at this hub, person code, note)
+    logins: tuple[tuple[str, tuple[str, ...], str, str], ...]
+    crews: tuple[tuple[str, str, str, str], ...]  # (name, lead, second, vehicle)
+    homes: tuple[tuple[str, str, str], ...]  # (code, town, zone code)
+    slots: tuple[tuple[dtime, int], ...]  # morning and afternoon waves (local start, minutes on site)
+
+
+REGION_HUBS: tuple[RegionHub, ...] = (
+    RegionHub(
+        "SJC", "South Bay hub", "San Jose",
+        tuple(f"NB-{n}" for n in range(201, 230)),  # 29 here + 1 received from Oakland = 30
+        (("nora.castillo", ("field_operator", "hub_technician"), "P-210", "South Bay hub technician"),
+         ("luis.romero", ("field_operator",), "P-211", "South Bay crew D lead"),
+         ("grace.chen", ("field_operator",), "P-212", "South Bay crew D"),
+         ("derek.osei", ("field_operator",), "P-221", "South Bay crew E lead"),
+         ("maya.patel", ("field_operator",), "P-222", "South Bay crew E")),
+        (("D", "P-211", "P-212", "VAN-5"), ("E", "P-221", "P-222", "VAN-6")),
+        (("H-201", "Willow Glen", "WG"), ("H-202", "Willow Glen", "WG"), ("H-203", "Campbell", "CAM"),
+         ("H-204", "Campbell", "CAM"), ("H-205", "Santa Clara", "SC"), ("H-206", "Santa Clara", "SC"),
+         ("H-207", "Willow Glen", "WG"), ("H-208", "Campbell", "CAM")),
+        ((dtime(8, 30), 120), (dtime(13, 0), 90)),  # suburban and morning-heavy
+    ),
+    RegionHub(
+        "SRF", "Marin hub", "San Rafael",
+        tuple(f"NB-{n}" for n in range(301, 321)),
+        (("ivan.petrov", ("field_operator", "hub_technician", "safety_pause"), "P-310",
+          "Marin hub technician (may pause departures at Marin)"),
+         ("sofia.alvarez", ("field_operator",), "P-311", "Marin crew F lead"),
+         ("ben.carter", ("field_operator",), "P-312", "Marin crew F")),
+        (("F", "P-311", "P-312", "VAN-7"),),
+        (("H-301", "San Rafael", "SR"), ("H-302", "San Rafael", "SR"), ("H-303", "Mill Valley", "MV"),
+         ("H-304", "Mill Valley", "MV"), ("H-305", "San Rafael", "SR"), ("H-306", "Novato", "NOV")),
+        ((dtime(10, 0), 90), (dtime(14, 30), 90)),  # small, hilly, long drives
+    ),
+)  # fmt: skip
+REGION_DAYS = 4  # South Bay and Marin are booked from today to three days ahead
+SOUTH_BAY_EVENING = dtime(18, 0)  # crew D's evening visit tomorrow (Oakland has its own evening slot)
+AWAY_MINUTES = 180  # the South Bay visit that has its robot out today (afternoon wave)
+TRAVEL_UNKNOWN_HOME = "H-306"  # Novato: San Rafael -> Novato has no value
+PAUSE_REASON = "Street fair closes the roads around the lake"
+LIFT_REASON = "Street fair is over and the roads are open again"
+
 # Visit slots (local on-site start, minutes on site). Two per crew per day never overlap (crew shift: from the
 # inspection 50 min + travel before arrival to the unloading 20 min + travel after leaving).
 SLOTS = [(dtime(9, 30), 90), (dtime(14, 0), 90)]
@@ -437,6 +523,11 @@ class Summary:
     overdue_robot: str = ""
     predictor_rows: int = 0
     kit_short_visit: str = ""
+    # v2 03B-3: the robot moved to South Bay (robot, transfer), the South Bay run out today (visit, run,
+    # robot) and the attention visit of each hub
+    transferred: tuple[str, str] | None = None
+    away: tuple[str, str, str] | None = None
+    attention: dict[str, str] = field(default_factory=dict)
 
 
 def workspace_today() -> date:
@@ -662,7 +753,7 @@ class _Builder:
                 self.inspect(code)
         self.lap("robots")
 
-    def inspect(self, robot: str, answers: dict[str, str] | None = None) -> str:
+    def inspect(self, robot: str, answers: dict[str, str] | None = None, performer: str = "") -> str:
         """A robot inspection by the hub technician and the ops lead, both qualified inspectors."""
         return str(
             fs.submit_inspection(
@@ -670,14 +761,17 @@ class _Builder:
                 robot_code=robot,
                 template_version="T1",
                 answers=answers or dict(ALL_PASS),
-                performer=self.username(HUB_TECH),
+                performer=performer or self.username(HUB_TECH),
                 verifier="dana.ortiz",
             )["entity_id"]
         )
 
     @staticmethod
     def username(person_code: str) -> str:
-        return next(u for u, _r, c, _n in LOGINS if c == person_code)
+        every = [(u, c) for u, _r, c, _n in LOGINS] + [
+            (u, c) for h in REGION_HUBS for u, _r, c, _n in h.logins
+        ]
+        return next(u for u, c in every if c == person_code)
 
     # .............................................................. homes
     def homes(self) -> list[tuple[str, int]]:
@@ -801,8 +895,18 @@ class _Builder:
             self.book(row)
         self.lap(f"past visits ({len(past)}, booked for their planned days; no execution records)")
         booked: list[tuple[dict[str, Any], str]] = []
-        for row in future:
+        # v2 03B-3: a travel value never takes effect in the past (13.4 item 3), so the visits that already
+        # started when the build runs are booked first, before their homes get a zone: they keep their
+        # recorded minutes (legacy). Every later visit of a zoned home uses the demo travel matrix.
+        cut = timezone.now() + timedelta(minutes=10)
+        started = [r for r in future if self.at(r["day"], r["start"]) <= cut]
+        for row in started:
             booked.append((row, self.book(row)))
+        self.oakland_zones()
+        for row in future:
+            if row not in started:
+                booked.append((row, self.book(row)))
+        booked.sort(key=lambda rc: rc[1])
         tomorrow = [(r, c) for r, c in booked if r["offset"] == 1]
         # J4: crew A's first visit tomorrow has a recovery plan; the day's checks are what is left to do.
         _j4_row, j4 = next((r, c) for r, c in tomorrow if r["crew"][0] == "A" and r["slot"] == 0)
@@ -1039,6 +1143,16 @@ class _Builder:
         if len(robots) >= 3:
             hc.record_soc(lily, robot_code=robots[0], soc_pct=94)  # meets the 80% demo minimum
             hc.record_soc(lily, robot_code=robots[1], soc_pct=46)  # below it: needs charge
+            self.s.attention["OAK"] = str(
+                Visit.objects.filter(
+                    current_revision__robot__code=robots[1],
+                    current_revision__on_site_start__gte=self.at(tomorrow, dtime(0, 0)),
+                )
+                .exclude(status="cancelled")
+                .order_by("current_revision__on_site_start")
+                .values_list("code", flat=True)
+                .first()
+            )
             # robots[2] and the rest: nothing recorded today, so the forecast is Unknown
             evening = max(now + timedelta(minutes=10), self.at(self.anchor, dtime(21, 0)))
             hc.reserve_charger(lily, charger_code="C-1", robot_code=robots[1], starts_at=evening,
@@ -1149,6 +1263,347 @@ class _Builder:
             st.reserve(lily, item_code="RC", visit_code=self.s.j4_visit, quantity=1)
         self.lap(f"stock ({len(covered)} restraint kits reserved; {short} is kit short)")
 
+    # .............................................................. v2 03B-3: zones and travel
+    def set_site_zone(self, site_code: str, hub_code: str, zone_code: str) -> None:
+        """The ONE place the demo sets a home's zone (03B-4 may switch it to their guarded function)."""
+        from planning import zones  # noqa: PLC0415
+
+        zones.set_site_zone(self.u["dana.ortiz"], site_code=site_code, hub_code=hub_code, zone_code=zone_code)
+
+    def hub_zones(self, hub_code: str) -> None:
+        """The hub's zones, its own zone and its demo travel matrix (source 'demo', effective now: a travel
+        value never takes effect in the past)."""
+        from planning import travel, zones  # noqa: PLC0415
+        from platform_core.models import Zone  # noqa: PLC0415
+
+        ops = self.u["dana.ortiz"]
+        for code, name in HUB_ZONES[hub_code]:
+            zones.create_zone(ops, hub_code=hub_code, code=code, name=name)
+        zones.set_hub_home_zone(ops, hub_code=hub_code, zone_code=HUB_HOME_ZONE[hub_code])
+        ids = dict(Zone.objects.filter(hub__code=hub_code).values_list("code", "pk"))
+        for (a, b), minutes in DEMO_TRAVEL[hub_code].items():
+            travel.set_travel_time(
+                ops, from_zone_id=ids[a], to_zone_id=ids[b], minutes=minutes, source="demo"
+            )
+
+    def oakland_zones(self) -> None:
+        self.hub_zones("OAK")
+        for site_code, town in Site.objects.filter(code__startswith="H-").values_list("code", "zone"):
+            if town in OAK_TOWN_ZONE:
+                self.set_site_zone(site_code, "OAK", OAK_TOWN_ZONE[town])
+        self.lap("Oakland zones and demo travel matrix")
+
+    # .............................................................. v2 03B-3: South Bay and Marin
+    def regions(self) -> None:
+        """South Bay (SJC) and Marin (SRF), through the same guarded commands as Oakland: hubs, logins with
+        hub-scoped grants, crews, vans, robots (inspected today, maintenance baselines today), zones and the
+        demo travel matrix, homes with an explicit zone, a robot received by transfer from Oakland, a morning
+        and an afternoon wave per crew from today to three days ahead, an evening visit, one attention visit
+        per hub and a lifted zone pause at Oakland."""
+        admin, ops, safety = self.u["priya.raman"], self.u["dana.ortiz"], self.u["elena.vasquez"]
+        encoded = make_password(self.password)
+        start = self.at(self.anchor - timedelta(days=120), dtime(0, 0))
+        end = self.at(self.anchor + timedelta(days=240), dtime(0, 0))
+        for h in REGION_HUBS:
+            create_hub(admin, code=h.code, name=h.name, area=h.area, time_zone=TZ)
+            for username, roles, person, note in h.logins:
+                first, _, last = username.partition(".")
+                self.u[username] = User.objects.create(
+                    username=username,
+                    password=encoded,
+                    first_name=first.capitalize(),
+                    last_name=last.capitalize(),
+                )
+                for role in roles:
+                    grant_role(admin, user_id=self.u[username].pk, role=role, hub_code=h.code)
+                self.s.logins.append((username, " + ".join(roles) + f" @{h.code}", note))
+                ps.register_person(ops, username=username, code=person, hub_code=h.code)
+                ps.grant_qualification(
+                    safety,
+                    person_code=person,
+                    kind="readiness_inspector",
+                    valid_from=None,
+                    valid_to=end,
+                    basis_ref=f"TRN-2026-{person[2:]}",
+                )
+            tech_user, tech_code = h.logins[0][0], h.logins[0][2]
+            ps.grant_qualification(
+                safety,
+                person_code=tech_code,
+                kind="maintenance_technician",
+                valid_from=None,
+                valid_to=end,
+                basis_ref=f"TRN-MNT-2026-{tech_code[2:]}",
+            )
+            for _name, lead, second, van in h.crews:
+                for kind in ("field_lead", "robot_handler"):
+                    ps.grant_qualification(ops, person_code=lead, kind=kind, valid_from=start, valid_to=end)
+                for kind in ("field_operator", "robot_handler"):
+                    ps.grant_qualification(ops, person_code=second, kind=kind, valid_from=start, valid_to=end)
+                ps.register_vehicle(
+                    ops, code=van, robot_capacity=1, restraint_kit="Seat rail and strap kit", hub_code=h.code
+                )
+            self.region_robots(h, tech_user)
+            self.hub_zones(h.code)
+            self.region_homes(h, tech_user)
+            # v2 03B-3: the operating hours of every hub (demo value, owner setting, like the other settings)
+        for code in ("OAK", *(h.code for h in REGION_HUBS)):
+            DeploymentSetting.objects.update_or_create(
+                key="hub_operating_hours", hub=Hub.objects.get(code=code), defaults={"value": "08:00-20:00"}
+            )
+        self.lap("South Bay and Marin: hubs, people, robots, zones, homes")
+        self.transfer_to_south_bay()
+        self.region_visits()
+        self.pause_history()
+
+    def region_robots(self, h: RegionHub, tech: str) -> None:
+        ops, lead, eng = self.u["dana.ortiz"], self.u["kenji.watanabe"], self.u["sam.keller"]
+        for i, code in enumerate(h.robots):
+            n = int(code[3:])
+            fs.register_robot(ops, code=code, serial=f"NBH2-{25 + i // 30}-{4000 + n * 7}", hub_code=h.code)
+            fs.record_manifest(
+                eng,
+                robot_code=code,
+                pattern_code=PATTERN_HOME,
+                autonomy_version="nav-7.2",
+                safety_config_hash=f"{n % 256:02x}" * 32,
+                calibration_ref=f"CAL-{n:03d}",
+            )
+            fs.transition_lifecycle(lead, robot_code=code, to="validation", reason="Commissioning finished")
+            fs.transition_lifecycle(lead, robot_code=code, to="in_service", reason="Validation passed")
+            fs.grant_base_authorization(lead, robot_code=code)
+            for req, *_rest in MAINTENANCE_RULES:
+                fm.record_maintenance(
+                    self.u[tech], robot_code=code, requirement_code=req, notes="Baseline at go-live"
+                )
+            self.inspect(code, performer=tech)
+
+    def region_homes(self, h: RegionHub, tech: str) -> None:
+        ops, field_user = self.u["dana.ortiz"], self.u[tech]
+        until = self.anchor + timedelta(days=180)
+        for i, (code, town, zone) in enumerate(h.homes):
+            adults = 1 + (i % 2)
+            ps.create_site(
+                ops,
+                code=code,
+                zone=town,
+                tz=TZ,
+                crm_ref=f"CRM-{51000 + int(code[2:]) * 7}",
+                expected_adults=adults,
+            )
+            self.set_site_zone(code, h.code, zone)  # every new home has an explicit zone
+            a = ps.record_assessment(field_user, site_code=code, decision="eligible", valid_until=until)
+            ps.approve_assessment(ops, assessment_id=int(a["entity_id"]))
+            for n in range(1, adults + 1):
+                ps.record_consent(
+                    field_user,
+                    site_code=code,
+                    participant_ref=f"A{n}",
+                    form_version=SETTINGS["consent_form_version"],
+                    scope=["presence", "recording"],
+                    evidence_ref=f"SIGN-{code}-{n}",
+                )
+
+    def transfer_to_south_bay(self) -> None:
+        """One Oakland robot moves to South Bay through the real transfer functions: sent by Oakland's hub
+        technician, received by South Bay's. Stamped now (a transfer cannot be back-dated to yesterday). The
+        robot is one of Oakland's with no booking from now on and no role in the Hub day facts."""
+        from fleet import transfers as tr  # noqa: PLC0415
+        from planning.models import Reservation  # noqa: PLC0415
+        from platform_core.commands import CommandError  # noqa: PLC0415
+
+        busy = set(
+            Reservation.objects.filter(released_at__isnull=True, ends_at__gt=timezone.now()).values_list(
+                "resource__robot__code", flat=True
+            )
+        )
+        skip = {self.s.due_soon_robot, self.s.overdue_robot, *busy}
+        for code in [c for c in reversed(self.pool) if c not in skip] + ["NB-049"]:
+            try:
+                t = tr.start_transfer(
+                    self.u["lily.tran"],
+                    kind="robot",
+                    code=code,
+                    to_hub_code="SJC",
+                    reason="South Bay needs one more robot for its morning wave",
+                )
+            except CommandError:
+                continue
+            tr.receive_transfer(self.u["nora.castillo"], transfer_id=int(t["id"]))
+            self.s.transferred = (code, str(t["code"]))
+            break
+        self.lap("transfer Oakland -> South Bay")
+
+    def region_book(
+        self,
+        hub: str,
+        home: str,
+        day: date,
+        start: dtime,
+        minutes: int,
+        crew: tuple[str, ...],
+        robot: str,
+        *,
+        confirm: bool = True,
+    ) -> str:
+        ops = self.u["dana.ortiz"]
+        on_site = self.at(day, start)
+        code = str(
+            ps.request_visit(
+                ops,
+                site_code=home,
+                on_site_start=on_site,
+                on_site_end=on_site + timedelta(minutes=minutes),
+                tasks=["tidy", "laundry"],
+                required_scopes=["presence"],
+                hub_code=hub,
+            )["entity_id"]
+        )
+        out = ps.plan_visit(
+            ops,
+            visit_code=code,
+            robot_code=robot,
+            lead_code=crew[1],
+            second_code=crew[2],
+            vehicle_code=crew[3],
+        )
+        if confirm and out["feasibility"] == "feasible":
+            ps.confirm_visit(ops, visit_code=code)
+        return code
+
+    def region_visits(self) -> None:
+        """A morning and an afternoon wave per crew, today to three days ahead (Sundays off except today and
+        tomorrow); robots in rotation, never twice a day. South Bay: crew D's evening visit tomorrow; the
+        robot out on a run today (At risk tomorrow). Marin: the Novato visit (travel unknown, blocked)."""
+        today, tomorrow = self.anchor, self.anchor + timedelta(days=1)
+        transferred = self.s.transferred[0] if self.s.transferred else ""
+        sjc, srf = REGION_HUBS
+        away_robot = sjc.robots[0]
+        # the away run is crew D's afternoon wave today, or tomorrow's when the build runs after it started
+        away_day = 0 if timezone.now() + timedelta(minutes=40) <= self.at(today, sjc.slots[1][0]) else 1
+        for h in REGION_HUBS:
+            homes = [x[0] for x in h.homes if x[0] != TRAVEL_UNKNOWN_HOME]
+            robots = [r for r in h.robots if r != away_robot]
+            if h.code == "SJC" and transferred:
+                robots.insert(3, transferred)
+            k = 0
+            used: dict[date, set[str]] = {}
+            for offset in range(REGION_DAYS):
+                day = today + timedelta(days=offset)
+                if day.weekday() == 6 and offset not in (0, 1):
+                    continue
+                for c, crew in enumerate(h.crews):
+                    for slot, (start, minutes) in enumerate(h.slots):
+                        if h.code == "SJC" and offset == away_day and c == 0 and slot == 1:
+                            continue  # crew D's afternoon wave of that day is the away run (below)
+                        if h.code == "SJC" and offset == away_day + 1 and c == 0 and slot == 0:
+                            continue  # crew D's next morning is the At-risk visit (below)
+                        if self.at(day, start) <= timezone.now() + timedelta(minutes=10):
+                            continue  # already started: the demo travel values only take effect now
+                        robot = robots[k % len(robots)]
+                        home = homes[(offset * 3 + c * 2 + slot) % len(homes)]
+                        k += 1
+                        used.setdefault(day, set()).add(robot)
+                        self.region_book(h.code, home, day, start, minutes, crew, robot)
+            if h.code == "SJC":
+                # crew D's evening visit tomorrow (after their afternoon wave is unloaded), a robot not out
+                # tomorrow
+                evening = next(r for r in robots if r not in used.get(tomorrow, set()))
+                self.region_book("SJC", "H-207", tomorrow, SOUTH_BAY_EVENING, 60, h.crews[0], evening)
+        crew_d = sjc.crews[0]
+        self.away_run(away_robot, crew_d, away_day)
+        # Marin: a request for the Novato home; San Rafael -> Novato has no travel value, so the plan check
+        # blocks it ("Travel time unknown"), never estimated
+        crew_f = srf.crews[0]
+        self.s.attention["SRF"] = self.region_book(
+            "SRF", TRAVEL_UNKNOWN_HOME, tomorrow, dtime(16, 30), 60, crew_f, srf.robots[-1], confirm=False
+        )
+        self.region_battery_readings()
+        self.lap("South Bay and Marin visits")
+
+    def region_battery_readings(self) -> None:
+        """South Bay's and Marin's technicians read the battery of every robot booked from now to the end of
+        tomorrow by hand (stamped now; a reading is never departure evidence): the charge forecast says
+        Enough, so each new hub's only attention visit is the one built for it."""
+        from hub import charging as hc  # noqa: PLC0415
+
+        until = self.at(self.anchor + timedelta(days=2), dtime(0, 0))
+        for h in REGION_HUBS:
+            booked = (
+                Visit.objects.filter(
+                    hub__code=h.code,
+                    current_revision__on_site_start__gte=timezone.now(),
+                    current_revision__on_site_start__lt=until,
+                    current_revision__robot__isnull=False,
+                )
+                .exclude(status="cancelled")
+                .exclude(current_revision__robot__code=self.s.away[2] if self.s.away else "")
+                .order_by("current_revision__robot__code")
+                .values_list("current_revision__robot__code", flat=True)
+                .distinct()
+            )
+            for robot in booked:
+                hc.record_soc(self.u[h.logins[0][0]], robot_code=robot, soc_pct=90)
+
+    def away_run(self, robot: str, crew: tuple[str, ...], away_day: int) -> None:
+        """The robot of crew D's afternoon visit today departs now and stays out (no return recorded): its
+        visit tomorrow morning is planned as "At risk: robot away until verified back at hub" (section 12).
+        Every record is stamped at the build (database time), like the practice runs; nothing is back-dated.
+        When the build runs after the afternoon wave has started, the run is for tomorrow's afternoon wave and
+        the At-risk visit the morning after, so the run's reserved window never ends before the walk (an
+        ended window would be an overdue return)."""
+        from execution import logistics as lg  # noqa: PLC0415
+        from execution.models import ExecutionRun  # noqa: PLC0415
+        from hub import charging as hc  # noqa: PLC0415
+        from readiness import commands as rc  # noqa: PLC0415
+
+        ops = self.u["dana.ortiz"]
+        today = self.anchor
+        _name, lead_code, second_code, _van = crew
+        lead, second = self.username(lead_code), self.username(second_code)
+        run_day = today + timedelta(days=away_day)
+        risk_day = run_day + timedelta(days=1)
+        on_site = self.at(run_day, REGION_HUBS[0].slots[1][0]).astimezone(ZoneInfo(TZ))
+        visit = self.region_book("SJC", "H-203", on_site.date(), on_site.time(), AWAY_MINUTES, crew, robot)
+        self.recovery_plan(visit)
+        insp = fs.submit_inspection(
+            ops,
+            robot_code=robot,
+            template_version="T1",
+            answers=dict(ALL_PASS),
+            performer=lead,
+            verifier=second,
+            visit_ref=visit,
+        )["entity_id"]
+        rx.record_evidence(
+            ops, visit_code=visit, kind="pre_departure_inspection", result="pass", inspection_code=insp
+        )
+        rx.record_evidence(
+            self.u[second], visit_code=visit, kind="equipment_check", result="pass", details=EQUIPMENT
+        )
+        hc.record_soc(self.u["nora.castillo"], robot_code=robot, soc_pct=95)
+        rx.record_evidence(
+            self.u[second], visit_code=visit, kind="battery_check", result="pass", details={"soc_pct": 95}
+        )
+        auth = rc.authorize_departure(ops, visit_code=visit)["code"]
+        rc.record_departure(ops, authorization_code=auth)
+        run = ExecutionRun.objects.get(visit__code=visit)
+        lg.verify_custody(self.u[lead], run_code=run.code, custody_seq=1, verifier_code=lead_code)
+        self.s.away = (visit, run.code, robot)
+        self.s.attention["SJC"] = self.region_book(
+            "SJC", "H-201", risk_day, REGION_HUBS[0].slots[0][0], REGION_HUBS[0].slots[0][1], crew, robot
+        )
+
+    def pause_history(self) -> None:
+        """A zone pause at Oakland (Lake Merritt), paused and lifted by the ops lead: it stays in the history
+        and the audit log. Stamped now."""
+        from operations import pauses  # noqa: PLC0415
+
+        ops = self.u["dana.ortiz"]
+        p = pauses.pause_region(ops, hub_code="OAK", zone_code="LM", reason=PAUSE_REASON)
+        pauses.lift_pause(ops, pause_id=int(p["entity_id"]), reason=LIFT_REASON)
+        self.lap("pause history (Lake Merritt, paused and lifted)")
+
     def build(self) -> Summary:
         self.company()
         self.configurations()
@@ -1160,6 +1615,7 @@ class _Builder:
         self.hub_tasks()
         self.charging()
         self.stock()
+        self.regions()
         self.predictor_log()
         return self.s
 
@@ -1170,6 +1626,44 @@ class _Builder:
 
         self.s.predictor_rows = log_predictor_signals()
         self.lap("predictor log")
+
+
+def hub_lines(s: Summary) -> list[str]:
+    """v2 03B-3: what each hub holds, with the codes a browser walk needs."""
+    from planning.models import Person, Vehicle  # noqa: PLC0415
+    from platform_core.models import Zone  # noqa: PLC0415
+
+    out = []
+    for hub in Hub.objects.order_by("pk"):
+        zones = ", ".join(Zone.objects.filter(hub=hub).order_by("pk").values_list("name", flat=True))
+        robots = Robot.objects.filter(hub=hub).count()
+        vans = Vehicle.objects.filter(hub=hub, robot_capacity__isnull=False).count()
+        people = Person.objects.filter(hub=hub).count()
+        out.append(
+            f"{hub.name} ({hub.code}): {robots} robots, {vans} crew van{'s' if vans != 1 else ''}, "
+            f"{people} people; zones {zones}."
+        )
+    if s.transferred:
+        out.append(
+            f"  South Bay received robot {s.transferred[0]} from Oakland by transfer {s.transferred[1]} "
+            "(today: a transfer is stamped now, never back-dated)."
+        )
+    if s.away:
+        out.append(
+            f"  South Bay at risk: robot {s.away[2]} is out on run {s.away[1]} (visit {s.away[0]}); its "
+            f"next morning's visit {s.attention.get('SJC', '?')} is At risk (robot away)."
+        )
+    if s.attention.get("SRF"):
+        out.append(
+            f"  Marin blocked: visit {s.attention['SRF']} to a Novato home, travel time San Rafael -> "
+            "Novato unknown (no demo value on purpose)."
+        )
+    if s.attention.get("OAK"):
+        out.append(f"  Oakland at risk: visit {s.attention['OAK']} needs charge before it leaves.")
+    out.append(
+        f"  Pause history: zone Lake Merritt of Oakland hub paused and lifted ({PAUSE_REASON.lower()})."
+    )
+    return out
 
 
 def build(

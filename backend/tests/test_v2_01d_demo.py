@@ -65,7 +65,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 User = get_user_model()
 LA = ZoneInfo("America/Los_Angeles")
 PASSWORD = "demo-test-password-4821"
-BUILD_BUDGET_S = 60
+BUILD_BUDGET_S = 120  # v2 03B-3: three hubs (was 60 for Oakland alone)
 
 
 def _build(*args: str) -> str:
@@ -130,11 +130,16 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         True,
     )
     assert fs.demo_mode()
-    assert Hub.objects.count() == 1 and Hub.objects.get().name == "Oakland hub"
-    assert Robot.objects.count() == 50  # fixture S
-    assert Robot.objects.filter(lifecycle="in_service").count() == 45
+    # v2 03B-3: three hubs; Oakland registers its 50 robots (one later moves to South Bay by transfer)
+    assert list(Hub.objects.order_by("pk").values_list("code", "name")) == [
+        ("OAK", "Oakland hub"), ("SJC", "South Bay hub"), ("SRF", "Marin hub")
+    ]  # fmt: skip
+    assert Robot.objects.count() == 50 + 29 + 20  # fixture S at Oakland, then South Bay and Marin
+    assert Robot.objects.filter(lifecycle="in_service").count() == 45 + 29 + 20
     crews = set(
-        Visit.objects.exclude(current_revision__lead=None).values_list(
+        Visit.objects.filter(hub__code="OAK")
+        .exclude(current_revision__lead=None)
+        .values_list(
             "current_revision__lead__code",
             "current_revision__second__code",
             "current_revision__vehicle__code",
@@ -179,12 +184,15 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         ).values_list("code", flat=True)
     )
     assert len(practice) == 2
+    # v2 03B-3: plus South Bay's run out now (departed at build time, not back: its robot is "away")
+    away = re.search(r"is out on run (EX-\d+) \(visit (V-\d+)\)", out)[2]
+    executed = practice | {away}
     runs = ExecutionRun.objects.select_related("visit")
-    assert {r.visit.code for r in runs} == practice and TripClosure.objects.count() == 2
-    assert set(DepartureAuthorization.objects.values_list("visit__code", flat=True)) == practice
-    assert set(DepartureEvent.objects.values_list("visit__code", flat=True)) == practice
-    assert set(ReadinessEvidence.objects.values_list("visit__code", flat=True)) == practice
-    assert set(CustodyEvent.objects.values_list("run__visit__code", flat=True)) == practice
+    assert {r.visit.code for r in runs} == executed and TripClosure.objects.count() == 2
+    assert set(DepartureAuthorization.objects.values_list("visit__code", flat=True)) == executed
+    assert set(DepartureEvent.objects.values_list("visit__code", flat=True)) == executed
+    assert set(ReadinessEvidence.objects.values_list("visit__code", flat=True)) == executed
+    assert set(CustodyEvent.objects.values_list("run__visit__code", flat=True)) == executed
     stamped = [
         *DepartureEvent.objects.values_list("departed_at", flat=True),
         *TripClosure.objects.values_list("recorded_at", flat=True),
@@ -192,13 +200,14 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
     assert all(timezone.now() - t < timedelta(hours=1) for t in stamped)  # recorded now, not back-dated
     # inspections tied to a visit: only the practice runs' (pre-departure and post-visit); the others are
     # today's robot inspections (periodic eligibility needs them) and the one failed inspection, all now.
-    assert set(Inspection.objects.exclude(visit_ref="").values_list("visit_ref", flat=True)) == practice
+    assert set(Inspection.objects.exclude(visit_ref="").values_list("visit_ref", flat=True)) == executed
     assert {_local_day(i.submitted_at) for i in Inspection.objects.all()} <= {
         frozen_today,
         demo.workspace_today(),
     }
-    # 50 robots minus the never-inspected one, plus the failure, plus 2 per practice run
-    assert Inspection.objects.count() == 49 + 1 + 2 * 2
+    # 50 robots minus the never-inspected one, plus the failure, plus 2 per practice run; v2 03B-3: plus the 49
+    # South Bay and Marin robots and the pre-departure inspection of South Bay's run
+    assert Inspection.objects.count() == 49 + 1 + 2 * 2 + 49 + 1
     # past visits are shown as historical scheduled visits, never as completed or back
     ops = User.objects.get(username="dana.ortiz")
     c = Client()
@@ -300,7 +309,8 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         ("C-1", True), ("C-2", True), ("C-3", True), ("C-4", False)
     ]  # fmt: skip
     # 2 for the forecast + 1 per practice run + 1 for the kit-short visit (02E)
-    readings = list(RobotSocReading.objects.all())
+    # v2 03B-3: Oakland's (South Bay and Marin read their booked robots too)
+    readings = list(RobotSocReading.objects.filter(robot__hub__code="OAK"))
     assert len(readings) == 5 and {r.source for r in readings} == {"manual_reading"}
     assert all(
         timezone.now() - r.observed_at < timedelta(hours=1) for r in readings
@@ -375,7 +385,8 @@ def test_build_from_empty_database_then_reset_rebuilds_the_same_workspace(frozen
         Site.objects.count(),
         Visit.objects.count(),
     ) == counts
-    assert DepartureAuthorization.objects.count() == 2 and ExecutionRun.objects.count() == 2  # practice runs
+    # the practice runs and (v2 03B-3) South Bay's run out
+    assert DepartureAuthorization.objects.count() == 3 and ExecutionRun.objects.count() == 3
     del os.environ[demo.FINGERPRINT_ENV]
     # the wipe never restarts the sequences of the tables it keeps (a later migrate must not collide)
     with connection.cursor() as cur:
