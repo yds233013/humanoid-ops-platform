@@ -12,8 +12,8 @@ binding. Usability with real field crews is UNVERIFIED: every check here was don
 | Diff | `d97a0b2...cdb0154` |
 | Built as | 03D-1 queue module (`0747f08`), 03D-2 interruption code + snapshot API + script serving (`29f4415`, `0bf349a`), 03D-3 run page + service worker + design review (`bcd95f7`, `50acd84`); merged with 05 (`4453c50`, `7539c84`) |
 | Server changes | 15.7 code only; snapshot API is read-only; no migration in 03D |
-| Full CI | CI_RESULT |
-| Perf | PERF_RESULT |
+| Full CI | `3fa3a18` (03D + 05 + 04 merged, plus the browser-test route fix): run 45903935449 success, 2534 passed, 0 failed. Earlier `81f9d9c`: 2533 passed, 1 setup error (Playwright route outliving its test; fixed in `3fa3a18`) |
+| Perf | `cdb0154`: 45895674016, 45895683113, 45895692044, all success; sync-20 p95 533 / 397 / 479 ms (500-robot fixture) |
 
 ## What is built
 
