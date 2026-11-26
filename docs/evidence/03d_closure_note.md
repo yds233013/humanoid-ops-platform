@@ -8,12 +8,12 @@ binding. Usability with real field crews is UNVERIFIED: every check here was don
 
 | Item | Value |
 |---|---|
-| SHA | `cdb0154` |
-| Diff | `d97a0b2...cdb0154` |
+| SHA (accepted for integration, EM 2026-11-26) | `3fa3a18` (03D merged at `cdb0154`, then 05, 04 and the browser-test route fix) |
+| Diff | `d97a0b2...3fa3a18` |
 | Built as | 03D-1 queue module (`0747f08`), 03D-2 interruption code + snapshot API + script serving (`29f4415`, `0bf349a`), 03D-3 run page + service worker + design review (`bcd95f7`, `50acd84`); merged with 05 (`4453c50`, `7539c84`) |
 | Server changes | 15.7 code only; snapshot API is read-only; no migration in 03D |
 | Full CI | `3fa3a18` (03D + 05 + 04 merged, plus the browser-test route fix): run 45903935449 success, 2534 passed, 0 failed. Earlier `81f9d9c`: 2533 passed, 1 setup error (Playwright route outliving its test; fixed in `3fa3a18`) |
-| Perf | `cdb0154`: 45895674016, 45895683113, 45895692044, all success; sync-20 p95 533 / 397 / 479 ms (500-robot fixture) |
+| Perf (component, before 04; final rounds run at the release candidate in Phase 06) | `cdb0154`: 45895674016, 45895683113, 45895692044, all success; sync-20 p95 533 / 397 / 479 ms (500-robot fixture) |
 
 ## What is built
 
@@ -68,8 +68,8 @@ binding. Usability with real field crews is UNVERIFIED: every check here was don
    account-bound snapshot under `page`; no household data.
 8. `ops_lead` grants are regional only, so "ops leads at the hub" are all active ops leads. The ledger sequence is
    per run, shared by devices.
-9. "Confirm with ops lead: robot is safe" needs online + a snapshot after the rejection (UI: under 2 minutes; module:
-   under 5 minutes) showing no open protective state.
+9. "Confirm with ops lead: robot is safe" needs online + a snapshot after the rejection, at most 2 minutes old in both
+   the UI and the module (aligned per EM), showing no open protective state.
 
 ## Known limitations
 
@@ -77,3 +77,10 @@ binding. Usability with real field crews is UNVERIFIED: every check here was don
 - Without Web Locks a crashed tab can block other tabs for up to 30 s (lease length).
 - A sync batch of 20 still runs 631 statements (constant).
 - CI installs Chromium with system dependencies (about a minute per run).
+
+## EM ruling (2026-11-26)
+Accepted for integration at `3fa3a18`. All nine readings above approved, with conditions: missing, duplicate or
+mismatched results never confirm; `next_seq` resets only from authoritative server state and never renumbers existing
+commands; open forms keep their input on reload; global `run.js` never exposes another user's data or syncs without
+authorization; private run responses never enter Cache Storage; regional ops leads are described as regional.
+Freshness limit aligned to 2 minutes in queue.js (test added).

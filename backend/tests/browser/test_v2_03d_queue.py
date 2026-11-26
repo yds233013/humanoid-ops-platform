@@ -489,6 +489,10 @@ def test_a_final_protective_rejection_stays_not_accepted_until_resolved_explicit
     p.evaluate("([run]) => window.saveProtective(12, run, true)", [RUN])
     assert error_name(p, resolve, pr["key"]) == "Error"  # the server still shows it open
     p.evaluate("([run]) => window.saveProtective(12, run, false)", [RUN])
+    # older than the 2-minute limit (EM: one limit in the UI and the module): refused
+    p.evaluate("() => { const real = Date.now; window.__realNow = real; Date.now = () => real() + 121000; }")
+    assert error_name(p, resolve, pr["key"]) == "Error"
+    p.evaluate("() => { Date.now = window.__realNow; }")
     assert error_name(p, resolve, pr["key"]) == "no error"
     assert banner(p) is None
     row = view(p)[0]
