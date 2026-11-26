@@ -56,33 +56,43 @@ A sync batch of 20 commands runs 631 statements, constant.
   - A duplicate incident, pause or interruption creates nothing new.
   - An incident while an earlier ordinary step is missing places the hold at once.
   - A field operator of another hub is refused.
-- **Endpoint** (`tests/test_v2_03c_sync.py`, 50 tests, all over HTTP):
+- **Endpoint** (`tests/test_v2_03c_sync.py`, 64 tests, all over HTTP):
   - Section 6 items 1 to 9 and every 14.8 item-5 failure injection.
   - Authentication is checked first: one fixed 401 body that does not reveal whether a run exists, then CSRF.
   - Ended sessions (password reset, sign-out, deactivation) are refused.
   - Request limits return 413 and 400, and each command runs in its own transaction.
   - An unclassified error returns 500 with nothing stored; a failure during commit returns 503 `OUTCOME_UNKNOWN`.
-  - Response schema snapshot, workspace-zone times, and the ops lead's "last reported unsent count" fragment.
+  - Response schema snapshot (with `final`), workspace-zone times, and the ops lead's "last reported unsent
+    count" fragment.
+  - 14.9: `last_decided_outcome` validation (400), its causal storage, its absence from the digest, and `final`
+    on each kind of answer, including `NOT_PERMITTED` re-checked after access returns.
 
-## Decisions for the EM
+## EM decisions (2026-11-26, recorded in contract 14.9)
 
-1. **Lock order.** The ledger locks the run row first (14.5), before the domain's robot and visit locks.
-   - An online command that holds a robot or visit row, then waits for the run, can deadlock with a field claim.
-     PostgreSQL resolves the deadlock, no partial state is possible, and the field side answers `retry`.
-   - The alternative is a ledger-only lock row taken first, which removes the inversion. Keep the current order, or
-     switch?
-2. **Who can sync a run.** Only a crew member of the run, or an ops lead with a grant at the run's hub. This is
-   narrower than 14.4's "regional": a regional engineer gets `NOT_YOUR_RUN`.
-3. **Protective causal reference.** It holds `last_decided_seq` and `generation`. The outcome of that step as the device
-   saw it (14.8 item 1) has no request field yet; adding one is a schema decision.
-4. **`NOT_YOUR_RUN` response.** It is answered as a whole-request HTTP 403, with no run details, rather than as
-   per-command results.
-5. **Field incident reports.** These are permission-checked at the run's hub, which is stricter than the online
-   report. A protective stop that cannot apply opens an interruption only. Holds come only from incident reports.
-6. **Not stored durably.** `KEY_REUSED`, `NOT_YOUR_RUN` and `NOT_PERMITTED` are not stored, because the writer refuses
-   actors without access. A resend after the grant is restored is checked again.
-7. **Same key on two runs at once.** The second claim fails on the unique key (23505) and answers `retry`. A resend
-   then gets `KEY_REUSED`.
+1. **Lock order.** The ledger locks the run row first (14.5), before the domain's robot and visit locks, so an
+   online command holding a robot or visit row and waiting for the run can deadlock with a field claim
+   (PostgreSQL resolves it; the field side answers `retry`). **Approved fix, by 03C-1:** a ledger-only sync lock
+   taken first, which removes the inversion. Pending until 03C-1 delivers it.
+2. **Who can sync a run. Approved deviation.** A crew member of the run, or an ops lead with a grant at the run's
+   hub. Narrower than 14.4's "regional": a regional engineer gets `NOT_YOUR_RUN`.
+3. **Protective causal reference. Resolved by a schema addition (03C-3).** Each command may carry
+   `last_decided_outcome` (`confirmed`, `rejected`, `abandoned` or null; anything else is HTTP 400): the outcome
+   of `last_decided_seq` as the device saw it. It is stored in the protective command's causal reference as
+   `outcome` and passed to `field_commands.apply`. It is untrusted metadata and is not part of the 9-field identity
+   digest, so a resend that changes only it is a replay. A device that saw a rejection never has that step treated
+   as confirmed: the test applies a protective step whose causal reference says "rejected", checks the stored
+   reference keeps "rejected", and checks that the dependent ordinary step is still refused by the real state.
+4. **`NOT_YOUR_RUN` response. Approved deviation.** A whole-request HTTP 403 with no run details.
+5. **Field incident reports and the protective fallback.** Incident reports are permission-checked at the run's
+   hub. A protective stop that cannot apply opens an interruption only; holds come only from incident reports.
+   **Approved once its boundary is proven, by 03C-2.**
+6. **Not stored durably. Approved deviation, with a qualification.** `KEY_REUSED`, `NOT_YOUR_RUN` and
+   `NOT_PERMITTED` are not stored. Every result now carries `final`: `NOT_PERMITTED` (like `held` and `retry`)
+   has `final=false`, meaning "may change if access changes; keep the step and ask an ops lead", and is re-checked
+   on every resend. Tested: after the grant is restored, the same key applies. Confirmations and other rejections
+   have `final=true`.
+7. **Same key on two runs at once. Approved.** The second claim fails on the unique key and answers `retry`
+   (bounded: nothing is claimed); the resend gets `KEY_REUSED`.
 
 ## Open items
 

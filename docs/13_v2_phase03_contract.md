@@ -907,3 +907,39 @@ under the real `ops_app` role.
 | **03C-1** | Ledger schema, immutable identity, generations and barriers, database privileges, transaction semantics |
 | **03C-2** | Command classification, domain adapters, protective fallback |
 | **03C-3** | Authenticated HTTP endpoint, response contract, device reports, failure-injection tests |
+
+### 14.9 EM 03C closure review 2026-11-26
+
+This section records the deviations from 14.1 to 14.8 that the EM approved at the 03C closure review, and one
+schema addition. It wins over 14.1 to 14.8 where they differ.
+
+**Schema addition: `last_decided_outcome` (request, per command).**
+- Optional and nullable: `"confirmed"`, `"rejected"`, `"abandoned"` or `null`. It is the outcome of
+  `last_decided_seq` **as the device saw it**. Any other value is HTTP 400. A non-null value needs a
+  `last_decided_seq` of 1 or more (it describes a step), otherwise HTTP 400.
+- **Untrusted causal metadata.** It is stored in the protective command's causal reference under the key
+  `outcome` (with `last_decided_seq` and `generation`), and passed to `field_commands.apply(causal=...)` under the
+  same key. It is never read as a confirmation. A device that saw a rejected step never has it treated as
+  confirmed, and no prerequisite is inferred from it: every command re-checks the server state.
+- **Not part of the identity digest.** 14.8 item 2 lists 9 identity fields; this is not one of them. A resend that
+  changes only `last_decided_outcome` is a replay of the stored outcome (and stored causal reference), never
+  `KEY_REUSED`.
+- On the ordinary channel it is validated but not stored (the ledger keeps a causal reference for protective
+  commands only, 14.8 item 1).
+
+**Response addition: `final` (every result).**
+- `true`: the answer for this key never changes: `confirmed`, and every rejection that will not be revisited
+  (durable rejections, and `KEY_REUSED`).
+- `false`: the answer may change without the phone changing anything: `held`, `retry`, and `NOT_PERMITTED`.
+  For `NOT_PERMITTED`, `final=false` means **"may change if access changes; keep the step and ask an ops lead"**.
+
+**Approved deviations** (numbers as in the 03C closure note, `docs/evidence/03c_closure_note.md`):
+
+| # | Deviation | Instead of |
+|---|---|---|
+| 2 | Sync is open to a crew member of the run, or an ops lead with a grant at the run's hub (regional or that hub's). A regional actor who is neither gets `NOT_YOUR_RUN`. | 14.4: any regional actor |
+| 4 | `NOT_YOUR_RUN` is one whole-request HTTP 403 with no run details, the same body for a missing run, no device report and no command-history write. | Per-command results |
+| 6 | `KEY_REUSED`, `NOT_YOUR_RUN` and `NOT_PERMITTED` are answered but not stored durably (the writer refuses actors without access). `NOT_PERMITTED` carries `final=false` and is re-checked on every resend; once the grant is restored, the same key applies. | Every rejection durable (14.1) |
+| 7 | The same key claimed on two runs at once: the second claim fails on the unique key and answers `retry` (bounded: nothing is claimed); the resend then gets `KEY_REUSED`. | — |
+| Lock | The ledger's run-row lock taken before the domain's robot and visit locks inverts the global lock order. Fix by 03C-1: a ledger-only sync lock taken first, so the field claim no longer holds the run row ahead of the domain's locks. | 14.5 "the run row FOR UPDATE first" |
+| Protective fallback | A protective pause or stop the session state does not allow records an interruption only (it blocks start and resume; holds come only from incident reports). Approved once its boundary is proven, by 03C-2. | 14.2 "places a hold where the incident rules call for one" |
