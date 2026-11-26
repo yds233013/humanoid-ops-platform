@@ -8,6 +8,10 @@ ENGINEERING_LEAD = "engineering_lead"
 SAFETY_REVIEWER = "safety_reviewer"
 FOUNDER = "founder"
 HUB_TECHNICIAN = "hub_technician"  # v2 02A: the hub work queue only (contract 11, 8.6)
+# v2 03B-1 (docs/13_v2_phase03_contract.md 13.4 item 1): a separately granted safety authority held AT ONE
+# HUB. It may PAUSE new departures at that hub (or one of its zones) and nothing else: it can never lift a
+# pause, and a general hub grant (hub technician, field operator) never confers it.
+SAFETY_PAUSE = "safety_pause"
 
 ALL_ROLES = [
     ADMIN,
@@ -18,12 +22,13 @@ ALL_ROLES = [
     SAFETY_REVIEWER,
     FOUNDER,
     HUB_TECHNICIAN,
+    SAFETY_PAUSE,
 ]
 
 # v2 03A-1 (docs/13_v2_phase03_contract.md 11.2): roles held AT ONE HUB. A grant of one of these roles must
 # name its hub (check constraint role_grant_hub_scope); every other role is regional (hub NULL). A
 # person's home hub never confers a grant.
-HUB_SCOPED_ROLES = (HUB_TECHNICIAN, FIELD_OPERATOR)
+HUB_SCOPED_ROLES = (HUB_TECHNICIAN, FIELD_OPERATOR, SAFETY_PAUSE)
 
 # permission -> roles allowed. Slice 1+ add domain permissions here.
 PERMISSIONS: dict[str, set[str]] = {
@@ -89,6 +94,9 @@ PERMISSIONS: dict[str, set[str]] = {
     "planning.revoke_inspector_qualification": {OPS_LEAD, SAFETY_REVIEWER, ENGINEERING_LEAD},
     "planning.manage_vehicles": {OPS_LEAD},
     "planning.plan": {OPS_LEAD},
+    # v2 03B-1: zones per hub (setup data) and the versioned travel matrix (re-checked in the database)
+    "planning.manage_zones": {ADMIN, OPS_LEAD},
+    "planning.set_travel_time": {ADMIN, OPS_LEAD},
     "planning.confirm": {OPS_LEAD},
     # Slice 3: deployment readiness and departure authorization
     "readiness.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
@@ -126,6 +134,10 @@ PERMISSIONS: dict[str, set[str]] = {
     # Slice 5: operations command center (read-only)
     "operations.read": {OPS_LEAD, FIELD_OPERATOR, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
     "operations.metrics": {OPS_LEAD, ENGINEERING_LEAD, SAFETY_REVIEWER, FOUNDER},
+    # v2 03B-1 regional pause (13.4 item 1, 13.5): pause = the regional ops lead or a safety_pause grant AT
+    # the hub; lift = the regional ops lead only. operations_pause_region / operations_lift_pause re-check.
+    "operations.pause": {OPS_LEAD, SAFETY_PAUSE},
+    "operations.lift_pause": {OPS_LEAD},
     # v2 02A: hub work queue (docs/11_v2_phase02_contract.md 8.6). Work orders are operational, not evidence.
     # Open the Hub page: everyone in the matrix's "View Hub queue" row (a field operator sees own tasks only).
     "hub.view": {HUB_TECHNICIAN, FIELD_OPERATOR, OPS_LEAD, ENGINEER, ENGINEERING_LEAD, SAFETY_REVIEWER},

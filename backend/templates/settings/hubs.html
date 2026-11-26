@@ -2,8 +2,8 @@
 {% block title %}Hubs{% endblock %}
 {% block content %}
 {% page_header title="Hubs" back_url="/settings/setup/" back_label="Workspace setup" %}Where robots, vehicles and crews are based.{% endpage_header %}
-{% if hubs %}<div class="tablewrap"><table><thead><tr><th>Code</th><th>Name</th><th>Area</th><th>Time zone</th></tr></thead><tbody>
-{% for h in hubs %}<tr><td><b>{{ h.code }}</b></td><td>{{ h.name }}</td><td>{{ h.area|default:"-" }}</td><td>{{ h.time_zone }}</td></tr>{% endfor %}</tbody></table></div>
-<a class="btn primary" href="/settings/hubs/new/">Add a hub</a>
+{% if hubs %}<div class="tablewrap"><table><thead><tr><th>Code</th><th>Name</th><th>Area</th><th>Time zone</th><th>Zones</th></tr></thead><tbody>
+{% for h in hubs %}<tr><td><b>{{ h.code }}</b></td><td>{{ h.name }}</td><td>{{ h.area|default:"-" }}</td><td>{{ h.time_zone }}</td><td><a href="/settings/hubs/{{ h.code }}/zones/">Zones</a></td></tr>{% endfor %}</tbody></table></div>
+<div class="row"><a class="btn primary" href="/settings/hubs/new/">Add a hub</a><a class="btn" href="/settings/travel-times/">Travel times</a></div>
 {% else %}{% include "ui/empty.html" with title="No hubs yet" text="Add your first hub, the place your robots and crews start from." %}<p style="text-align:center"><a class="btn primary" href="/settings/hubs/new/">Add a hub</a></p>{% endif %}
 {% endblock %}

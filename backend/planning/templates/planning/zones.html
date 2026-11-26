@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Zones{% endblock %}
+{% block content %}
+{% page_header title=page_title back_url="/settings/hubs/" back_label="Hubs" %}Areas of homes that {{ hub.name }} ({{ hub.code }}) serves. A visit takes its home's zone; travel times are set per pair of zones.{% endpage_header %}
+<section class="card">
+{% if zones %}<div class="tablewrap"><table><thead><tr><th>Name</th><th>Code</th><th>Status</th><th></th></tr></thead><tbody>
+{% for z in zones %}<tr data-zone="{{ z.code }}"><td><b>{{ z.name }}</b>{% if z.pk == hub.home_zone_id %} <span class="muted">· the hub's own zone</span>{% endif %}</td><td class="muted">{{ z.code }}</td>
+<td>{% if z.active %}{% chip "neutral" "Active" %}{% else %}{% chip "warn" "Retired" %} <span class="muted">history kept; not used for new visits</span>{% endif %}</td>
+<td>{% if z.active %}<a class="btn" href="/settings/hubs/{{ hub.code }}/zones/{{ z.code }}/retire/">Retire</a>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>
+{% if not hub.home_zone_id %}<p class="pb at_risk"><b>▲ The hub's own zone is unknown.</b> Trips from {{ hub.name }} to a zoned home read "Travel time unknown" until it is set.</p>{% endif %}
+{% else %}{% include "ui/empty.html" with title="No zones yet" text=" Add the areas this hub serves. Homes without a zone keep their own travel minutes." %}{% endif %}
+<div class="row"><a class="btn primary" href="/settings/hubs/{{ hub.code }}/zones/new/">Add a zone</a>{% if zones %}<a class="btn" href="/settings/hubs/{{ hub.code }}/zones/home/">The hub's own zone</a>{% endif %}<a class="btn" href="/settings/travel-times/?hub={{ hub.code }}">Travel times</a></div>
+</section>
+{% endblock %}

@@ -59,3 +59,62 @@ A deadlock needs a cycle in the waits-for graph. Each pair that shares a resourc
 In the transfer-vs-authorization "transfer first" order the transfer side is the transfer's own lock step
 (`fleet_transfer_lock_asset`) and internal start step, held by the owner: the public `fleet_transfer_start`
 refuses a booked robot by design, and an authorization needs a booking.
+
+## 4. 03B-1: regional pause, travel matrix and visit scope changes (contract 13.4 item 2, 13.5)
+
+Binding order (13.4 item 2): **the settings lock first, then the hub row** (`platform_core_hub`, by ascending id
+when there are two). Gates take the hub **S**; pause and lift take it **U**. 13.2 said "hub row, then the settings
+lock"; 13.4 wins and is what is built (operations/0011). **H** = a `platform_core_hub` row.
+
+| Participant | Locks, in the order taken | Defined in |
+|---|---|---|
+| **Pause** `operations_pause_region` | actor pre-check (no lock) -> **Sh** -> hub **U** -> the actor's grants **S** (`hub_actor_has_at`) -> INSERT (FK key-share on hub, zone, user) + audit | operations/0011 |
+| **Lift** `operations_lift_pause` | actor pre-check -> **Sh** -> the pause row read (append-only, no lock) -> its hub **U** -> grants **S** -> INSERT + audit | operations/0011 |
+| **Authorization gate** (trigger `readiness_pause_gate` on `readiness_departureauthorization`, fired by `readiness_issue_authorization`) | the function's own order (**Sh** -> snapshot guards -> visit S -> policies S) -> **Sh** again (re-entrant) -> visit **S** (re-entrant) -> dispatch hub and destination-zone hub **S**, ascending -> check in a fresh statement | readiness/0007, operations/0011 |
+| **Departure gate** (trigger `readiness_pause_gate` on `readiness_departureevent`) | `record_departure`'s order (grants S -> **Sh** -> site S -> pattern S -> robot U -> persons S -> vehicle S -> visit U -> trip U, then the C3 trigger re-locks them) -> **Sh** -> visit **S** -> hubs **S** -> check | execution/0007, operations/0011 |
+| **Visit hub or zone change** (trigger `visit_pause_scope_lock`, BEFORE UPDATE OF hub_id, zone_id when either changes) | the updater's locks (plan_visit: grants S -> **Sh** -> site S -> pattern S -> robot U -> persons U -> vehicle U -> visit U) -> **Sh** -> old and new hub, old and new zone's hub **S**, ascending | operations/0011 |
+| **Travel time** `planning_set_travel_time` | actor pre-check -> from zone **S** -> to zone **S** -> grants **S** -> pair advisory lock (transaction, `hashtextextended('planning_travel_time:<from>:<to>')`) -> INSERT + audit | planning/0013 |
+
+### 4.1 Reconciliation with sections 1 and 2
+
+- **Settings first.** Every new participant takes **Sh** before any hub row. Shared holders never conflict, and
+  the exclusive settings writer holds no row (section 2 case 1), so the writer can only make a pause, lift or gate
+  wait at its start, never in the middle while it holds a hub row the writer needs.
+- **Pause and lift hold nothing a gate waits for except the hub row.** They take no robot, person, vehicle,
+  visit, trip or policy row. A gate holds those rows and then waits for the hub (**S** vs **U**); the pause never
+  waits for any of them. The only thing a pause takes after the hub is the actor's grants **S**, which a gate
+  holds only **S** (no conflict); a grant revocation holds only the grant row (section 2 case 3). No cycle.
+- **Hub row after guard rows in the gates.** In the gates the hub comes after the existing guard rows (it is the
+  last lock before the check), which keeps every 03A order unchanged: nothing that holds a hub row ever waits for
+  a guard row. The 03A hub **S** holders (`fleet_transfer_start` destination hub, `hub_create_stock_item`) hold
+  it **S**, compatible with the gates; a pause waits for them and they never wait for a pause.
+- **Foreign-key key-share.** An INSERT of a row referencing a hub (a visit, a custody event, a pause) takes a
+  key-share lock on the hub row, which conflicts with the pause's **U**. Such a transaction only ever adds key-share
+  or **S** on that hub afterwards, which PostgreSQL grants without queueing behind the waiting pause (it already
+  holds a lock on the tuple), so a pause waits for it and never the reverse.
+- **Visit scope change.** It holds the visit **U** and then takes hub **S**; the gates take visit **S** then hub
+  **S**; a pause takes no visit. So a change of a visit's hub or zone and a pause are ordered on the hub row, and
+  the gates read the visit's hub and zone after the visit lock: a changed visit is always checked against the
+  pauses of its current hub and zone (13.4 item 2, "visit changes").
+- **Travel time.** It locks only zone rows (**S**, ordered against a zone retirement, which takes the zone **U**)
+  and its pair lock; it holds no hub or guard row, so it is outside every cycle above.
+
+**Invariant (13.4 item 2):** a committed pause is never bypassed by a later authorization or departure: the gate
+waits for an uncommitted pause on the hub row and re-reads in a fresh statement; a pause started after the gate
+took the hub row waits for the gate's transaction to finish.
+
+### 4.2 Both race orders, waiter seen in `pg_locks` (ops_app unless noted)
+
+| Pair | First | Second waits, then | Test (`tests/test_v2_03b_pause.py`) |
+|---|---|---|---|
+| pause vs authorization | pause (hub U held, uncommitted) | `authorize_departure` waits at its gate, then is refused "Paused: cannot leave until lifted", nothing issued | `test_a_pause_and_an_authorization_are_ordered_both_ways[pause]` |
+| | authorization (paused before commit, hub S held) | the pause waits, then commits after; that authorization's departure is then refused | `...[authorization]` |
+| pause vs departure | pause (hub U held) | `record_departure` waits at its gate, then is refused; nothing departs | `test_a_pause_and_a_departure_are_ordered_both_ways[pause]` |
+| | departure (paused before commit) | the pause waits, then commits; the departure stands (a pause never erases one) | `...[departure]` |
+| lift vs authorization | lift (hub U held, uncommitted) | `readiness_issue_authorization` (direct SQL) waits at its gate, then is issued | `test_a_lift_and_an_authorization_are_ordered_both_ways[lift]` |
+| | the authorization gate step (`operations_pause_gate_problem`, held by the owner, refusing under the active pause) | the lift waits, then commits; a new authorization is then issued | `...[authorization]` |
+
+In the lift-vs-authorization "authorization first" order the authorization side is its gate step, held open by
+the owner, as in the 03A transfer race: a real authorization under the active pause raises at that step, and
+PostgreSQL aborts the transaction and releases its locks at the error (before the client's ROLLBACK; checked in
+pg_locks), so the step itself is what holds the hub row while the lift waits.

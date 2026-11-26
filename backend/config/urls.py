@@ -5,6 +5,8 @@ from accounts import api as accounts_api
 from accounts import views as accounts_views
 from fleet import api as fleet_api
 from fleet import views as fleet_views
+from operations import pause_views
+from planning import zone_views
 from platform_core import api as core_api
 from platform_core import views as core_views
 
@@ -36,6 +38,29 @@ urlpatterns = [
     path("fleet/", fleet_views.fleet_list, name="fleet-list"),
     path("", include("hub.urls")),  # v2 02A hub work queue (/hub/, /api/hub/...)
     path("", include("platform_core.setup_urls")),  # v2 01C screens; must precede fleet/<code>/
+    # v2 03B-1: S5 zones and travel times (setup), S4 regional pause (before the planning/ include)
+    path("settings/hubs/<str:hub_code>/zones/", zone_views.zone_list, name="settings-zones"),
+    path("settings/hubs/<str:hub_code>/zones/new/", zone_views.zone_new, name="settings-zone-new"),
+    path("settings/hubs/<str:hub_code>/zones/home/", zone_views.zone_home, name="settings-zone-home"),
+    path(
+        "settings/hubs/<str:hub_code>/zones/<str:zone_code>/retire/",
+        zone_views.zone_retire,
+        name="settings-zone-retire",
+    ),
+    path("settings/travel-times/", zone_views.travel_matrix, name="settings-travel"),
+    path(
+        "settings/travel-times/<int:from_id>/<int:to_id>/",
+        zone_views.travel_pair,
+        name="settings-travel-pair",
+    ),
+    path("planning/pause/", pause_views.pause_page, name="planning-pause"),
+    path("planning/pause/lift/<int:pause_id>/", pause_views.lift_confirm, name="planning-pause-lift"),
+    path("planning/pause/<str:hub_code>/", pause_views.pause_confirm, name="planning-pause-hub"),
+    path(
+        "planning/pause/<str:hub_code>/<str:zone_code>/",
+        pause_views.pause_confirm,
+        name="planning-pause-zone",
+    ),
     # Slice 7 (Engineer C): hold-policy lifecycle and pattern pages; before fleet/<code>/ (it would match)
     path("fleet/hold-policies/", fleet_views.hold_policies, name="fleet-hold-policies"),
     path("fleet/hold-policies/create/", fleet_views.hold_policy_create_view),

@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Pause departures{% endblock %}
+{% block content %}
+{% page_header title="Pause departures" back_url="/planning/pause/" back_label="Regional pause" %}{{ where }}{% endpage_header %}
+<section class="card" aria-labelledby="affected">
+<h2 id="affected">What this pause blocks</h2>
+<p data-affected="{{ affected|length }}"><b>This blocks authorization and departure for {{ affected|length }} visit{{ affected|length|pluralize }}</b> that ha{{ affected|length|pluralize:"s,ve" }} not left yet.</p>
+{% if affected %}<div class="tablewrap"><table><thead><tr><th>Visit time</th><th>Home</th><th>Dispatch hub</th><th>Visit</th></tr></thead><tbody>
+{% for a in affected %}<tr><td><time datetime="{{ a.start|date:'c' }}">{{ a.start|local_dt }}</time></td><td>{{ a.site }}</td><td>{{ a.hub_code }}</td><td><a href="/planning/visits/{{ a.code }}/">{{ a.code }}</a> <span class="muted">{{ a.status }}</span></td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+<p class="muted">Visits can still be planned and show "{{ paused_text }}". Robots already out are not recalled and keep recording.</p>
+</section>
+<section class="card">{% include "ui/confirm_box.html" with headline="Pause departures for "|add:where|add:"?" detail="No new departure authorization is issued and no departure is recorded until the regional ops lead lifts the pause. The pause and its reason are kept in the audit log." %}
+{% include "ui/form.html" with form=form submit="Pause departures" danger=True cancel_url="/planning/pause/" %}</section>
+{% endblock %}

@@ -7,6 +7,7 @@ or hub reads it, and it is written only by the owner-only SQL function
 data only.
 """
 
+from django.conf import settings
 from django.db import models
 
 
@@ -62,3 +63,43 @@ class PredictorObservation(models.Model):
 
     def __str__(self) -> str:
         return f"predictor observation for departure {self.departure_id}"
+
+
+class RegionPause(models.Model):
+    """A regional pause or its lift (v2 03B-1, docs/13_v2_phase03_contract.md I-9, 10.G, 13.4 item 2, 13.5).
+
+    Append-only. A ``pause`` row stops new departure authorizations and departures for a hub (zone NULL)
+    or for one zone of that hub; a ``lift`` row names the pause it ends (``pause``). Written only by the
+    SECURITY DEFINER functions ``operations_pause_region`` (the regional ops lead, or a safety_pause grant
+    at the hub) and ``operations_lift_pause`` (the regional ops lead only); the runtime role has SELECT
+    only. Which pause covers a visit: ``operations_active_pause(hub, zone)``. Nothing here recalls a robot
+    or erases a departure."""
+
+    KINDS = [("pause", "Pause"), ("lift", "Lift")]
+    hub = models.ForeignKey("platform_core.Hub", on_delete=models.PROTECT, related_name="+")
+    zone = models.ForeignKey(
+        "platform_core.Zone", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    kind = models.CharField(max_length=8, choices=KINDS)
+    pause = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="lifts")
+    reason = models.TextField()
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "operations_region_pause"
+        ordering = ["id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(kind="pause", pause__isnull=True) | models.Q(kind="lift", pause__isnull=False)
+                ),
+                name="region_pause_kind_link",
+            ),
+            models.UniqueConstraint(
+                fields=["pause"], condition=models.Q(kind="lift"), name="uniq_region_pause_one_lift"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.kind} {self.hub_id}/{self.zone_id or '-'}"

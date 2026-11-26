@@ -105,9 +105,37 @@ class Hub(models.Model):
         settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="+"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    # v2 03B-1: the zone the hub itself sits in, the start and end of every trip dispatched from it. Travel
+    # out is the matrix pair (this zone -> the visit's zone), travel back the reverse pair. NULL = unknown:
+    # a zoned visit dispatched from this hub then has "Travel time unknown" (no fallback).
+    home_zone = models.ForeignKey(
+        "platform_core.Zone", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
 
     class Meta:
         ordering = ["code"]
+
+    def __str__(self) -> str:
+        return f"{self.code} {self.name}"
+
+
+class Zone(models.Model):
+    """A zone of a hub (v2 03B-1, docs/13_v2_phase03_contract.md 13.5): an area of homes the hub serves.
+
+    Setup data. Retired = ``active=false``; a retired zone keeps its history (visits, travel rows, pauses) but
+    new visits cannot use it and its travel pairs are not offered. The hub and code never change, a zone is
+    never deleted and a retired zone never comes back (trigger platform_core_zone_guard)."""
+
+    hub = models.ForeignKey(Hub, on_delete=models.PROTECT, related_name="zones")
+    code = models.CharField(max_length=12)
+    name = models.CharField(max_length=80)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "platform_core_zone"
+        ordering = ["hub_id", "code"]
+        constraints = [models.UniqueConstraint(fields=["hub", "code"], name="uniq_zone_hub_code")]
 
     def __str__(self) -> str:
         return f"{self.code} {self.name}"

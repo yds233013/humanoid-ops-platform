@@ -145,6 +145,9 @@ def plan_options(visit: Visit) -> PlanOptions:
     assert rev is not None
     start, end = rev.on_site_start, rev.on_site_end
     t_out, t_back = rev.travel_out_min or 0, rev.travel_back_min or 0
+    route = p.new_route(visit, start, end)  # v2 03B-1: a zoned visit's windows use the matrix in force
+    if route is not None:
+        t_out, t_back = route.out.minutes or 0, route.back.minutes or 0
     insp = p._int_setting("pre_visit_inspection_min") or 0
 
     with connection.cursor() as cur:
@@ -324,6 +327,9 @@ def suggest(visit: Visit, opts: PlanOptions) -> Suggestion:
         out.why_not = missing
         return out
     blocked_reasons: list[str] = []
+    # v2 03B-1: a zoned visit is checked against the travel matrix in force (a missing pair blocks every
+    # combination: "Travel time unknown", never offered as free)
+    route = p.new_route(visit, rev.on_site_start, rev.on_site_end)
     for i in range(SUGGEST_MAX_EVALUATIONS):
         robot = robots[min(i, len(robots) - 1)]
         lead = leads[min(i, len(leads) - 1)]
@@ -345,6 +351,7 @@ def suggest(visit: Visit, opts: PlanOptions) -> Suggestion:
             second=second.obj,
             vehicle=vehicle.obj,
             visit=visit,
+            travel=route,
         )
         if plan.feasibility != "blocked":
             out.robot, out.lead, out.second, out.vehicle = robot, lead, second, vehicle
@@ -367,6 +374,15 @@ def suggest(visit: Visit, opts: PlanOptions) -> Suggestion:
                 f"{second.obj.label} is qualified as second and has no other booking in this window.",
                 f"Vehicle {vehicle.code} has a recorded capacity and restraint kit and no other trip "
                 "in this window.",
+                # v2 03B-1 (10.H): which approved matrix values produced this suggestion
+                *(
+                    [
+                        f"Travel out {route.out.label}, back {route.back.label}, from the travel matrix "
+                        f"(rows {route.out.version_id} and {route.back.version_id})."
+                    ]
+                    if route is not None and route.known
+                    else []
+                ),
             ]
             return out
         for b in plain_blockers([x for x in plan.blockers if x["level"] == "blocked"]):

@@ -75,7 +75,10 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "'accounts_rolegrant', "
             # Phase 03A closure (hub/0015): robots, vans and chargers are created only through SECURITY DEFINER
             # functions; the runtime role keeps SELECT and UPDATE (DELETE for robots and vans). Asserted below.
-            "'fleet_robot', 'planning_vehicle', 'hub_charger') "
+            "'fleet_robot', 'planning_vehicle', 'hub_charger', "
+            # v2 03B-1: the travel matrix and the regional pause are written only through SECURITY DEFINER
+            # functions (planning/0013, operations/0011). The runtime role has SELECT only. Asserted below.
+            "'planning_travel_time', 'operations_region_pause') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
@@ -93,6 +96,8 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "hub_stock_movement",
             "fleet_hub_transfer",
             "accounts_rolegrant",
+            "planning_travel_time",
+            "operations_region_pause",
         ):
             cur.execute(
                 "SELECT has_table_privilege(current_user, %s, 'SELECT'), "

@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Lift a pause{% endblock %}
+{% block content %}
+{% page_header title="Lift a pause" back_url="/planning/pause/" back_label="Regional pause" %}{{ where }}{% endpage_header %}
+<section class="card">
+<p>Paused since <time datetime="{{ pause.created_at|date:'c' }}">{{ pause.created_at|local_dt }}</time>: {{ pause.reason }}</p>
+{% if still_active %}{% include "ui/confirm_box.html" with headline="Lift the pause of "|add:where|add:"?" detail="Visits there can be authorized to leave again, each through its own readiness checks. Lifting never authorizes a departure by itself." %}
+{% include "ui/form.html" with form=form submit="Lift pause" cancel_url="/planning/pause/" %}{% else %}{% include "ui/empty.html" with title="Already lifted" text=" This pause was lifted; see the history." %}{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Travel times{% endblock %}
+{% block content %}
+{% page_header title="Travel times" back_url="/settings/hubs/" back_label="Hubs" %}Minutes between zones, one direction per cell (from the row to the column). A missing value is Unknown: a visit that needs it cannot be planned, and nothing is estimated.{% endpage_header %}
+{% if scope.show_filter %}<p class="row">{% for h in scope.hubs %}<a class="btn{% if scope.selected and scope.selected.pk == h.pk %} primary{% endif %}" href="?hub={{ h.code }}">{{ h.name }}</a>{% endfor %}<a class="btn" href="?">All hubs</a></p>{% endif %}
+<section class="card">
+{% if zones %}<p data-unknown="{{ unknown }}">{% if unknown %}▲ {{ unknown }} pair{{ unknown|pluralize }} unknown.{% else %}Every pair has a value.{% endif %}</p>
+<div class="tablewrap"><table><thead><tr><th scope="col">From \ to</th>{% for z in zones %}<th scope="col">{{ z.name }} <span class="muted">{{ z.hub.code }}·{{ z.code }}</span></th>{% endfor %}</tr></thead><tbody>
+{% for row in grid %}<tr><th scope="row">{{ row.from.name }} <span class="muted">{{ row.from.hub.code }}·{{ row.from.code }}</span></th>
+{% for c in row.cells %}<td>{% if c.cell and c.cell.current.known %}<a href="/settings/travel-times/{{ row.from.pk }}/{{ c.to.pk }}/">{{ c.cell.current.minutes }} min</a><div class="muted">{% if c.cell.current.source == "demo" %}demo value{% else %}company value{% endif %} · v{{ c.cell.version }}{% if c.cell.pending %} · {{ c.cell.pending }} pending{% endif %}</div>{% else %}<a class="pb at_risk" href="/settings/travel-times/{{ row.from.pk }}/{{ c.to.pk }}/">▲ Unknown</a>{% if c.cell.pending %}<div class="muted">{{ c.cell.pending }} pending</div>{% endif %}{% endif %}</td>{% endfor %}</tr>{% endfor %}
+</tbody></table></div>
+{% else %}{% include "ui/empty.html" with title="No zones yet" text=" Add zones to a hub first (Settings > Hubs > Zones)." %}{% endif %}
+</section>
+{% endblock %}

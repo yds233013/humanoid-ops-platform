@@ -78,6 +78,12 @@ APP_FUNCTIONS: dict[str, str] = {
     "fleet_create_robot(bigint,text,text,bigint,text)": "ops lead or engineering lead, at the target hub",
     "planning_create_vehicle(bigint,text,integer,text,bigint,text)": "ops lead, at the target hub",
     "hub_create_charger(bigint,text,text,text,bigint,text)": "admin or ops lead, at the target hub",
+    # v2 03B-1: the travel matrix and the regional pause (tests/test_v2_03b_zones_travel.py, test_v2_03b_pause.py)
+    "planning_set_travel_time(bigint,bigint,bigint,integer,text,timestamp with time zone,text)": (
+        "admin or ops lead"
+    ),
+    "operations_pause_region(bigint,bigint,bigint,text,text)": "regional ops lead or safety_pause at the hub",
+    "operations_lift_pause(bigint,bigint,text,text)": "regional ops lead only",
 }
 
 # signature -> why ops_app must NOT execute it
@@ -156,6 +162,13 @@ ACTOR_CALLS: dict[str, str] = {
     "hub_create_charger(bigint,text,text,text,bigint,text)": (
         "SELECT hub_create_charger({a}, 'C-Z', 'Bay Z', '', {hub}, '')"
     ),
+    "planning_set_travel_time(bigint,bigint,bigint,integer,text,timestamp with time zone,text)": (
+        "SELECT planning_set_travel_time({a}, 0, 0, 10, 'demo', NULL, '')"
+    ),
+    "operations_pause_region(bigint,bigint,bigint,text,text)": (
+        "SELECT operations_pause_region({a}, {hub}, NULL, 'x', '')"
+    ),
+    "operations_lift_pause(bigint,bigint,text,text)": "SELECT operations_lift_pause({a}, 0, 'x', '')",
 }
 
 # Hub-owned tables written only through the functions above: ops_app may read them and nothing else.
@@ -172,6 +185,8 @@ GUARDED_TABLES = [
     "fleet_maintenancerecord",
     "fleet_hub_transfer",
     "accounts_rolegrant",
+    "planning_travel_time",  # v2 03B-1
+    "operations_region_pause",  # v2 03B-1
 ]
 
 DEFINER_SQL = """

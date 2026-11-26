@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% load ui %}
+{% block title %}Retire a zone{% endblock %}
+{% block content %}
+{% page_header title=page_title back_url=zones_url back_label="Zones" %}{{ hub.name }} ({{ hub.code }}){% endpage_header %}
+<section class="card">{% include "ui/confirm_box.html" with headline="Retire zone "|add:zone.name|add:" ("|add:zone.code|add:")?" detail="Its visits, travel times and pauses keep their history. New visits cannot use it, its travel times are no longer offered, and it cannot be made active again." %}
+{% include "ui/form.html" with form=form submit="Retire zone" danger=True cancel_url="/settings/hubs/"|add:hub.code|add:"/zones/" %}</section>
+{% endblock %}
