@@ -374,9 +374,11 @@ def health_data(at: datetime, start: datetime, end: datetime) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ page helpers
-def _base(request: HttpRequest, at: datetime, section: str) -> dict[str, Any]:
+def _base(request: HttpRequest, at: datetime, section: str, roles: set[str] | None = None) -> dict[str, Any]:
+    """``roles``: the viewer's active roles when the caller already read them (the hub scope carries them),
+    so a scoped page reads the grants once (03A closure: the close-out page stays in its statement budget)."""
     demo = demo_mode()
-    roles = active_roles(request.user)
+    roles = active_roles(request.user) if roles is None else roles
     return {
         "roles": sorted(roles),
         "demo_mode": demo,
@@ -412,13 +414,13 @@ def today_page(request: HttpRequest, at: datetime) -> HttpResponse:
 
     viewer = hub_scope(request)  # v2 03A-1: the viewer's hubs; ?hub=CODE narrows
     t = today.build_today(at, request.user, viewer.ids)
-    roles = active_roles(request.user)
+    roles = viewer.roles
     can = {
         perm.replace(".", "_"): bool(roles & PERMISSIONS[perm])
         for perm in ("planning.read", "readiness.read", "fleet.read", "execution.read", "operations.read")
     }
     ctx = {
-        **_base(request, at, "today"),
+        **_base(request, at, "today", viewer.roles),
         "t": t,
         "can": can,
         "robot_groups": [(key, label, t.robot_counts.get(key, 0)) for key, label in today.ROBOT_GROUPS],
@@ -449,7 +451,7 @@ def robot_status_page(request: HttpRequest, at: datetime) -> HttpResponse:
         label = str(field(r, "status_label", ""))
         counts[label] = counts.get(label, 0) + 1
     ctx = {
-        **_base(request, at, "robots"),
+        **_base(request, at, "robots", hubs.roles),
         "robots": robots,
         "label_counts": sorted(counts.items()),
         "group": group,
@@ -462,24 +464,24 @@ def robot_status_page(request: HttpRequest, at: datetime) -> HttpResponse:
 @ops_view("operations.read")
 def production_readiness_page(request: HttpRequest, at: datetime) -> HttpResponse:
     readmodels = _read_model("readmodels")
+    viewer = hub_scope(request)
     ctx = {
-        **_base(request, at, "production-readiness"),
-        "production_blockers": scope.keep_blockers(
-            readmodels.production_blockers(at), hub_scope(request).ids
-        ),
+        **_base(request, at, "production-readiness", viewer.roles),
+        "production_blockers": scope.keep_blockers(readmodels.production_blockers(at), viewer.ids),
     }
     return render(request, "operations/production_readiness.html", ctx)
 
 
 @ops_view("operations.read")
 def closeout_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    scope = hub_scope(request)
     try:
-        built = closeout_data(at, request.GET.get("date"), hub_scope(request).ids)
+        built = closeout_data(at, request.GET.get("date"), scope.ids)
     except BadParam as exc:
         return _bad(request, at, "closeout", exc)
     result = built["result"]
     ctx = {
-        **_base(request, at, "closeout"),
+        **_base(request, at, "closeout", scope.roles),
         "c": result,
         "undated_heading": _read_model("closeout").UNDATED_HEADING,
     }
@@ -488,12 +490,13 @@ def closeout_page(request: HttpRequest, at: datetime) -> HttpResponse:
 
 @ops_view("operations.read")
 def exceptions_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    viewer = hub_scope(request)
     try:
-        data = exceptions_data(at, request.GET.get("cursor"), hub_scope(request).ids)
+        data = exceptions_data(at, request.GET.get("cursor"), viewer.ids)
     except BadParam as exc:
         return _bad(request, at, "exceptions", exc)
     ctx = {
-        **_base(request, at, "exceptions"),
+        **_base(request, at, "exceptions", viewer.roles),
         **data,
         "coverage": coverage_view(data["readiness_coverage"]),
         "first_page_as_of_text": as_of_text(data["first_page_as_of"]),
@@ -506,17 +509,23 @@ def exceptions_page(request: HttpRequest, at: datetime) -> HttpResponse:
 
 @ops_view("operations.read")
 def incidents_page(request: HttpRequest, at: datetime) -> HttpResponse:
-    ctx = {**_base(request, at, "incidents"), **incidents_data(at, hub_scope(request).ids)}
+    viewer = hub_scope(request)
+    ctx = {**_base(request, at, "incidents", viewer.roles), **incidents_data(at, viewer.ids)}
     return render(request, "operations/incidents.html", ctx)
 
 
 @ops_view("operations.read")
 def timeline_page(request: HttpRequest, at: datetime) -> HttpResponse:
+    viewer = hub_scope(request)
     try:
-        data = timeline_data(at, parse_window(request.GET.get("window_min")), hub_scope(request).ids)
+        data = timeline_data(at, parse_window(request.GET.get("window_min")), viewer.ids)
     except BadParam as exc:
         return _bad(request, at, "timeline", exc)
-    ctx = {**_base(request, at, "timeline"), **data, "coverage": coverage_view(data["readiness_coverage"])}
+    ctx = {
+        **_base(request, at, "timeline", viewer.roles),
+        **data,
+        "coverage": coverage_view(data["readiness_coverage"]),
+    }
     return render(request, "operations/timeline.html", ctx)
 
 
