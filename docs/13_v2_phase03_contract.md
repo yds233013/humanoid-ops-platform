@@ -836,3 +836,74 @@ All of section 6, items 1 to 9, against the endpoint without any front end, plus
 - **P3:**
   - more varied next-free slots;
   - terminology.
+
+### 14.8 EM review of 03C 2026-11-26: binding amendments (they win over 14.1 to 14.7)
+
+Both choices are approved:
+- **A rejected ordinary command consumes its `seq`.** The rejection is a durable, final *sequence decision*. It is not
+  a successful execution.
+- **A protective action is never refused for clock bounds.** This applies only to clock validation. A protective
+  command still needs a valid session, authorized run access and a supported operation.
+
+1. **Decided, not confirmed.**
+   - `last_confirmed_seq` is replaced by **`last_decided_seq`**, in the request and the response. The response also
+     carries `next_expected_seq`.
+   - A rejected `seq` is decided, but it satisfies no operational prerequisite. Every later command re-checks the
+     actual server state.
+   - A protective command records the last ordinary `seq` the device observed, and that step's outcome as the device
+     saw it. It never treats a rejected step as confirmed.
+2. **Replay identity.**
+   - The immutable identity of a key is the canonical serialization (sorted-key JSON, UTF-8, SHA-256) of: `actor_id`
+     (from the session, never the request), `device_id`, `run_id`, `channel`, `seq`, `command`, `payload` and
+     `device_observed_at`.
+   - Once a key has a durable outcome, a replay with an identical identity returns that outcome **before** any domain
+     execution.
+   - Any changed field is `KEY_REUSED`. A replay is never reinterpreted with a new device time or `seq`.
+3. **Protective idempotency and ordering.**
+   - A duplicate protective command never creates a second incident, interruption or hold. It is caught by the key,
+     and a second key for the same report is caught by the domain's existing idempotency or state check.
+   - Protective reports are ordered by server receipt and commit. The device's causal reference is kept.
+   - A protective command is allowed despite ordinary gaps, but is still re-checked against the current server state.
+     A stop that cannot stop the session gives the documented protective state.
+4. **Abandonment is a durable sequence barrier.**
+   - A run's ordinary stream has a **generation** (it starts at 1).
+   - Abandoning `seq` N writes a final barrier row for (run, generation, N), and ends that generation for every
+     device.
+   - Any later command of that generation (held, or arriving later, at or after N) is `rejected` `AFTER_ABANDONED`.
+     Nothing is reused silently.
+   - The crew reconciles from the current server state, and the server opens **generation g+1** with `seq` starting
+     at 1. The request carries `generation`, and a stale generation is `rejected` `STALE_GENERATION`.
+   - Uniqueness is (run, generation, seq).
+5. **Transactions and errors.**
+   - A **durable `rejected`** is written only for a *classified domain refusal*: a permission, state, conflict, class,
+     bounds, identity or sequence rule.
+   - A database timeout, deadlock, serialization failure or lost connection **never** becomes a durable rejection.
+     It is `retry`, or an HTTP 5xx when the server cannot say what happened.
+   - `held` and `retry` claim nothing: no key and no `seq`.
+   - Required tests:
+     - a crash just before commit (nothing claimed, so a resend applies once);
+     - a lost HTTP response after a successful commit, then a replay (the same `confirmed`);
+     - an exception after the savepoint rollback but before the rejection is written (no partial state; the whole
+       command is `retry`);
+     - a competing request during an uncommitted key claim (it waits, then gets the replay or `KEY_REUSED`);
+     - a committed rejection followed by a dependent command (that command re-checks the real state).
+6. **Authentication and receipt.**
+   - An invalid, ended or revoked session is refused with HTTP 401 **before** anything else: no device report is
+     written, no run is looked up, and nothing reveals whether a run exists.
+   - An authenticated user without run access gets `NOT_YOUR_RUN`, with no run details and no command-history write.
+   - The times are:
+     - `received_at`: database receipt;
+     - `decided_at`: database decision;
+     - `device_observed_at`: untrusted, from the device;
+     - `server_time`: when the server answered.
+
+     All are stored in UTC and shown in the workspace zone.
+
+**Build plan (EM-approved):** three engineers in parallel on separate components, with integration verified end to end
+under the real `ops_app` role.
+
+| Engineer | Builds |
+|---|---|
+| **03C-1** | Ledger schema, immutable identity, generations and barriers, database privileges, transaction semantics |
+| **03C-2** | Command classification, domain adapters, protective fallback |
+| **03C-3** | Authenticated HTTP endpoint, response contract, device reports, failure-injection tests |
