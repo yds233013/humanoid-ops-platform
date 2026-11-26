@@ -26,6 +26,12 @@ The search (13.4 item 4):
   they are reported once in ``home_notes`` and the plan command still applies them.
 * Ranking: slots with no at-risk item ("Available for planning") first, then "At risk" slots (robot away on
   a same-hub run, section 12); within each, earliest first, then robot code, crew codes, vehicle code.
+* Outstanding checks (03B closure, P1): every shown slot carries ``SLOT_LABEL`` and, before anyone saves it,
+  the checks that still run later for that slot, from the same facts the review panel uses: the robot's
+  charge forecast at the slot's departure (``hub.charging``), the home's assessment and consent on that date
+  (``evaluate``'s own blockers), the robot's return to the hub when it is away (At risk), and an active
+  regional pause (``operations.pauses.active_for``). Nothing here decides: the guarded plan command runs every
+  check again when the slot is saved, and departure has its own gates.
 * Budget: at most ``BUDGET`` (200) evaluations per request. Every candidate time counts once when the option
   labels rule it out, and every combination asked of evaluate counts once. When the budget runs out before
   the look-ahead is searched, ``exhausted`` is True and the page says so.
@@ -58,6 +64,11 @@ BUDGET = 200
 TRIES_PER_TIME = 3
 FREE, AT_RISK = "available", "at_risk"
 STATUS_WORDS = {FREE: ("Available for planning", "●"), AT_RISK: ("At risk", "▲")}
+# 03B closure (contract 14.7, P1): the label of every suggested slot, word for word.
+SLOT_LABEL = (
+    "Suggested planning time. Final checks, including charging, site requirements and regional pauses, run "
+    "when you save. This is not departure authorization."
+)
 
 # Blockers about the home, not about the time or the resources: reported once, never a reason to skip a slot.
 HOME_CODES = {"SITE_NOT_ASSESSED", "SITE_NOT_ELIGIBLE", "SITE_RESTRICTED", "TASK_EXCLUDED", "CONSENT"}
@@ -92,6 +103,16 @@ class Slot:
     tz: str  # the hub's IANA zone
     site_tz: str
     travel_versions: tuple[int | None, int | None] = (None, None)
+    depart: datetime | None = None  # UTC, from evaluate's timeline (the charge forecast is for this time)
+    robot_id: int | None = None
+    home: list[tuple[str, str]] = field(default_factory=list)  # (level, sentence) about the home on this date
+    outstanding: list[Any] = field(
+        default_factory=list
+    )  # planning.review.Check lines, filled for shown slots
+
+    @property
+    def label_text(self) -> str:
+        return SLOT_LABEL
 
     @property
     def words(self) -> str:
@@ -392,9 +413,11 @@ def next_free(
             if stop:
                 out.stopped = plain_blocker(stop[0])["sentence"]
                 break
+            home: list[tuple[str, str]] = []
             for b in plan.blockers:
                 if b["code"] in HOME_CODES:
                     sentence = plain_blocker(b)["sentence"]
+                    home.append((b["level"], sentence))
                     if sentence not in seen_home:
                         seen_home.append(sentence)
             if any(b["code"] not in HOME_CODES for b in blocked) or "timeline_utc" not in plan.snapshot:
@@ -416,6 +439,9 @@ def next_free(
                 travel_versions=(
                     (route.out.version_id, route.back.version_id) if route is not None else (None, None)
                 ),
+                depart=datetime.fromisoformat(plan.snapshot["timeline_utc"]["depart"]),
+                robot_id=robot.obj.pk,
+                home=home,
             )
             break
         if slot_found is not None:
@@ -423,4 +449,103 @@ def next_free(
             free_count += slot_found.status == FREE
     out.slots = sorted(found, key=lambda s: s.key)[:limit]
     out.home_notes = seen_home
+    if out.slots:
+        outstanding_checks(out.slots, hub, probe.zone_id)
     return out
+
+
+def outstanding_checks(slots: list[Slot], hub: Hub, zone_id: int | None) -> None:
+    """P1 (03B closure): the checks still outstanding for each shown slot, before it is saved. Read only: one
+    pause read, one setting read and one charge-forecast read per slot (at most ``limit``)."""
+    from hub import charging  # noqa: PLC0415
+    from operations import pauses  # noqa: PLC0415
+    from planning.board import pause_banner  # noqa: PLC0415
+    from planning.review import FAIL, PASS, RISK, Check  # noqa: PLC0415
+
+    pause = pauses.active_for(hub.pk, zone_id)
+    forecast_on = charging.forecast_configured()
+    for s in slots:
+        robot = f"Robot {s.robot}"
+        lines: list[Check] = []
+        # charging (v2 02B forecast at the slot's departure; the departure battery check stays the gate)
+        f = (
+            charging.robot_forecasts([s.robot_id], s.depart).get(s.robot_id)
+            if forecast_on and s.robot_id is not None and s.depart is not None
+            else None
+        )
+        if not forecast_on:
+            lines.append(
+                Check(
+                    "charge",
+                    "Charging",
+                    RISK,
+                    "Not forecast yet: the battery freshness setting (ops_soc_fresh_min) is not provisioned. "
+                    f"The battery check runs before {robot} leaves.",
+                )
+            )
+        elif f is None or f.state == charging.UNKNOWN:
+            why = f.reason if f is not None else "no battery level is recorded"
+            lines.append(
+                Check(
+                    "charge",
+                    "Charging",
+                    RISK,
+                    f"{robot} has no charge forecast: {why}. The battery check runs before it leaves.",
+                )
+            )
+        elif f.state == charging.NEEDS:
+            lines.append(
+                Check(
+                    "charge",
+                    "Charging",
+                    FAIL if f.cannot_in_time else RISK,
+                    f"{robot} needs charge before it leaves: {f.reason}.",
+                )
+            )
+        else:
+            lines.append(
+                Check(
+                    "charge",
+                    "Charging",
+                    PASS,
+                    f"{robot} is forecast to have enough charge ({f.reason}). The battery check still runs "
+                    "before it leaves.",
+                )
+            )
+        # the home on this date (assessment, restrictions, consent): evaluate's own facts
+        if s.home:
+            worst = FAIL if any(level == "blocked" for level, _ in s.home) else RISK
+            lines.append(Check("home", "Home and site requirements", worst, " ".join(t for _, t in s.home)))
+        else:
+            lines.append(
+                Check(
+                    "home",
+                    "Home and site requirements",
+                    PASS,
+                    "The home's assessment and consent cover this date. They are checked again when you "
+                    "save.",
+                )
+            )
+        # the robot's return (section 12: away on a same-hub run)
+        if s.status == AT_RISK:
+            lines.append(
+                Check(
+                    "return",
+                    "Robot back at the hub",
+                    RISK,
+                    f"{robot} is away on a run of {hub.name}. It cannot be authorized to leave until it is "
+                    "verified back at the hub.",
+                )
+            )
+        # an active regional pause (the authorization and departure gates enforce it)
+        lines.append(
+            Check("pause", "Regional pause", RISK, pause_banner(hub.name, pause))
+            if pause is not None
+            else Check(
+                "pause",
+                "Regional pause",
+                PASS,
+                f"No departure pause at {hub.name} now. A pause set later still stops departure.",
+            )
+        )
+        s.outstanding = lines

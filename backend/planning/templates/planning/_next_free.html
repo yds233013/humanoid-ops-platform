@@ -8,7 +8,10 @@
 <div class="slot-main">
 <p class="slot-when"><span class="status t-{% if s.status == 'at_risk' %}warn{% else %}info{% endif %}"><span class="shape" aria-hidden="true">{{ s.shape }}</span>{{ s.words }}</span> <time datetime="{{ s.start|iso_instant }}">{{ s.span_label }}</time></p>
 <p class="slot-who">{{ s.crew }} · <span class="nw">Robot {{ s.robot }}</span> · <span class="nw">Vehicle {{ s.vehicle }}</span></p>
-<p class="slot-why">{{ s.why }}</p></div>
+<p class="slot-why">{{ s.why }}</p>
+<p class="slot-label" data-slot-label="{{ forloop.counter }}">{{ s.label_text }}</p>
+{% if s.outstanding %}<div class="slot-checks"><p class="slot-checks-h" id="nf-ck-{{ forloop.counter }}">Still to check for this time</p>
+<ul class="slot-ck" data-slot-checks="{{ forloop.counter }}" aria-labelledby="nf-ck-{{ forloop.counter }}">{% for c in s.outstanding %}<li class="ck-{{ c.result }}" data-check="{{ c.key }}" data-result="{{ c.result }}"><span class="mk" aria-hidden="true">{{ c.mark }}</span><span><b>{{ c.title }}</b> <span class="sr">({{ c.words }})</span> {{ c.text }}</span></li>{% endfor %}</ul></div>{% endif %}</div>
 {% if nf_action == "plan" %}<form method="post" action="/planning/visits/{{ visit.code }}/plan/" data-slot-form="{{ forloop.counter }}">{% csrf_token %}{% form_token %}
 <input type="hidden" name="robot" value="{{ s.robot }}"><input type="hidden" name="lead" value="{{ s.lead.code }}"><input type="hidden" name="second" value="{{ s.second.code }}"><input type="hidden" name="vehicle" value="{{ s.vehicle }}">
 <input type="hidden" name="start" value="{{ s.values.start }}"><input type="hidden" name="end" value="{{ s.values.end }}"><input type="hidden" name="reason" value="Moved to the next free time">{% if q_hub %}<input type="hidden" name="hub" value="{{ request.GET.hub }}">{% endif %}
