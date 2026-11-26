@@ -35,6 +35,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 .hubstats{display:flex;gap:var(--s4);margin:0;flex-wrap:wrap} .hubstats div{display:flex;flex-direction:column;min-width:64px} .hubstats dt{font-size:var(--fs-xs);color:var(--soft)} .hubstats dd{margin:0;font-weight:700;font-size:var(--fs-lg);font-variant-numeric:tabular-nums}
 .pause{margin:0;padding:var(--s2) var(--s4);background:var(--amberbg);color:var(--amber);border-bottom:1px solid var(--amberline);font-size:var(--fs-sm)}
 .cols,.vrow{display:grid;grid-template-columns:118px minmax(0,1.5fr) minmax(0,1.5fr) minmax(0,.8fr) minmax(0,.7fr) minmax(0,1.2fr);gap:var(--s3);align-items:center;padding:var(--s2) var(--s4)}
+.cols .right{text-align:right}
 .cols{font-size:var(--fs-xs);font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.4px;background:#F0F2F6;border-bottom:1px solid var(--line)}
 .vlist{list-style:none;margin:0;padding:0} .vlist li+li{border-top:1px solid var(--line)}
 .vrow{color:var(--ink);text-decoration:none;min-height:44px;font-size:var(--fs-sm)} a.vrow:hover{background:var(--neutralbg)} a.vrow:focus-visible{outline-offset:-3px}
@@ -130,7 +131,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
   {% if h.pause_text %}<p class="pause" role="status" data-pause="{{ h.code }}"><span aria-hidden="true">◆</span> {{ h.pause_text }}</p>{% endif %}
   {% if h.rows %}
   <div class="full">
-    <div class="cols" aria-hidden="true"><span>Time</span><span>Home</span><span>Crew</span><span>Robot</span><span>Vehicle</span><span style="text-align:right">Status</span></div>
+    <div class="cols" aria-hidden="true"><span>Time</span><span>Home</span><span>Crew</span><span>Robot</span><span>Vehicle</span><span class="right">Status</span></div>
     {% include "planning/_board_rows.html" with rows=h.rows %}
   </div>
   <div class="compact">
