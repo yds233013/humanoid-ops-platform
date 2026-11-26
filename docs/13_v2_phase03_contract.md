@@ -1021,9 +1021,8 @@ Rules for uncertain answers:
 - **Session expiry or revocation:** syncing is blocked until the user signs in again (HTTP 401). The queue stays.
 
 ### 15.6 Service worker updates and restarts
-- **New version:** waits until no command is in `sending`. It is never `skipWaiting` while unsent steps exist.
-  Activation shows "Update ready" and applies on the next page load. A new service worker never deletes the
-  IndexedDB database.
+- **New version:** superseded by 15.10 item 4 (an update may activate with unsent steps once queue compatibility
+  is proven). A new service worker never deletes the IndexedDB database.
 - **Restarts:** a browser or phone restart restores the queue from IndexedDB, and commands left in `sending` go back to
   `local`.
 - **Schema changes:** a later IndexedDB version upgrade migrates rows and never drops unsent ones.
@@ -1054,3 +1053,67 @@ interruption from an earlier run. Resolve it before requesting departure authori
 - **Abandonment:** skip, then reconcile, then the new generation.
 - **Service worker update** while steps are unsent: no loss.
 - **HTTP 200 without a confirmed result** never marks a step done.
+
+### 15.10 EM amendments (2026-11-26, binding; they override 15.1–15.9 where they differ)
+EM ruling: 03D architecture APPROVED; these five changes are part of the frozen contract. Engineers start after this
+commit without another architecture review.
+
+1. **Snapshots are bound to the account.**
+   - A cached snapshot is an IndexedDB row in a new store `snapshots`, keyed `${user_id}:${run}`, holding `user_id`,
+     `run`, `snapshot_version`, `fetched_at` and the snapshot body. No Cache Storage entry holds private run data;
+     the service worker caches only the page shell and static assets, which carry no run data.
+   - Offline reads return only snapshots whose `user_id` matches the current local identity (`device` store row
+     `current_user_id`, set at sign-in from the server, cleared at sign-out).
+   - An unknown, changed or expired identity locks private offline views ("Sign in again to see this run") until
+     the user signs in again. Sign-out and account switch make the previous account's snapshots unreadable
+     (cleared from the identity, rows kept only if they hold no data beyond the run code; otherwise deleted).
+   - The screen always calls a snapshot "Last known at HH:MM", never current authorization.
+2. **Sequence allocation is atomic, with one sync coordinator.**
+   - One IndexedDB read-write transaction over `queues` and `commands` gives out `seq`, writes the frozen command
+     and updates `next_seq`. Nothing else ever writes `next_seq`.
+   - One sync coordinator per `user:run:device`, using the Web Locks API (`navigator.locks.request`, name
+     `ops-field-sync:${queue_id}`) so it is released if the tab crashes. Without Web Locks, a lease row in
+     `queues` (`lease_owner`, `lease_until`, 30 s, renewed while sending) is used.
+   - Test: two tabs record ordinary steps at the same moment; both survive with distinct consecutive `seq`, and no
+     key changes after a refresh.
+3. **Unresolved protective reports keep protecting.**
+   - The "Robot must not operate" banner stays until the server confirms a safe resolution (the run snapshot shows
+     no open interruption or pause for that robot). A final rejection of a protective report never turns the banner
+     green or removes it; it changes to "Not accepted by the server: the robot must still not operate. Contact your
+     ops lead." with the stored reason, and a "Contact your ops lead" action showing the hub's ops lead names.
+   - Sign-out or a queue that cannot sync keeps the banner for that user and run.
+   - `confirmed` with `effect=protective_state` means only that the protective record was accepted. It is never
+     shown as permission to operate.
+4. **Service worker update rule.**
+   - IndexedDB contents do not depend on the service worker version. An update never deletes or rewrites unsent
+     commands. Any IndexedDB upgrade a new client needs is backward compatible with old queued rows (new fields
+     optional; no field renamed or removed in a version that may meet unsent rows).
+   - The queue module stamps `queue_schema` (integer) on each queue. A client that meets a queue whose schema it
+     cannot read stops syncing that queue and shows "Update required: saved steps are kept on this phone".
+   - The coordinator lock (item 2) means an old and a new tab cannot both send the same queue.
+   - Once those hold, a new version may activate with unsent steps (skipWaiting after the current batch finishes).
+     It does not wait for an empty queue.
+5. **Bootstrap and reconciliation.**
+   - Before its first ordinary command for a run, the phone reads the server ledger state for its device from the
+     snapshot (`generation`, `next_expected_seq`, `last_decided_seq`, `last_decided_outcome`) and creates its queue
+     from it. Offline with no queue yet: ordinary records are disabled ("Needs a connection once to start
+     recording"); protective reports still work (they do not depend on `seq`).
+   - After going offline the phone keeps its own allocation and never resets `next_seq` from an older snapshot.
+   - On reconnect each command's server result decides it; commands already decided on the server (KEY_REPLAY or
+     SEQ_DECIDED-style answers in 14.8) take the server's decision.
+   - `SEQ_TAKEN` from a second device is final for that command: shown as "Already recorded by {name}" with "Record
+     again as a new step" (a new command with a new key and new seq, never a renumbered old one).
+   - A queued command is never renumbered; its identity is frozen.
+   - Per-command results carry `channel`; a protective confirmation and an ordinary confirmation in the same response
+     are told apart by `channel` + `key`, never by position.
+
+**Slices (EM):** 03D-1 account-bound IndexedDB storage, atomic sequence allocation, durable queue state machine (plus
+the 15.7 code early, DB gate kept); 03D-2 sync coordinator, protective-first delivery, error handling, abandonment and
+reconciliation; 03D-3 progressive run page, service worker, responsive design and real-browser failure-injection tests.
+
+**Extra closure evidence (EM):** all of 15.9, plus two-tab concurrency, cross-account cached-snapshot isolation, a
+final protective rejection, and an update with queued commands.
+
+**Product debt for the final integrated review (not 03B or 03D blockers):** Today's issue-list pagination filters
+after its limit; plan-form resource labels lead with codes.
+
