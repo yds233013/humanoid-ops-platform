@@ -97,6 +97,9 @@ APP_FUNCTIONS: dict[str, str] = {
     "execution_field_report_device(bigint,bigint,text,integer)": (
         "crew of the run or the ops lead, with a current field grant at the run's hub"
     ),
+    "execution_field_sync_lock(bigint)": (
+        "field_ledger.claim's per-run ledger lock (execution/0010); no actor, writes only the run's lock row"
+    ),
 }
 
 # signature -> why ops_app must NOT execute it
@@ -113,6 +116,9 @@ NO_ACTOR = {
     "accounts_bootstrap_admin(bigint,text)",  # test_v2_03a_authority
     # the issuer is the second argument and is checked after the visit lock: tested below with a live visit
     "readiness_issue_authorization(bigint,bigint,timestamp with time zone,jsonb,bigint,jsonb,text)",
+    # the field claim's lock is taken before the identity and access rules run (a replay first): tested in
+    # tests/test_v2_03c_ledger.py (only the ledger references it; ops_app cannot write its table)
+    "execution_field_sync_lock(bigint)",
 }
 
 # Every actor-taking APP function, called with the actor {a} and targets that need no fixture: each checks the
@@ -215,6 +221,7 @@ GUARDED_TABLES = [
     "execution_field_command",  # v2 03C-1
     "execution_field_generation",
     "execution_field_device_report",
+    "execution_field_sync_lock",  # v2 03C-1 (execution/0010)
 ]
 
 DEFINER_SQL = """

@@ -1,7 +1,7 @@
 """v2 03C-1: the field-command ledger (docs/13_v2_phase03_contract.md 14.3, 14.5, 14.8; the shared Python
 contract for 03C). At-most-once application of field commands, not exactly-once delivery (10.E).
 
-    with field_ledger.claim(key, identity) as c:   # one durable transaction: the run row FOR UPDATE first
+    with field_ledger.claim(key, identity) as c:   # one durable transaction: the run's sync lock first
         if c.stored is not None:                   # a replay: return the stored outcome, run nothing
             ...
         elif c.decision == "held":                 # a gap: nothing is stored, the phone resends later
@@ -13,7 +13,7 @@ contract for 03C). At-most-once application of field commands, not exactly-once 
             c.reject(code, message)                #   durable, except KEY_REUSED, NOT_YOUR_RUN, NOT_PERMITTED
 
 Rules (execution_field_decide in execution/0009 is the single statement of them; the SECURITY DEFINER writer
-execution_field_record re-checks them under the same run lock, so a confirmed row can never be forged out of
+execution_field_record re-checks them under the same sync lock, so a confirmed row can never be forged out of
 order):
 
 1. The key first. A key already decided with an identical identity (digest, actor, run) is a replay:
@@ -32,9 +32,11 @@ other claim takes none. ``held`` and ``retry`` claim nothing: leave the block wi
 without confirm or reject rolls everything back and raises LedgerMisuse, so domain work never commits without
 its receipt.
 
-Concurrency: the run row lock serializes the claims of one run. A competing claim waits on it, then sees the
-replay, KEY_REUSED or SEQ_TAKEN. The lock order (run U -> the actor's grants S -> the domain's own locks) is
-in docs/evidence/03a_lock_graph.md section 5.
+Concurrency: the run's ledger-only sync lock (execution_field_sync_lock, never the run row) serializes the
+claims of one run. A competing claim waits on it, then sees the
+replay, KEY_REUSED or SEQ_TAKEN. The lock order (sync lock U -> the actor's grants S -> the domain's own
+locks in the global order, run row included) is in docs/evidence/03a_lock_graph.md section 5. Only the field
+ledger takes the sync lock; no online command does.
 
 Times: received_at is the database time at the start of the claim's transaction, decided_at the database time
 of the decision; device_observed_at is stored, never trusted, and NULL when its flag is ``out_of_range``.
@@ -261,8 +263,10 @@ class Claim:
     def _decide(self) -> None:
         ident = self.identity
         with connection.cursor() as cur:
-            cur.execute("SELECT id FROM execution_executionrun WHERE id = %s FOR UPDATE", [ident.run_id])
-            run_exists = cur.fetchone() is not None
+            # the ledger-only lock of the run (execution/0010), never the run row itself: the domain command
+            # takes its guard rows and then the run row in the global order (lock graph section 5)
+            cur.execute("SELECT execution_field_sync_lock(%s)", [ident.run_id])
+            run_exists = bool(cur.fetchone()[0])
             checkpoint("field_ledger.claim:locked")
             if run_exists:  # the actor's field grants at the run's hub FOR SHARE, until this transaction ends
                 cur.execute(

@@ -767,3 +767,21 @@ class FieldDeviceReport(models.Model):
 
     def __str__(self) -> str:
         return f"{self.device_id} run {self.run_id}: {self.unsent_count}"
+
+
+class FieldSyncLock(models.Model):
+    """The ledger-only serialization point of one run's field claims, abandonments and device reports
+    (execution/0010, EM ruling on 03C). One row per run, created on demand by execution_field_sync_lock and
+    only ever locked FOR UPDATE. ``run_id`` is deliberately NOT a foreign key: a foreign-key check would take
+    KEY SHARE on the run row, which online commands lock FOR UPDATE after their guard rows
+    (docs/evidence/03a_lock_graph.md section 5)."""
+
+    run_id = models.BigIntegerField(primary_key=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "execution_field_sync_lock"
+        ordering = ["run_id"]
+
+    def __str__(self) -> str:
+        return f"field sync lock of run {self.run_id}"
