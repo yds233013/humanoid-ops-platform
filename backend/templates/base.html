@@ -193,4 +193,7 @@ document.documentElement.classList.add('js');
   });
 })();
 </script>
+{% comment %}v2 03D-3: the field screen module (external, same origin: not an inline script). It keeps the phone's
+saved steps bound to the signed-in account, asks before signing out with unsent steps, and enhances the run page.{% endcomment %}
+<script type="module" src="/field/run.js" data-field-boot data-user="{% if request.user.is_authenticated %}{{ request.user.pk }}{% endif %}" data-user-name="{% if request.user.is_authenticated %}{{ request.user.get_full_name|default:request.user.get_username }}{% endif %}"></script>
 </body></html>

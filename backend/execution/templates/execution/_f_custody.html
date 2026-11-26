@@ -1,4 +1,4 @@
-{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/custody/" class="row" style="margin-top:10px" data-custody-form="1">{% csrf_token %}{% form_token %}
+{% load ui %}<form method="post" action="/execution/runs/{{ run.code }}/custody/" class="row" style="margin-top:10px" data-custody-form="1" data-field-form="custody" data-from="{{ custody.kind }}">{% csrf_token %}{% form_token %}
   <b>Record a custody move</b>
   <label>To <select name="to_kind">{% for k in move_targets %}<option value="{{ k }}"{% if k == preset %} selected{% endif %}>{{ k }}</option>{% endfor %}</select></label>
   <label>Custodian <select name="custodian">{% for p in persons %}<option value="{{ p.code }}"{% if p.pk == crew.0.pk %} selected{% endif %}>{{ p.label }}</option>{% endfor %}</select></label>

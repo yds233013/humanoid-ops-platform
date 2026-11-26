@@ -1,0 +1,9 @@
+{% comment %}v2 03D-3: what the offline forms need, as inert data (a template element is never rendered or submitted).
+run.js copies it into this account's snapshot on the phone, so the site check, custody and verification forms work
+without a connection even when they are not the next step yet. Crew, checklist items and unverified custody numbers
+only; nothing about the household.{% endcomment %}
+{% if can.record_field_event and not closed %}<template data-field-offline>
+{% for t in templates %}<i data-template="{{ t.version }}"{% if t.source == "synthetic_demo" %} data-demo="1"{% endif %}>{% for i in t.items %}<b data-item="{{ i.id }}">{{ i.label }}</b>{% endfor %}</i>{% endfor %}
+{% for p in crew %}<u data-person="{{ p.code }}">{{ p.label }}</u>{% endfor %}
+{% for ev in unverified %}<s data-custody-seq="{{ ev.seq }}"></s>{% endfor %}
+</template>{% endif %}

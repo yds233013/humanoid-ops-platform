@@ -29,7 +29,7 @@ addopts = "-ra --strict-markers"
 markers = [
     "perf: Slice 5 p95 time budget on the scale fixture (run with -m perf; skipped otherwise)",
     "xlsx: Slice 6 workbook reconciliation via LibreOffice headless (skipped when soffice is not installed)",
-    "browser: v2 03D real-browser tests (Playwright Chromium; no database)",
+    "browser: v2 03D real-browser tests (Playwright + Chromium; uv run playwright install chromium)",
 ]
 testpaths = ["tests"]
 
