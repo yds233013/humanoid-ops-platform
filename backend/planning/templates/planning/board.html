@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% load ui %}
 {% block title %}Dispatch board{% endblock %}
 {% block extra_css %}
-#attention,#hubs,.hub{scroll-margin-top:72px}
+#attention,#hubs,.hub{scroll-margin-top:96px}
 .code{color:var(--soft);font-weight:400;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
 .bhead{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s3);flex-wrap:wrap;margin:var(--s2) 0 var(--s3)}
 .bhead .sub{color:var(--soft);font-size:var(--fs-sm);margin:var(--s1) 0 0} .bhead .actions{display:flex;gap:var(--s2);flex-wrap:wrap}
@@ -10,16 +10,16 @@
 .planline summary{cursor:pointer;list-style:none;padding:var(--s3) 0;min-height:44px;box-sizing:border-box} .planline summary::-webkit-details-marker{display:none}
 .planline .morelink{color:var(--blue);font-weight:600;text-decoration:underline} .planline[open] .morelink{display:none} .planline p{margin:0 0 var(--s3)}
 .scopebtn{font-weight:600}
-.filters{display:flex;gap:var(--s3) var(--s5);flex-wrap:wrap;align-items:flex-end;margin:0 0 var(--s5);padding:var(--s3) var(--s4);background:var(--card);border:1px solid var(--line);border-radius:var(--radius);scroll-margin-top:72px}
+.filters{display:flex;gap:var(--s3) var(--s5);flex-wrap:wrap;align-items:flex-end;margin:0 0 var(--s5);padding:var(--s3) var(--s4);background:var(--card);border:1px solid var(--line);border-radius:var(--radius);scroll-margin-top:96px}
 .glist{list-style:none;margin:0;padding:0} .glist a{display:flex;flex-wrap:wrap;gap:0 var(--s2);align-items:baseline;min-height:44px;padding:var(--s2) 0;border-top:1px solid var(--line);color:var(--ink);text-decoration:none;font-size:var(--fs-sm)} .glist a:hover b{text-decoration:underline}
 .bcard details.fold>summary{padding:var(--s3) 0;min-height:44px;box-sizing:border-box}
 .filters .grp{display:flex;flex-direction:column;gap:var(--s1)} .filters .grp>.lbl{font-size:var(--fs-xs);font-weight:700;color:var(--soft);text-transform:uppercase;letter-spacing:.4px}
 .seg{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center}
-.seg a{text-decoration:none;display:inline-flex;align-items:center;min-height:44px;min-width:44px;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:var(--fs-sm)}
+.seg a{text-decoration:none;display:inline-flex;align-items:center;min-height:44px;min-width:44px;padding:var(--s2) var(--s3);border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:var(--fs-sm)}
 .seg a[aria-current]{background:var(--head);color:var(--head-ink);border-color:var(--head)}
 .datepick{display:flex;gap:var(--s2);align-items:center} .datepick input{min-height:44px} .datepick button{min-height:44px}
 .strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s3);margin:0 0 var(--s5)}
-.tile{display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);text-decoration:none;color:var(--ink);min-height:44px}
+.tile{display:flex;flex-direction:column;gap:var(--s1);background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);text-decoration:none;color:var(--ink);min-height:44px}
 a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-height:1.1;font-variant-numeric:tabular-nums;font-weight:700} .tile .what{font-size:var(--fs-sm);font-weight:600} .tile .scope{font-size:var(--fs-xs);color:var(--soft)}
 .tile.warn{background:var(--amberbg);border-color:var(--amberline)} .tile.bad{background:var(--redbg);border-color:var(--redline)}
 .sec{margin:0 0 var(--s6)} .sec>h2{font-size:var(--fs-lg);margin:0 0 var(--s3)} .sec>h2 .count{color:var(--soft);font-weight:400}
@@ -32,7 +32,7 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 .more{margin:var(--s2) 0 0;font-size:var(--fs-sm)} .more a{display:inline-flex;align-items:center;min-height:44px;font-weight:600}
 .hub{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin:0 0 var(--s4);overflow:hidden}
 .hubhead{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s3) var(--s5);flex-wrap:wrap;padding:var(--s3) var(--s4);border-bottom:1px solid var(--line)}
-.hubhead h3{margin:0;font-size:var(--fs-lg)} .hubhead h3 a{color:var(--ink);text-decoration:none;display:inline-flex;align-items:center;min-height:44px} .hubhead h3 a:hover{text-decoration:underline} .hubhead .meta{margin:2px 0 0;color:var(--soft);font-size:var(--fs-sm)}
+.hubhead h3{margin:0;font-size:var(--fs-lg)} .hubhead h3 a{color:var(--ink);text-decoration:none;display:inline-flex;align-items:center;min-height:44px} .hubhead h3 a:hover{text-decoration:underline} .hubhead .meta{margin:var(--s1) 0 0;color:var(--soft);font-size:var(--fs-sm)}
 .hubstats{display:flex;gap:var(--s4);margin:0;flex-wrap:wrap} .hubstats div{display:flex;flex-direction:column;min-width:64px} .hubstats dt{font-size:var(--fs-xs);color:var(--soft)} .hubstats dd{margin:0;font-weight:700;font-size:var(--fs-lg);font-variant-numeric:tabular-nums}
 .pause{margin:0;padding:var(--s2) var(--s4);background:var(--amberbg);color:var(--amber);border-bottom:1px solid var(--amberline);font-size:var(--fs-sm)}
 .cols,.vrow{display:grid;grid-template-columns:118px minmax(0,1.5fr) minmax(0,1.5fr) minmax(0,.8fr) minmax(0,.7fr) minmax(0,1.2fr);gap:var(--s3);align-items:center;padding:var(--s2) var(--s4)}
@@ -42,9 +42,9 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 .vrow{color:var(--ink);text-decoration:none;min-height:44px;font-size:var(--fs-sm)} a.vrow:hover{background:var(--neutralbg)} a.vrow:focus-visible{outline-offset:-3px}
 .vrow .c-time{font-variant-numeric:tabular-nums;white-space:nowrap} .vrow .c-home b{font-weight:600} .vrow .c-home .code{display:block;white-space:nowrap;font-size:var(--fs-xs)} .vrow .none{color:var(--soft)}
 .vrow .c-status{display:flex;flex-wrap:wrap;gap:var(--s1);align-items:center;justify-content:flex-end}
-.legacy{display:block;margin-top:2px;color:var(--amber);font-size:var(--fs-xs);font-weight:600}
-.vrow .c-home .zone{display:table;margin-top:2px}
-.zone{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--line);font-size:var(--fs-xs);color:var(--soft)}
+.legacy{display:block;margin-top:var(--s1);color:var(--amber);font-size:var(--fs-xs);font-weight:600}
+.vrow .c-home .zone{display:table;margin-top:var(--s1)}
+.zone{display:inline-block;padding:0 var(--s2);border-radius:999px;border:1px solid var(--line);font-size:var(--fs-xs);color:var(--soft)}
 .vrow .c-kit{display:contents}
 .vrow .lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .hubempty{margin:0;padding:var(--s4);color:var(--soft);font-size:var(--fs-sm)} .hubempty b{color:var(--ink)}
@@ -54,13 +54,14 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 .note{color:var(--soft);font-size:var(--fs-sm);margin:var(--s2) 0 0}
 @media (max-width:900px){
   .full{display:none} .compact{display:block}
-  .vrow{grid-template-columns:128px minmax(0,1fr) auto;grid-template-areas:"time home status" "time crew status" "time kit status";row-gap:2px;padding:var(--s3) var(--s4)}
+  .vrow{grid-template-columns:128px minmax(0,1fr) auto;grid-template-areas:"time home status" "time crew status" "time kit status";row-gap:var(--s1);padding:var(--s3) var(--s4)}
   .vrow .c-time{grid-area:time;align-self:start} .vrow .c-home{grid-area:home} .vrow .c-crew{grid-area:crew;color:var(--soft)} .vrow .c-kit{grid-area:kit;color:var(--soft)} .vrow .c-status{grid-area:status;align-self:start}
   .vrow .c-kit{display:block} .vrow .c-veh::before{content:" · "}
 }
 @media (max-width:700px){
   .strip{grid-template-columns:1fr 1fr 1fr;gap:var(--s2)} .tile{padding:var(--s2) var(--s3)} .tile .n{font-size:var(--fs-xl)}
   .bhead h1{font-size:var(--fs-xl)} .bhead .actions{width:100%} .bhead .actions .btn{flex:1}
+  .bhead{margin-bottom:var(--s2)} .bhead .sub{display:none} .planline{margin-bottom:var(--s3)} .strip{margin-bottom:var(--s4)}
   .filters{flex-direction:column;align-items:stretch} .datepick input{flex:1} .bhead .actions .scopebtn{flex-basis:100%}
   .cards{grid-template-columns:1fr} .bcard .btn{width:100%}
   .hubs-all .compact{display:none} .hubs-all .openhub{display:flex}
@@ -68,12 +69,13 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
   .hubstats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s2);width:100%} .hubstats div{min-width:0;justify-content:space-between} .hubstats dt{line-height:1.25}
   .vrow{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"time status" "home home" "crew crew" "kit kit"}
 }
+@media (min-width:701px) and (max-width:900px){#attention,#hubs,.hub,.filters{scroll-margin-top:176px}}
 {% endblock %}
 {% block content %}
 <div class="bhead">
   <div><h1>Dispatch</h1>
   <p class="sub"><span data-day="{{ b.day_key }}">{{ day_label }}{% if b.day_key == "today" or b.day_key == "tomorrow" %}, {{ b.day|date:"D j M" }}{% endif %}</span> · {{ scope_label|capfirst }} · times in {% workspace_tz_label %}</p></div>
-  <div class="actions"><a class="btn scopebtn" href="#filters" data-jump="filters">{{ day_label }} · {{ scope_label|capfirst }} <span aria-hidden="true">▾</span><span class="sr"> (change the day or hub)</span></a><a class="btn" href="/planning/{% if q_hub %}?{{ q_hub }}{% endif %}">Week list</a>{% if can_book %}<a class="btn" href="/planning/book/">Book a visit</a>{% endif %}</div>
+  <div class="actions"><a class="btn scopebtn" href="#filters" data-jump="filters">{{ day_label }}{% if b.day_key == "today" or b.day_key == "tomorrow" %}, {{ b.day|date:"D j M" }}{% endif %} · {{ scope_label|capfirst }} <span aria-hidden="true">▾</span><span class="sr"> (change the day or hub)</span></a><a class="btn" href="/planning/{% if q_hub %}?{{ q_hub }}{% endif %}">Week list</a>{% if can_book %}<a class="btn" href="/planning/book/">Book a visit</a>{% endif %}</div>
 </div>
 <details class="planline" data-planning-statement="1"><summary><b>Planning is not departure:</b> nothing here clears a robot to leave. <span class="morelink">More</span></summary>
 <p>"Available for planning" means the plan has no known blocker. It never means a robot may leave: departure is approved separately, on Departure readiness, after the day's checks.</p></details>
@@ -89,9 +91,8 @@ a.tile:hover{border-color:var(--blue)} .tile .n{font-size:var(--fs-2xl);line-hei
 <h2 id="attention-h">Needs attention {% if b.attention_total %}<span class="count">({{ b.attention_total }} visit{{ b.attention_total|pluralize }})</span>{% endif %}</h2>
 {% if cards %}<ol class="cards">
 {% for c in cards %}<li>{% if c.grouped %}<article class="bcard group" data-status="{{ c.status }}" data-group="{{ c.cause.key }}" data-count="{{ c.count }}" data-hub="{{ c.first.hub_code }}">
-  <div class="top"><span class="status t-{{ c.tone }}"><span class="shape" aria-hidden="true">{{ c.shape }}</span>{{ c.words }}</span><span>{{ c.count }} visits</span></div>
+  <div class="top"><span class="status t-{{ c.tone }}"><span class="shape" aria-hidden="true">{{ c.shape }}</span>{{ c.words }}</span><span>from <time datetime="{{ c.earliest.start|iso_instant }}">{{ c.earliest.start|local_time_tz }}</time></span></div>
   <h3>{{ c.title|capfirst }}</h3>
-  <p class="where">{{ c.first.hub_name }} · first on site <time datetime="{{ c.earliest.start|iso_instant }}">{{ c.earliest.start|local_time_tz }}</time></p>
   <div class="next">{% if c.can_fix %}<a class="btn primary" href="{{ c.cause.url }}" data-action="fix">{{ c.cause.fix }}<span class="sr"> ({{ c.cause.where }})</span></a><span class="who" data-who="1">{{ c.cause.where }} · you can do this.</span>
   {% else %}<a class="btn" href="{{ c.cause.url }}" data-action="fix">Open {{ c.cause.where }}</a><span class="who" data-who="1">{{ c.who_fix|capfirst }} can {{ c.cause.fix|lower }}.</span>{% endif %}</div>
   <details class="fold visits"><summary>Show the {{ c.count }} visits</summary><ul class="glist">{% for r in c.rows %}<li><a href="/planning/visits/{{ r.code }}/?review=1{% if q_hub %}&{{ q_hub }}{% endif %}#review" data-group-visit="{{ r.code }}"><time datetime="{{ r.start|iso_instant }}">{{ r.start|local_time }}</time> <b>{{ r.home }}</b>{% if r.robot %} · Robot {{ r.robot }}{% endif %} <span class="code">{{ r.code }}</span></a></li>{% endfor %}</ul></details>

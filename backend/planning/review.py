@@ -294,7 +294,7 @@ def _route_text(rt: travel.Route) -> str:
     from planning.models import TravelTime  # noqa: PLC0415
 
     ids = [x for x in (rt.out.version_id, rt.back.version_id) if x is not None]
-    versions = dict(TravelTime.objects.filter(pk__in=ids).values_list("pk", "version"))
+    versions: dict[int | None, int] = dict(TravelTime.objects.filter(pk__in=ids).values_list("pk", "version"))
     v_out, v_back = versions.get(rt.out.version_id), versions.get(rt.back.version_id)
     sources = {travel.SOURCE_WORDS.get(x.source, x.source) for x in (rt.out, rt.back)}
     source = " and ".join(sorted(sources))
@@ -388,7 +388,8 @@ def checks_for(
     veh = _sentences(b, {"VEHICLE_MISSING", "VEHICLE_CAPACITY_UNKNOWN", "VEHICLE_RESTRAINT_UNKNOWN"})
     if vehicle is not None and vehicle.hub_id != visit.hub_id:
         veh.append(
-            f"{vehicle.code} belongs to another hub, so the plan would be refused. Pick a vehicle at {hub}."
+            f"Vehicle {vehicle.code} belongs to another hub, so the plan would be refused. "
+            f"Pick a vehicle at {hub}."
         )
     out.append(
         Check("vehicle", "Vehicle", FAIL, " ".join(veh))
@@ -701,7 +702,7 @@ def _label(kind: str, code: str, by_code: dict[str, dict[str, Any]]) -> str:
     obj = by_code[kind].get(code)
     if kind in ("lead", "second") and obj is not None:
         return f"{person_name(obj)} ({code})"
-    return f"Robot {code}" if kind == "robot" else code
+    return f"Robot {code}" if kind == "robot" else f"Vehicle {code}"
 
 
 def _span(s: datetime, e: datetime) -> str:
@@ -733,8 +734,8 @@ def what_changed(visit: Visit, revision_no: int) -> dict[str, Any] | None:
         ("Crew", crew_names(prev.lead, prev.second) or "None", crew_names(cur.lead, cur.second) or "None"),
         (
             "Vehicle",
-            prev.vehicle.code if prev.vehicle else "None",
-            cur.vehicle.code if cur.vehicle else "None",
+            f"Vehicle {prev.vehicle.code}" if prev.vehicle else "None",
+            f"Vehicle {cur.vehicle.code}" if cur.vehicle else "None",
         ),
         ("On site", _span(prev.on_site_start, prev.on_site_end), _span(cur.on_site_start, cur.on_site_end)),
     ):

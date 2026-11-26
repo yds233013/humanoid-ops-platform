@@ -13,7 +13,7 @@
 <h3>{% if review.auto %}Best option, ready to save{% else %}Proposed change{% endif %}</h3>
 {% if review.auto %}<p class="calm" data-auto="1">We picked the option with the fewest risks for this time. Press Save plan to use it, or pick something else below.</p>{% endif %}
 <table class="diff"><thead><tr><th scope="col">What</th><th scope="col">Now</th><th scope="col">Proposed</th></tr></thead><tbody>
-{% for d in review.changes %}<tr><th scope="row">{{ d.title }}</th><td>{{ d.before }}</td><td><span aria-hidden="true">→ </span>{{ d.after }}</td></tr>{% endfor %}
+{% for d in review.changes %}<tr><th scope="row">{{ d.title }}</th><td>{{ d.before|codes_nowrap }}</td><td><span aria-hidden="true">→ </span>{{ d.after|codes_nowrap }}</td></tr>{% endfor %}
 </tbody></table>
 <h3>What we checked</h3>
 <ul class="checks" data-checks="1">{% for c in review.checks %}<li class="ck-{{ c.result }}" data-check="{{ c.key }}" data-result="{{ c.result }}"><span class="mk" aria-hidden="true">{{ c.mark }}</span><span><b>{{ c.title }}</b> <span class="sr">({{ c.words }})</span> {{ c.text }}</span></li>{% endfor %}</ul>
