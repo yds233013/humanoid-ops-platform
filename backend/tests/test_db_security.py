@@ -78,7 +78,10 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "'fleet_robot', 'planning_vehicle', 'hub_charger', "
             # v2 03B-1: the travel matrix and the regional pause are written only through SECURITY DEFINER
             # functions (planning/0013, operations/0011). The runtime role has SELECT only. Asserted below.
-            "'planning_travel_time', 'operations_region_pause') "
+            "'planning_travel_time', 'operations_region_pause', "
+            # v2 03C-1: the field-command ledger is written only through SECURITY DEFINER functions
+            # (execution/0009). The runtime role has SELECT only. Asserted below.
+            "'execution_field_command', 'execution_field_generation', 'execution_field_device_report') "
             "AND NOT has_table_privilege(current_user, c.oid, 'INSERT')"
         )
         assert cur.fetchall() == []
@@ -98,6 +101,9 @@ def test_runtime_role_has_dml_on_every_application_table(app_role_conn):
             "accounts_rolegrant",
             "planning_travel_time",
             "operations_region_pause",
+            "execution_field_command",
+            "execution_field_generation",
+            "execution_field_device_report",
         ):
             cur.execute(
                 "SELECT has_table_privilege(current_user, %s, 'SELECT'), "
