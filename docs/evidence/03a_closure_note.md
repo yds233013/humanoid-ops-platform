@@ -119,7 +119,6 @@ predicate benchmark (eligibility view, options list) is in the perf output. The 
 
 - Work orders keep a Python-only actor check, as designed in Phase 02. The same-hub trigger keeps robot and visit
   consistent.
-- Not hub-scoped yet: incidents, people, the timeline, the robot status and Issues pages.
 - Pause, stop, incidents, interruptions and hold placement accept a field role at any hub on purpose: they make
   things safer.
 - Suggest lists only same-hub, at-hub robots, but hub-aware Suggest with zones and travel is 03B.
@@ -128,8 +127,31 @@ predicate benchmark (eligibility view, options list) is in the perf output. The 
   guarded function.
 - An `ops_app` transaction holding grant locks can delay a revoke. An idle-in-transaction timeout would bound it;
   it is not set.
-- Creating a robot, vehicle or charger directly as `ops_app` at any hub is still possible (creation is checked in
-  Python only). Moving one is closed.
 - Refusal messages name times in UTC ("until 2026-12-08 03:35 UTC"), and the permission refusal does not name
   the hub.
 - Usability with independent people: UNVERIFIED.
+
+## Closure (EM ruling 2026-11-25): 03A CLOSED at `c8fd239`
+
+CI `c8fd239`: run 45747352996 success, 2185 passed, 0 failed. Two closure fixes after the first review:
+
+- **Guarded creation (`hub/0015`).** SECURITY DEFINER `fleet_create_robot`, `planning_create_vehicle` and
+  `hub_create_charger` copy the existing rules, check the role at the target hub and write the audit row. `ops_app`
+  INSERT is revoked on `fleet_robot`, `planning_vehicle` and `hub_charger`. Every creation path is routed through
+  them: the setup page, the API, the resources and charger pages, the seeds and the demo builder.
+  `tests/test_v2_03a_creation.py` has 25 tests.
+- **Read scope of the remaining pages.** These are scoped by the record's hub: robot status, incidents (queue, API,
+  execution list, detail), Issues, timeline, close-out (inside the SQL), production blockers per robot hold, and
+  people (list and detail). Metrics, health and capacity are regional-only by permission; the tests prove this.
+  `tests/test_v2_03a_read_scope.py`.
+- **Refusal wording.** Transfer refusals name the record's hub and who can act, with workspace-local times.
+- **Statement budget.** The close-out budget regression was fixed by reading the viewer's grants once per page. No
+  budget was raised.
+
+Accepted limitations (not 03A blockers; 03B must not hide them behind polished UI):
+- **Issues paging.** Issues are filtered after the read model's page limit. Pagination and evaluation scope must be
+  fixed before Issues is relied on for dispatch triage.
+- **Global counts.** Some production-blocker counts are global and must be labelled regional.
+- **Actor-id trust model.** It is unchanged.
+- **Work orders.** The actor check is Python-only, as designed in Phase 02. Every new 03B guarded operation meets the
+  database boundary.

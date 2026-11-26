@@ -1,6 +1,6 @@
 # Fleet Operations Platform v2: Phase 03 contract (multiple hubs, regional dispatch, offline field use)
 
-Status: **conditionally approved by the EM 2026-11-25 (section 10 binding); 03A authorized after the amendments**. Phase 02 closed and was released
+Status: **approved by the EM 2026-11-25** (sections 10 and 12 binding). **03A CLOSED at `c8fd239`.** The 03B interface is frozen in 13.5. Phase 02 closed and was released
 for the fictional demo at tag `v2-phase02-release` (`48f3298`, application code `c03fa53`).
 
 **Goal:** a regional ops lead can run three hubs from one place, and a crew can keep recording a visit when the phone
@@ -593,3 +593,76 @@ differ, 13.4 wins.
      is desktop-only.
    - **Time zones:** time zones come from real IANA conversion. No zone abbreviation is hard-coded.
 - 13.3 exit tests are extended with tests for each of the five corrections.
+
+### 13.5 03B interface (frozen by the lead before code)
+
+This section implements 13.2 as corrected by 13.4. Names are binding; bodies belong to the engineers. 03B is built in
+two waves on milestone branches off `v2/phase03`.
+
+**Wave 1 (in parallel)**
+- **03B-1 data and gates:** zones, travel matrix, regional pause.
+- **03B-2 dispatch board and reassign:** S1, S2, S6. Built against the read accessors below. Each accessor returns
+  "unknown/none" until 03B-1 lands.
+
+**Wave 2 (after wave 1 merges)**
+- **03B-3:** next free time (S3), the pause and zones/travel screens (S4, S5) and the three-hub demo.
+- Then the lead's design review at 1024, 768 and 375 px.
+
+**03B-1 database**
+- `platform_core_zone(id, hub_id, code, name, active, created_at)`, unique (hub, code). Retired = `active=false`; the
+  history is kept.
+- `planning_site.zone_id` (nullable) and `planning_visit.zone_id` (nullable). A visit's zone is its site's zone at
+  plan time.
+- `planning_travel_time(id, from_zone_id, to_zone_id, minutes, version, source, effective_from, created_by_id,
+  created_at)`:
+  - append-only;
+  - unique (from_zone, to_zone, version);
+  - `effective_from >= now()` is enforced on insert;
+  - written only by SECURITY DEFINER `planning_set_travel_time(actor, from_zone, to_zone, minutes, source,
+    effective_from, request_id)` (admin or ops lead).
+- `planning_visit_revision.travel_version_id` (nullable): the matrix row a saved plan used.
+- `operations_region_pause(id, hub_id, zone_id null, kind 'pause'|'lift', pause_id null, reason, actor_id,
+  created_at)`:
+  - append-only;
+  - written only by `operations_pause_region(actor, hub, zone, reason, request_id)`, needing `operations.pause` (the
+    regional ops lead, or a `safety_pause` grant at that hub);
+  - and by `operations_lift_pause(actor, pause, reason, request_id)`, needing `operations.lift_pause` (the regional ops
+    lead only).
+- `operations_active_pause(hub bigint, zone bigint) RETURNS TABLE(pause_id, scope, reason, since)`:
+  - a hub pause overrides;
+  - an unknown (NULL) zone is covered by any active zone pause at its hub.
+- **Gates:** `readiness_issue_authorization` and the departure guard refuse while `operations_active_pause(visit.hub,
+  visit.zone)` returns a row.
+- **Lock order:** every one of authorization, departure, pause, lift, and a change to a visit's hub or zone takes the
+  settings lock first, then the hub row (`platform_core_hub` FOR SHARE for gates, FOR UPDATE for pause and lift). The
+  order is documented in `docs/evidence/03a_lock_graph.md`.
+
+**Read accessors (Python; 03B-2 uses these, 03B-1 implements them)**
+- `planning.zones.zone_of(visit) -> Zone | None`
+- `planning.travel.minutes(from_zone, to_zone, at) -> TravelValue(minutes | None, version_id | None, source)`. A missing
+  pair gives minutes None, read as "Travel time unknown".
+- `operations.pauses.active_for(hub_id, zone_id) -> PauseInfo | None`
+- `operations.pauses.board_summary(hub_ids) -> dict[hub_id, list[PauseInfo]]`. One statement.
+
+**03B-2 board**
+- `/planning/board/`: the new Dispatch default, with "Week list" kept.
+- Built from one read snapshot (like Today), with a statement-count test that stays constant in hubs and visits.
+- **Status words:** "Available for planning", "At risk", "Blocked", "Paused", each with its shape icon.
+- **Attention order:** blocked, then paused, then at risk; then departure proximity; then visit code.
+- **Reassign panel:** "What we checked" lines come from the same checks the guarded plan command runs. They are
+  advisory, and the command checks again on save.
+
+**03B-3**
+- `planning.next_free(visit_or_request, *, limit=3) -> NextFreeResult(slots, exhausted: bool)`. The search follows
+  13.4 item 4.
+- Owner settings: `dispatch_lookahead_days` (demo 7) and `hub_operating_hours` per hub (demo 08:00-20:00).
+
+**EM conditions at the freeze (2026-11-25, 03A closure ruling)**
+- 03B-2 may build the UI against these accessors, but every real reassignment calls the final guarded planning path.
+  No working reassignment may bypass the pause or travel rules while 03B-1 is still unmerged.
+- Wave 2 starts only after the wave 1 integration checks pass. The final 03B acceptance and design review come before
+  03C.
+- Global counts (production blockers) are labelled "all hubs" wherever they are shown. The dispatch board does not
+  depend on Issues paging until Issues paging is fixed.
+- Every new 03B guarded write meets the database boundary: SECURITY DEFINER, actor and hub authority, `ops_app` with no
+  direct DML, and catalog-audit classification.
