@@ -328,6 +328,7 @@ def test_save_goes_through_the_guarded_plan_command_and_says_not_cleared(w, monk
     assert r.redirect_chain[-1][0].endswith(f"/planning/visits/{code}/?changed=3#changed")
     assert "Plan saved. Planning feasible: not cleared to depart." in html
     changed = html.split('id="changed"', 1)[1].split("</section>", 1)[0]
+    changed = re.sub(r"<[^>]+>", "", changed)  # codes are wrapped so they never split across lines
     assert "What changed" in changed and "Robot R-01" in changed and f"Robot {form['robot']}" in changed
     assert "Planning feasible: not cleared to depart." in changed
 
