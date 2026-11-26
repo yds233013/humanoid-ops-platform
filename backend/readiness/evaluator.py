@@ -72,6 +72,7 @@ EVIDENCE_KIND_LABELS = {
 VISIT_NOT_CONFIRMED = "VISIT_NOT_CONFIRMED"
 VISIT_ALREADY_DEPARTED = "VISIT_ALREADY_DEPARTED"
 PLANNING_PREFIX = "PLANNING_"
+REGION_PAUSED = "REGION_PAUSED"  # v2 03B-1: a regional pause covers the visit
 PLANNING_NOT_FEASIBLE = "PLANNING_NOT_FEASIBLE"  # fallback if planning is not feasible without a blocker
 RESERVATIONS_MISSING = "RESERVATIONS_MISSING"
 POLICY_MISSING = "POLICY_MISSING"
@@ -416,6 +417,11 @@ def _gate_planning(w: _World, b: _Blockers) -> Plan | None:
                 f"Planning is {plan.feasibility} now",
                 "Re-check the visit plan",
             )
+    elif plan.snapshot.get("paused"):
+        # v2 03B-1 (I-9): planning is still feasible under a regional pause, but nothing may be authorized to
+        # leave. Advisory here; the database gate (operations/0011) decides under the hub row lock.
+        paused = next(x for x in plan.blockers if x["code"] == "PAUSED")
+        b.add(REGION_PAUSED, paused["message"], "Wait until the regional ops lead lifts the pause")
     return plan
 
 

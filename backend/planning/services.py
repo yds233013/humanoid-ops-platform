@@ -139,6 +139,8 @@ class Plan:
     snapshot: dict[str, Any]
     intervals: dict[str, list[tuple[str, datetime, datetime]]] = field(default_factory=dict)
     trip: tuple[datetime, datetime] | None = None
+    # v2 03B-1: the travel-matrix route this decision used (None: the visit has no zone, recorded minutes)
+    travel: Any = None
 
 
 def _add(blockers: list[dict[str, str]], level: str, code: str, message: str, action: str) -> None:
@@ -206,16 +208,38 @@ def evaluate(
     visit: Visit | None = None,
     periodic: fleet_services.PeriodicStatus | None = None,
     maintenance: list[str] | None = None,
+    travel: Any = None,
 ) -> Plan:
     """``periodic``: an already computed X-3 periodic status of ``robot`` in the current mode, reused for its
     eligibility instead of reading it again (readiness evaluator; see fleet.services.evaluate_eligibility).
-    ``maintenance``: likewise, the robot's already read blocking maintenance reasons (v2 02C)."""
+    ``maintenance``: likewise, the robot's already read blocking maintenance reasons (v2 02C).
+    ``travel``: v2 03B-1, a ``planning.travel.Route`` for a NEW decision on a zoned visit (``new_route``): its
+    matrix minutes replace ``travel_out`` / ``travel_back``, and a missing pair blocks ("Travel time unknown",
+    never a fallback). Without it the given (recorded) minutes are used, as before 03B."""
     b: list[dict[str, str]] = []
     snap: dict[str, Any] = {
         "evaluated_at": timezone.now().isoformat(),
         "site_version": site.version,
         "note": NOT_DEPARTURE,
     }
+    zoned = visit is not None and visit.zone_id is not None
+    if travel is not None:
+        travel_out, travel_back = travel.out.minutes, travel.back.minutes
+        snap["travel"] = {
+            "source": "matrix",
+            "out_version_id": travel.out.version_id,
+            "back_version_id": travel.back.version_id,
+            "hub_zone_id": travel.hub_zone_id,
+            "zone_id": travel.zone_id,
+        }
+        if not travel.zone_active:
+            _add(
+                b,
+                "blocked",
+                "ZONE_RETIRED",
+                "The home's zone is retired; new visits cannot use it",
+                "Move the home to an active zone, then plan again",
+            )
 
     # --- site assessment
     a = current_assessment(site, start.astimezone(ZoneInfo(site.timezone)).date())
@@ -256,7 +280,16 @@ def evaluate(
 
     # --- unknown durations
     insp = _int_setting("pre_visit_inspection_min")
-    if travel_out is None or travel_back is None:
+    if (travel_out is None or travel_back is None) and zoned:
+        # v2 03B-1 (10.H, 13.4 item 3): no matrix value for this route. Blocked, never estimated.
+        _add(
+            b,
+            "blocked",
+            "TRAVEL_UNKNOWN",
+            "Travel time unknown",
+            "Ask an admin or the ops lead to set the travel time for this route (Settings > Travel times)",
+        )
+    elif travel_out is None or travel_back is None:
         _add(b, "blocked", "UNKNOWN_TRAVEL", "Travel time is unknown", "Enter travel time out and back")
     if insp is None:
         _add(
@@ -381,7 +414,26 @@ def evaluate(
                 "Record the restraint kit",
             )
 
-    plan = Plan("feasible", b, snap)
+    # --- v2 03B-1 regional pause (I-9): planning stays allowed and says so; authorization and departure
+    # are refused (database gates)
+    if visit is not None:
+        from operations.pauses import (
+            PAUSED_TEXT,
+            active_for,
+        )  # operations depends on planning, not the reverse
+
+        paused = active_for(visit.hub_id, visit.zone_id)
+        if paused is not None:
+            snap["paused"] = {"pause_id": paused.pause_id, "scope": paused.scope, "where": paused.where}
+            _add(
+                b,
+                "paused",
+                "PAUSED",
+                f"{PAUSED_TEXT}. Departures for {paused.where} are paused: {paused.reason}",
+                "Planning can go ahead; the regional ops lead lifts the pause before anyone can leave",
+            )
+
+    plan = Plan("feasible", b, snap, travel=travel)
     if None in (travel_out, travel_back, insp, load, charge):
         plan.feasibility = "blocked"
         return plan
@@ -937,9 +989,15 @@ def request_visit(
         _positive("Travel back", travel_back_min)
         s = _site(site_code)
         lock_guards(share_sites=[s.pk], label="planning.request_visit")
+        # v2 03B-1: the zone is the home's (the database sets it on insert whatever is sent; same value)
         v = Visit.objects.create(
-            code=_next_visit_code(), site=s, created_by=actor, **({"hub": hub} if hub is not None else {})
+            code=_next_visit_code(),
+            site=s,
+            created_by=actor,
+            zone_id=s.zone_ref_id,
+            **({"hub": hub} if hub is not None else {}),
         )
+        route = new_route(v, on_site_start, on_site_end)
         p = evaluate(
             site=s,
             start=on_site_start,
@@ -953,14 +1011,22 @@ def request_visit(
             second=None,
             vehicle=None,
             visit=v,
+            travel=route,
+        )
+        t_out, t_back = (
+            (route.out.minutes, route.back.minutes)
+            if route is not None
+            else (travel_out_min, travel_back_min)
         )
         r = VisitRevision.objects.create(
             visit=v,
             revision_no=1,
             on_site_start=on_site_start,
             on_site_end=on_site_end,
-            travel_out_min=travel_out_min,
-            travel_back_min=travel_back_min,
+            travel_out_min=t_out,
+            travel_back_min=t_back,
+            travel_version_id=route.out.version_id if route is not None else None,
+            travel_back_version_id=route.back.version_id if route is not None else None,
             tasks=tasks or [],
             required_consent_scopes=required_scopes or ["presence"],
             feasibility=p.feasibility,
@@ -976,6 +1042,16 @@ def request_visit(
     return run_command(
         actor, "planning.request_visit", permission="planning.plan", payload=payload, handler=handler, hub=hub
     )
+
+
+def new_route(visit: Visit, start: datetime, end: datetime) -> Any:
+    """v2 03B-1: the travel-matrix route of a NEW planning decision on ``visit`` (``planning.travel``), or
+    None for a visit with no zone (it keeps the recorded minutes, as before 03B). One statement if zoned."""
+    if visit.zone_id is None:
+        return None
+    from planning import travel
+
+    return travel.route(visit.hub_id, visit.zone_id, start, end)
 
 
 def _departed(visit: Visit) -> bool:
@@ -1069,6 +1145,15 @@ def plan_visit(
         t_out = travel_out_min if travel_out_min is not None else prev.travel_out_min
         t_back = travel_back_min if travel_back_min is not None else prev.travel_back_min
         site = Site.objects.get(pk=v.site_id)
+        if v.zone_id != site.zone_ref_id:
+            # v2 03B-1: a visit's zone is its home's zone at plan time (the database refuses any other value
+            # and a retired zone; this change takes the settings lock, then the hub rows, as authorization
+            # does)
+            v.zone_id = site.zone_ref_id
+            v.save(update_fields=["zone"])
+        route = new_route(v, start, end)
+        if route is not None:  # a changed plan is checked fresh against the matrix in force
+            t_out, t_back = route.out.minutes, route.back.minutes
         plan = evaluate(
             site=site,
             start=start,
@@ -1082,6 +1167,7 @@ def plan_visit(
             second=second,
             vehicle=vehicle,
             visit=v,
+            travel=route,
         )
         if plan.feasibility == "blocked" and v.status in ("planned", "confirmed"):
             raise Conflict(
@@ -1095,6 +1181,8 @@ def plan_visit(
             on_site_end=end,
             travel_out_min=t_out,
             travel_back_min=t_back,
+            travel_version_id=route.out.version_id if route is not None else None,
+            travel_back_version_id=route.back.version_id if route is not None else None,
             tasks=prev.tasks,
             required_consent_scopes=prev.required_consent_scopes,
             robot=robot,
@@ -1151,6 +1239,9 @@ def plan_visit(
                 "feasibility": plan.feasibility,
                 "label": LABELS[plan.feasibility],
                 "blockers": [x["message"] for x in plan.blockers],
+                "travel_version_id": rev.travel_version_id,
+                "travel_back_version_id": rev.travel_back_version_id,
+                "paused": bool(plan.snapshot.get("paused")),
             },
         )
 

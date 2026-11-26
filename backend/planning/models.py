@@ -23,6 +23,16 @@ class Site(models.Model):
     version = models.PositiveIntegerField(default=1)  # guard version, bumped by triggers
     created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    # v2 03B-1: the zone record of the home (column zone_id; ``zone`` above stays the coarse text label).
+    # NULL = unknown. Only an active zone can be set (trigger planning_site_zone_guard).
+    zone_ref = models.ForeignKey(
+        "platform_core.Zone",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+        db_column="zone_id",
+    )
 
     class Meta:
         constraints = [
@@ -224,6 +234,12 @@ class Visit(models.Model):
     version = models.PositiveIntegerField(default=1)  # guard version, bumped on every update (trigger)
     # v2 03A-1: the DISPATCH hub. Its robot and vehicle must belong to it (trigger planning_visit_hub_guard).
     hub = hub_field()
+    # v2 03B-1: the DESTINATION zone, always its site's zone at plan time (set by the database on insert and
+    # re-synced by plan_visit; trigger planning_visit_zone_guard). NULL = unknown (a pre-03B visit or a home
+    # with no zone): covered by any active zone pause at the visit's hub.
+    zone = models.ForeignKey(
+        "platform_core.Zone", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
 
     def __str__(self) -> str:
         return self.code
@@ -253,6 +269,14 @@ class VisitRevision(models.Model):
     reason = models.TextField(blank=True)
     created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    # v2 03B-1 (13.4 item 3): the travel-matrix rows this saved plan used (out: hub zone -> visit zone; back:
+    # the reverse pair). NULL = the minutes were not from the matrix (a visit with no zone, as before 03B).
+    travel_version = models.ForeignKey(
+        "TravelTime", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    travel_back_version = models.ForeignKey(
+        "TravelTime", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
 
     class Meta:
         constraints = [
@@ -323,3 +347,38 @@ class Reservation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.resource_id} {self.purpose}"
+
+
+class TravelTime(models.Model):
+    """One version of the travel time of an ORDERED zone pair (v2 03B-1, contract 13.4 item 3, 13.5).
+
+    Append-only; written only by the SECURITY DEFINER function ``planning_set_travel_time`` (admin or ops
+    lead; the runtime role has SELECT only). Versions per pair are 1, 2, 3...; effective_from is never in
+    the past and never before the previous version's, so at any time exactly one version per pair is in
+    force: the highest version whose effective_from has passed (``planning_travel_minutes``). A missing
+    pair is "Travel time unknown", never a made-up value."""
+
+    SOURCES = [("company", "Company value"), ("demo", "Demo value")]
+    from_zone = models.ForeignKey("platform_core.Zone", on_delete=models.PROTECT, related_name="+")
+    to_zone = models.ForeignKey("platform_core.Zone", on_delete=models.PROTECT, related_name="+")
+    minutes = models.PositiveIntegerField()
+    version = models.PositiveIntegerField()
+    source = models.CharField(max_length=10, choices=SOURCES)
+    effective_from = models.DateTimeField()
+    created_by = models.ForeignKey(USER, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "planning_travel_time"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["from_zone", "to_zone", "version"], name="uniq_travel_time_pair_version"
+            ),
+            models.CheckConstraint(
+                condition=Q(minutes__gte=1) & Q(minutes__lte=1440), name="travel_time_minutes_range"
+            ),
+            models.CheckConstraint(condition=Q(version__gte=1), name="travel_time_version_positive"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.from_zone_id}->{self.to_zone_id} v{self.version}: {self.minutes} min"
