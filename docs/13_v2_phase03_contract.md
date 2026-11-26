@@ -666,3 +666,173 @@ two waves on milestone branches off `v2/phase03`.
   depend on Issues paging until Issues paging is fixed.
 - Every new 03B guarded write meets the database boundary: SECURITY DEFINER, actor and hub authority, `ops_app` with no
   direct DML, and catalog-audit classification.
+
+## 14. 03C interface: server field-command protocol (frozen by the lead before code, 2026-11-26)
+
+03B closed at `5449acd` (EM 2026-11-26). 03C is authorized for development, not release. This section implements
+sections 3 (I-2 to I-6), 4 (items 5 to 7), 6 and 10.D, 10.E and 10.F. Names and meanings are binding. 03C is
+server-only: no service worker or offline UI (that is 03D).
+
+### 14.1 Endpoint and schema
+
+`POST /api/field/sync`. JSON. Authentication is the user's session, plus the CSRF header. An ended or revoked
+session gets HTTP 401 and nothing is read or stored.
+
+**Request:**
+```json
+{
+  "device_id": "uuid (made once per browser install, stored on the phone)",
+  "run": "EX-0007",
+  "unsent_count": 3,
+  "commands": [
+    {
+      "key": "uuid (made on the phone, one per command, never reused)",
+      "channel": "ordinary | protective",
+      "seq": 4,
+      "last_confirmed_seq": 3,
+      "command": "trip.arrived_site",
+      "payload": {},
+      "device_observed_at": "2026-11-27T09:41:05-08:00"
+    }
+  ]
+}
+```
+
+- **Batch limits:** at most 20 commands per request, with each payload at most 4 KB. A larger request gets HTTP 413,
+  and nothing is applied.
+- **`seq`:** required on the ordinary channel. The protective channel must send `null`.
+- **`unsent_count`:** stored as the device's *last reported* count, with its time. Pages show "last reported unsent
+  count", never a live number.
+
+**Response (HTTP 200 unless stated):**
+```json
+{
+  "server_time": "2026-11-27T09:41:07-08:00",
+  "run": "EX-0007",
+  "last_confirmed_seq": 4,
+  "next_expected_seq": 5,
+  "results": [
+    {"key": "uuid", "outcome": "confirmed | rejected | held | retry", "reason_code": "",
+     "message": "plain words", "seq": 4, "recorded_at": "...", "result": {}}
+  ]
+}
+```
+
+There is one result per command, in request order. Outcomes:
+
+| Outcome | Meaning | Final? | What the phone does |
+|---|---|---|---|
+| `confirmed` | Applied and committed. Also returned for a replay of a confirmed key with the same payload. | Final | Mark the step done |
+| `rejected` | Not applied, and never will be. The reason is stored durably; a replay returns the same answer. | Final | Show the reason; do not resend |
+| `held` | Valid, but waiting for an earlier ordinary `seq` of this run. Nothing is stored. | No | Resend later with the same key |
+| `retry` | A temporary server problem (lock timeout, deadlock, maintenance). Nothing is committed. | No | Resend later with the same key |
+
+### 14.2 Command classes (I-2)
+
+| Class | Commands | Via sync |
+|---|---|---|
+| **A: online only** | depart (`record_departure`); session start and resume; hand the robot over to the site; recover a robot; anything issuing or using an authorization | Always `rejected` `ONLINE_ONLY`: "Needs a connection. Do not start." |
+| **B: protective** (channel `protective`) | session pause; session stop; report an incident or problem; open an interruption | Applied **regardless of sequence gaps** (10.D). Each keeps `last_confirmed_seq` for causality. |
+| **C: records** (channel `ordinary`) | trip events (arrived at site, left site, arrived at hub); back to vehicle; custody verification; site check result; observation note | Applied in `seq` order, each through the existing command and trigger at apply time (I-3) |
+
+The server classifies by command name. A class B or C command sent on the wrong channel is `rejected`
+`WRONG_CHANNEL`. An unknown command name is `rejected` `UNKNOWN_COMMAND`.
+
+**Protective stop that cannot be applied as recorded** (10.D), for example when the session is not active in the
+server's state:
+- the server records an interruption, and places a hold where the incident rules call for one;
+- it answers `confirmed` with `result.effect = "protective_state"` and a message saying what was recorded instead;
+- it never claims the session stopped.
+
+### 14.3 At-most-once, sequence and replay (10.E)
+
+Each key is applied at most once, then committed. The rules:
+
+1. **Same key, same command and payload hash:** returns the stored outcome (`confirmed` or `rejected`). The domain
+   command does not run again.
+2. **Same key, different command or payload:** `rejected` `KEY_REUSED`. Nothing runs, and the original row is
+   unchanged.
+3. **Same run and `seq`, different key:** `rejected` `SEQ_TAKEN`. Nothing runs. This covers two phones of one crew:
+   one step is confirmed, the other is refused with "Already recorded by {name} at {local time}".
+4. **Two simultaneous requests claiming the same `seq` or key:** the run row lock serializes them, so there is one
+   transactional outcome. The other request gets rule 1, 2 or 3.
+5. **Gaps:** an ordinary command whose `seq` is higher than `next_expected_seq` is `held`, and nothing is stored.
+   When the missing `seq` arrives and is decided, either confirmed or rejected, the next one can apply.
+6. **Abandonment:** `POST /api/field/abandon` `{run, seq, reason}`, by a crew member of the run or the ops lead.
+   - It writes a final `abandoned` row for that `seq`. An old delayed batch can never overwrite it: it is
+     `rejected` `ABANDONED`.
+   - Later held ordinary commands of that run are then `rejected` `AFTER_ABANDONED`, in order, because they assumed
+     the missing step.
+   - The crew re-records from the server's current state.
+7. **Atomicity:** for each command, one database transaction does all of these:
+   - claims the key and the `seq`;
+   - runs the domain command through `run_command` (the existing permission checks and triggers);
+   - writes the outcome row.
+
+   A domain refusal rolls the domain work back to a savepoint, and the `rejected` row is still committed. A crash
+   commits neither the effect without its receipt, nor the receipt without its effect.
+8. **Rejected steps still advance the sequence:** a `rejected` ordinary command takes its `seq`, so the run moves on.
+   The phone shows the reason and does not resend.
+
+### 14.4 Time, authority and scope (I-5, 10.F)
+
+- `recorded_at` is database time, and is used by every gate. `device_observed_at` is stored and shown as "phone time".
+  It is never used for a gate, counter or expiry.
+- **Bounds:** the phone time must be no earlier than the run's departure minus 5 minutes, and no later than the
+  receipt time plus `field_clock_skew_min` (an owner setting; demo value 2).
+  - On the **ordinary** channel, a time outside the bounds is `rejected` `DEVICE_TIME_OUT_OF_BOUNDS`.
+  - On the **protective** channel, a protective action is **never refused for a clock**. The phone time is stored as
+    unknown and flagged "phone clock out of range".
+- **Authority:** checked at apply time against the actor's *current* grants at the run's hub (03A-2 triggers). A
+  revoked grant means `rejected` `NOT_PERMITTED`.
+- **Wrong run:** a run that is not the actor's crew run, for a non-regional actor, is `rejected` `NOT_YOUR_RUN`, and
+  nothing else is read.
+- **Device binding:** a queue belongs to (user, run, device). A key first claimed by another user or device is
+  `rejected` `KEY_REUSED`.
+- **Nothing from the client is trusted:** no cached readiness, old authorization or optimistic phone state is read.
+  The server state at apply time decides.
+
+### 14.5 Storage and privileges
+
+- **`execution_field_command`:** append-only. Columns:
+  - `key` (uuid, unique), `actor_id`, `device_id`, `run_id`;
+  - `channel`, `seq` (null for protective), `command`, `payload_hash`;
+  - `device_observed_at`, `device_time_flag`;
+  - `received_at`, `decided_at`;
+  - `outcome` (confirmed, rejected or abandoned), `reason_code`, `message`, `result` (jsonb).
+
+  Unique (`run_id`, `seq`) where `seq` is not null.
+- **`execution_field_device_report`:** (`device_id`, `run_id`, `actor_id`, `unsent_count`, `reported_at`).
+  Append-only; the newest row wins.
+- **Writes:** only through SECURITY DEFINER `execution_field_record(...)` and `execution_field_abandon(...)`, owned by
+  `ops_owner` with a fixed search_path; EXECUTE for `ops_app` only. `ops_app` has SELECT only on both tables, and
+  they are classified in the catalog audit.
+- **Locks:** the run row FOR UPDATE first, then whatever the domain command takes (03A and 03B lock graph,
+  unchanged). The lock graph doc gets a 03C section.
+
+### 14.6 03C exit tests
+
+All of section 6, items 1 to 9, against the endpoint without any front end, plus:
+- **Direct SQL as `ops_app`:** inserting or updating field-command rows, or forging a `confirmed` outcome, is
+  refused.
+- **Competing devices:** two devices racing for the same `seq`, in both orders, with the waiter seen in `pg_locks`.
+- **Protective channel with a gap:** a protective incident with `seq` 2 missing places the hold at once.
+- **Protective stop on a non-active session:** gives the protective state, never "stopped".
+- **Class A:** every class A command is refused with `ONLINE_ONLY`.
+- **Abandonment:** cannot be overwritten by a late batch.
+- **Revocation:** a revoked grant or an ended session mid-queue is refused.
+- **Performance:** a batch of 20 commands at p95 of 1 s or less.
+
+### 14.7 Carried from the 03B closure (EM), to be done alongside 03C
+
+- **P1:** label next-free results: "Suggested planning time. Final checks, including charging, site requirements and
+  regional pauses, run when you save. This is not departure authorization." Show the outstanding checks before
+  saving.
+- **P2:**
+  - limit plan-form resources to the visit's hub;
+  - compact the mobile header without hiding safety messages;
+  - in Issues, apply the hub scope before the limit;
+  - repeat readiness performance runs under controlled conditions.
+- **P3:**
+  - more varied next-free slots;
+  - terminology.
