@@ -78,8 +78,11 @@ class PlanOptions:
     leads: list[Option] = field(default_factory=list)
     seconds: list[Option] = field(default_factory=list)
     vehicles: list[Option] = field(default_factory=list)
-    # 03B closure (P2): options of other hubs left out by ``restrict_to_hub``, counted per list
+    # 03B closure (P2): options of other hubs left out by ``restrict_to_hub``, counted per list, and the
+    # unrestricted options they came from (Review options still checks a forged robot or vehicle code and says
+    # the database would refuse it)
     elsewhere: dict[str, int] = field(default_factory=dict)
+    everything: PlanOptions | None = field(default=None, repr=False)
 
     @property
     def elsewhere_text(self) -> str:
@@ -417,7 +420,7 @@ def restrict_to_hub(opts: PlanOptions, hub_id: int | None) -> PlanOptions:
     """
     if hub_id is None:
         return opts
-    out = PlanOptions(charge_on=opts.charge_on)
+    out = PlanOptions(charge_on=opts.charge_on, everything=opts)
     for name in ("robots", "leads", "seconds", "vehicles"):
         kept, other = [], 0
         for o in getattr(opts, name):
