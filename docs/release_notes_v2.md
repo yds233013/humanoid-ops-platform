@@ -149,11 +149,20 @@ not a load test with many users, and not a measurement on hosted infrastructure.
 | 2 | `test_operations_ui.py` | parametrized roles for which metrics is 403, asserted by the test above them | n/a (covered) |
 | 1 | `test_s7_ui.py` | legacy guard for a build without `withdraw_hold_policy` | n/a (the function exists) |
 
-The suite runs against a real PostgreSQL 16. It includes direct-SQL bypass attempts as the restricted runtime role,
+The suite runs against a real PostgreSQL 16 (the hosted demos run PostgreSQL 18.7, validated by the deployment
+rehearsal; automated PostgreSQL 18 coverage is planned for v2.1). It includes direct-SQL bypass attempts as the restricted runtime role,
 concurrency tests in both orders with the waiting transaction observed in `pg_locks`, failure injection on the sync
 endpoint, and real-browser tests of the offline screen with the network cut.
 
 ## Known limitations
+
+- **Hosted latency (observed on the rehearsal environment, not a controlled benchmark):** Fleet 4.4–6.9 s, Operations
+  briefing 1.9–3.0 s, Today 1.8–2.7 s. Known performance debt for v2.1 (with the all-hubs briefing headroom: 18 ms
+  in its slowest CI round).
+- **PostgreSQL:** CI runs 16; the hosted demos run 18.7, validated by the deployment rehearsal only.
+
+**v2.1 backlog (EM, not part of this release):** P1 hosted Fleet latency; P1 PostgreSQL 18 CI; P2 briefing headroom;
+P2 hosted Today round trips; P2 independent operator usability testing; P3 touch targets, naming, refusal page.
 
 **Scope and validation**
 

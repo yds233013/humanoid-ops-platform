@@ -9,7 +9,7 @@ the engineering branch.
 | Piece | Where | Notes |
 |---|---|---|
 | Web app (`web` service) | Railway, built from `backend/Dockerfile`, started by `backend/deploy/start.sh` | gunicorn, 2 workers, runs as the restricted `ops_app` database role |
-| PostgreSQL 16 | Railway Postgres service (one per workspace) | schema owner `ops_owner` (migrations only), runtime role `ops_app` (no DDL, no audit UPDATE/DELETE) |
+| PostgreSQL (16 in CI and local Docker; 18.7 on the hosted Railway demos) | Railway Postgres service (one per workspace) | schema owner `ops_owner` (migrations only), runtime role `ops_app` (no DDL, no audit UPDATE/DELETE) |
 | Staging | a separate Railway environment `staging` | its own database, secret key, cookie names and domain, no outbound integrations (contract 12.3) |
 
 Start sequence (`start.sh`): `deploy/bootstrap.py` (roles and database) -> `migrate` as owner -> demo seed **only when
@@ -90,7 +90,8 @@ DB_NAME=ops_restore DJANGO_DB_IDENTITY=owner python backend/manage.py migrate --
 curl -s https://<restored-app>/healthz
 ```
 
-Use client tools of the **same major version as the server** (PostgreSQL 16): an older `pg_dump` refuses to dump a newer
+Use client tools of the **same major version as the server** (PostgreSQL 16 locally and in CI; 18.7 on the hosted
+Railway demos, so run `pg_dump` inside the Postgres container there): an older `pg_dump` refuses to dump a newer
 server. Cut over by changing the `web` service's `DB_HOST`/`DB_PORT`/`DB_NAME` variables (or the Postgres reference
 variable) to the restored database and redeploying. **Rehearse quarterly and before every destructive migration**, and
 record the date and the script's RESULT line in section 9.
@@ -423,3 +424,17 @@ release, then run the demo cron once ("Run now") so the rebuild includes the Pha
 Result: the 01A migration is additive and backward compatible: the previous release starts and serves every core
 page on the migrated database, and rolling forward again works. Note: `railway up` from a directory that is not
 linked to the project deploys nothing; pass `--project <id> --environment <env> --service web` explicitly.
+
+## 10. PostgreSQL versions and hosted performance (v2.0.0)
+
+- **PostgreSQL 16** is the primary automated validation environment (CI and local Docker).
+- **PostgreSQL 18.7** is what Railway runs for the hosted demos (`phase02rc`, `v2rc`). It was validated through the
+  v2.0.0 deployment rehearsal: installation, 34 migrations, runtime privileges, hosted smoke and real-browser offline
+  checks, backup restore, rollback and roll-forward (`docs/evidence/07_release_rehearsal.md`).
+- Automated regression coverage on PostgreSQL 18 is planned for v2.1. There is no claim of comprehensive automated
+  PostgreSQL 18 compatibility yet.
+- **Hosted latency (observed, not a controlled p95 benchmark):** Today 1.8–2.7 s, Operations briefing 1.9–3.0 s,
+  Fleet 4.4–6.9 s on `v2rc`. Accepted as known performance debt for v2.0.0; v2.1 investigates database round trips,
+  query time and web-to-database latency separately (network latency is a plausible contributor, not an established
+  cause).
+
