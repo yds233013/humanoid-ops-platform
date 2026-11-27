@@ -6,10 +6,9 @@ UNVERIFIED.
 
 ## Before you start
 
-- **Where:** the public demo, https://web-phase02rc.up.railway.app (the Phase 02 release, one hub; the demo link
-  will be updated at release, after the v2 release approval), or a local copy built with `build_demo_workspace`
-  (see the README). This script follows the v2 demo, which has three hubs (Oakland `OAK`, South Bay `SJC`,
-  Marin `SRF`). On the Phase 02 demo, skip the steps marked **(v2)**.
+- **Where:** the public demo, https://web-phase02rc.up.railway.app (v2.0.0), or a local copy built with
+  `build_demo_workspace` (see the README). The demo has three hubs (Oakland `OAK`, South Bay `SJC`, Marin `SRF`).
+  Steps marked **(v2)** are new in v2.
 - **Logins:** one per role. Credentials are shared separately by the project owner. This script uses:
   - `dana.ortiz`, the regional ops lead;
   - `jordan.lee`, crew A lead at Oakland (crew A is Jordan Lee and Amara Okafor, van `VAN-1`);

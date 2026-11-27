@@ -22,7 +22,7 @@ server has not checked.
 |---|---|
 | Version | v2.0.0 |
 | Validated application SHA | `d58f13a` (later commits are documentation only) |
-| Demo | https://web-phase02rc.up.railway.app is the Phase 02 release. The demo link will be updated at release. |
+| Demo | https://web-phase02rc.up.railway.app runs v2.0.0 (deployed 2026-11-27; `docs/evidence/07_release_closure.md`) |
 | Full CI | Run 45920094281 at `d58f13a`: **2,566 passed, 20 skipped, 0 failed** (skips explained below) |
 | Verified synthetic scale | 500 robots, 5 hubs, 5,001 visits; three performance rounds at `d58f13a`, all within budget (45920137597, 45920148983, 45920287628) |
 | Integrated acceptance (Phase 06) | 16/16 gates (15 with evidence + EM release approval); 15-step real-browser lifecycle; `docs/evidence/06_integrated_acceptance.md` |

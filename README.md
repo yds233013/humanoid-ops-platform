@@ -76,8 +76,9 @@ widths) and `docs/evidence/04_briefing/`.
 
 ## Demo
 
-- **Public demo:** https://web-phase02rc.up.railway.app. This is the **Phase 02 release** (one hub). The demo link
-  will be updated at release, after the v2 release approval.
+- **Public demo:** https://web-phase02rc.up.railway.app runs **v2.0.0** (three fictional hubs: Oakland, South Bay,
+  Marin; offline field screen; Operations briefing). The Phase 01 demo (https://web-northbay.up.railway.app) and the
+  original v1 demo are kept unchanged.
 - The demo is "Northbay Home Robotics", a fictional company. It is rebuilt every day at 12:00 UTC; during the
   rebuild (under a minute) the site shows "The demo is being refreshed" and signs everyone out. Changes made by
   visitors are not kept.
