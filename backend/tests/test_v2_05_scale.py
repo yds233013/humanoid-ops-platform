@@ -6,6 +6,9 @@ Fixture: tests.scale05_world.scale_world_500 (500 robots, 5 hubs, 5,000 visits, 
 Whole requests through the Django test client as a regional ops lead (every hub visible: the widest read):
 
   * pages (budget p95 <= 2,000 ms): /hub/, Today (/ops/), the dispatch board (/planning/board/), /readiness/
+  * the Operations briefing (Phase 06, budget p95 <= 2,000 ms): /ops/briefing/ (all hubs) and
+    /ops/briefing/?hub=<first hub> (one hub); every sample must render without an "error-" notice (a read that
+    failed inside the briefing's savepoints would otherwise be timed as a fast, empty page)
   * POST /api/field/sync with 20 commands (budget p95 <= 1,000 ms): 20 session observations per request, from
     the crew of a run on site, fresh keys and the next 20 sequence numbers each time (every one applies)
 
@@ -30,6 +33,7 @@ from tests.test_operations_perf import RUNS, Counter, _perf_selected, environmen
 PAGE_MS = 2000
 SYNC_MS = 1000
 PAGES = ("/hub/", "/ops/", "/planning/board/", "/readiness/")
+BRIEFING = "/ops/briefing/"
 SYNC = "/api/field/sync"
 DEVICE = "0b6f3c9e-0000-4000-8000-000000000505"
 
@@ -77,7 +81,7 @@ def test_500_robot_p95(request):
     from django.utils import timezone
 
     from tests.conftest import make_user
-    from tests.scale05_world import cardinalities, scale_world_500
+    from tests.scale05_world import HUBS, cardinalities, scale_world_500
 
     t0 = time.perf_counter()
     with transaction.atomic():  # scale_world uses a temp table that lives for one transaction
@@ -97,6 +101,21 @@ def test_500_robot_p95(request):
             assert resp.status_code == 200, (path, resp.status_code)
 
         results[path] = {**_sample(get), "budget_ms": PAGE_MS, "loadavg_at_start": environment()["loadavg"]}
+
+    from platform_core.models import Hub
+
+    one_hub = Hub.objects.order_by("code").values_list("code", flat=True).first()
+    for path in (BRIEFING, f"{BRIEFING}?hub={one_hub}"):
+
+        def brief(path: str = path) -> None:
+            resp = c.get(path)
+            assert resp.status_code == 200, (path, resp.status_code)
+            b = resp.context["b"]
+            errors = [n.key for n in b.notices if n.key.startswith("error-")]
+            assert not errors, (path, errors)
+            assert len(b.hubs) == (1 if "?hub=" in path else HUBS), (path, [h.code for h in b.hubs])
+
+        results[path] = {**_sample(brief), "budget_ms": PAGE_MS, "loadavg_at_start": environment()["loadavg"]}
 
     run, crew = _sync_run(w)
     fc = Client()

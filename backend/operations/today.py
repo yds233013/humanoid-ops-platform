@@ -720,7 +720,11 @@ SECTIONS: list[tuple[str, str]] = [
 ]
 
 
-def build_today(at: datetime, user: Any, hub_ids: set[int] | None = None) -> Today:
+def build_today(
+    at: datetime, user: Any, hub_ids: set[int] | None = None, *, sections: tuple[str, ...] | None = None
+) -> Today:
+    """``sections`` (v2 06): read only these keys of SECTIONS (None = all, the Today page). The briefing asks
+    for visits and issues only: it reads the fleet itself and never shows the production-blocker count."""
     roles = active_roles(user)
     day = local_day(at)
     t = Today(at=at, local_date=day, local_date_text=day.strftime("%a %-d %b"), hub_ids=hub_ids)
@@ -731,6 +735,8 @@ def build_today(at: datetime, user: Any, hub_ids: set[int] | None = None) -> Tod
         "blockers": _read_blockers,
     }
     for key, what in SECTIONS:
+        if sections is not None and key not in sections:
+            continue
         try:
             with transaction.atomic():  # a savepoint: a failed statement cannot poison the snapshot
                 readers[key](t)

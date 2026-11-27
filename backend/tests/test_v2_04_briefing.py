@@ -617,6 +617,35 @@ def test_statement_count_is_constant_in_fleet_size_and_within_budget():
     print(f"BRIEFING statements: {small} (budget {BRIEFING_BUDGET})")
 
 
+def test_the_fleet_is_read_once_per_briefing(monkeypatch):
+    """v2 06 (query batching, 500-robot benchmark): the briefing asks Today for its visit and issue sections
+    only. Before, Today's fleet section ran fleet_overview a second time (the heaviest read at 500 robots, for
+    counts the page never shows) and its production-blocker panel ran too. The Today page still reads both."""
+    w = build(robots=5)
+    ow.report(w, "R-02")
+    calls = {"fleet_overview": 0, "production_blockers": 0}
+    for name in calls:
+        real = getattr(rm, name)
+
+        def counted(*a: Any, _name: str = name, _real: Any = real, **k: Any) -> Any:
+            calls[_name] += 1
+            return _real(*a, **k)
+
+        monkeypatch.setattr(rm, name, counted)
+    body = get(w.ops)
+    assert calls == {"fleet_overview": 1, "production_blockers": 0}, calls
+    assert 'data-unknown="error-' not in body
+    assert len(items(question(body, 1), "robot")) >= 1  # the incident hold on R-02: question 1 still answered
+    for name in calls:
+        calls[name] = 0
+    get(w.ops, f"{URL}?hub={Hub.objects.order_by('code').first().code}")
+    assert calls == {"fleet_overview": 1, "production_blockers": 0}, calls
+    for name in calls:
+        calls[name] = 0
+    assert _client(w.ops).get("/ops/").status_code == 200
+    assert calls["fleet_overview"] >= 1 and calls["production_blockers"] >= 1, calls  # Today: unchanged
+
+
 def test_no_wording_claims_an_ai_or_an_agent():
     """The EM ruling: a deterministic generator is never presented as an AI or an agent."""
     from pathlib import Path

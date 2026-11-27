@@ -518,6 +518,9 @@ def _codes_line(items: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], in
     return items[:LIST_LIMIT], max(0, len(items) - LIST_LIMIT)
 
 
+BRIEFING_TODAY_SECTIONS = ("visits", "issues")  # the Today sections build_briefing reads
+
+
 def build_briefing(at: datetime, user: Any, scope: Any) -> Briefing:
     from hub import charging  # noqa: PLC0415
 
@@ -526,7 +529,10 @@ def build_briefing(at: datetime, user: Any, scope: Any) -> Briefing:
     hub_ids = scope.ids
 
     board = _try(b, "board", "today's visit plans", lambda: pboard.build_board(at, scope, day, "today"))
-    t = today.build_today(at, user, hub_ids)  # its own savepoints and notices per section
+    # Today, with its own savepoints and notices per section; only the sections read below (v2 06, query
+    # batching): Today's fleet section would run fleet_overview a second time (the heaviest read at 500
+    # robots) for counts the briefing never shows, and its production-blocker count is not on this page.
+    t = today.build_today(at, user, hub_ids, sections=BRIEFING_TODAY_SECTIONS)
     robots = _try(b, "robots", "the robots", lambda: readmodels.fleet_overview(at))
     queue = _try(b, "incidents", "open incidents", lambda: readmodels.incident_queue(at))
 
