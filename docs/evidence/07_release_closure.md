@@ -125,3 +125,19 @@ v2.0.0 (`52613c0`, application tree `d58f13a`) is the public Northbay demo at ht
 All 16 hosted checks passed on the public URL, the pre-cutover backup is verified and kept off the volume, the daily
 refresh targets only phase02rc, and the Phase 01 and legacy demos are unchanged. No application code change was
 made during the release. Released.
+
+## Final engineering approval (EM, 2026-11-27 UTC)
+
+**Status: COMPLETE AND RELEASED.** Northbay Fleet Operations Platform v2.0.0 is accepted and released at commit
+`52613c0`, with the validated application tree of `d58f13a`. All agreed engineering, safety, performance, product
+acceptance and hosted deployment gates passed; the public deployment passed all 16 hosted acceptance checks, with no
+known unresolved critical or high-severity defects. Phase 07 is closed. Remaining improvements are in the v2.1
+backlog (P1 hosted Fleet latency and round trips; P1 PostgreSQL 18 CI; P2 briefing headroom; P2 hosted Today; P2
+independent operator usability testing; P3 touch targets, naming, refusal screens).
+
+This release is a synthetic robotics operations platform. It does not certify real-world robot operation, and
+independent operator usability remains unverified.
+
+Environments: `phase02rc` = live v2.0.0 public demo; `v2rc` = kept as the isolated v2.1 testing environment (refresh
+disabled); `northbay` = Phase 01 demo; `production` = legacy v1 demo; `staging` unchanged. The `v2.0.0` tag is
+immutable; v2.1 work starts on a new branch from `main`.
