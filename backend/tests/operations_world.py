@@ -1117,9 +1117,12 @@ def scale_world(
         cur.execute(
             "UPDATE scale_plan p SET revision_id = r.id FROM planning_visitrevision r WHERE r.visit_id = p.visit_id"
         )
-        # reservations: robot timeline, crew shifts, vehicle trip (readiness/0006 section A + E)
-        cur.execute(
-            """
+        # reservations: robot timeline, crew shifts, vehicle trip (readiness/0006 section A + E).
+        # Inserted in 8 chunks of visits: at 500 robots one ~45,000-row statement can pass the app's 10 s
+        # statement_timeout on a loaded host (Phase 06 install/perf run).
+        for chunk in range(8):
+            cur.execute(
+                """
             INSERT INTO planning_reservation (purpose, starts_at, ends_at, released_reason, resource_id, revision_id)
             SELECT t.purpose, t.s0, t.s1, '', t.res, p.revision_id
             FROM scale_plan p
@@ -1146,10 +1149,10 @@ def scale_world(
                 x.unload_end),
               ((SELECT id FROM planning_resource WHERE vehicle_id = p.vehicle_id), 'trip', x.load_start, x.unload_end)
             ) t(res, purpose, s0, s1)
-            WHERE p.revision_id IS NOT NULL
+            WHERE p.revision_id IS NOT NULL AND p.visit_id %% 8 = %(chunk)s
             """,
-            {"tr": TRAVEL, "ld": LOAD, "insp": INSP, "ch": CHARGE},
-        )
+                {"tr": TRAVEL, "ld": LOAD, "insp": INSP, "ch": CHARGE, "chunk": chunk},
+            )
         cur.execute(
             """
             WITH t AS (

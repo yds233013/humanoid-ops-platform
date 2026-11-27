@@ -313,7 +313,7 @@ def reservation_rows(v: Visit) -> list[dict[str, Any]]:
     qs = (
         Reservation.objects.filter(revision__visit=v)
         .select_related("resource__person__user", "resource__robot", "resource__vehicle", "revision")
-        .order_by("released_at", "starts_at")
+        .order_by("released_at", "starts_at", "id")
     )
     for r in qs:
         res = r.resource
