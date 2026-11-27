@@ -120,11 +120,12 @@ tr.unknown td,li.unknown{background:var(--amberbg)} tr.rec td{background:var(--b
   table.stack,table.stack tbody,table.stack tr,table.stack td{display:block;width:100%}
   table.stack thead{position:absolute;left:-9999px}
   table.stack tr{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin:0 0 var(--s3);padding:var(--s1) 0}
-  table.stack td{border-bottom:1px solid var(--neutralbg);padding:var(--s2) var(--s3);display:flex;gap:var(--s3);justify-content:space-between;text-align:right}
+  table.stack td{border-bottom:1px solid var(--neutralbg);padding:var(--s2) var(--s3);display:flex;flex-wrap:wrap;gap:var(--s1) var(--s3);justify-content:space-between;text-align:right}
   table.stack td:last-child{border-bottom:0}
   table.stack td::before{content:attr(data-label);font-weight:600;color:var(--soft);text-align:left;flex:0 0 38%}
   table.stack td[colspan]{display:block;text-align:center} table.stack td[colspan]::before{content:none}
-  table.stack td>*{text-align:right}
+  table.stack td>*{text-align:right;margin-left:auto;max-width:100%;min-width:0} /* several blocks in one cell wrap under the label, never past the edge (06) */
+  .page-head .back,main summary,table.stack td>a{padding-top:2px;padding-bottom:2px} /* tap targets of at least 24 px on a phone (06) */
 }
 
 .op-blockers{border-color:var(--amberline)} .op-blockers.prod{border-color:var(--redline)} .op-asof{margin:0 0 var(--s3)}

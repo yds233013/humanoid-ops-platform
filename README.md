@@ -24,7 +24,7 @@ database (not only on the screen), and never shows a robot as "cleared" from dat
 
 | Person | Main screens | What they do |
 |---|---|---|
-| **Ops lead** (primary user) | Today, Briefing, Dispatch board, Departure readiness, Issues | Sees what needs attention, plans visits, approves departures, triages problems, closes trips |
+| **Regional ops lead** (primary user; covers every hub) | Today, Briefing, Dispatch board, Departure readiness, Issues | Sees what needs attention, plans visits, approves departures, triages problems, closes trips |
 | **Hub technician** | Hub work queue, Charging, Stock, Transfers | Charges robots, counts kits, works hub tasks, moves robots between hubs |
 | **Field crew** (lead and second) | My visits, the field run page on a phone | Records the departure, arrival, site check, session and return, also with no signal |
 | **Safety reviewer, engineering lead** | Policies, rules, holds, incidents | Approve policies and rules (two people, never the author), set severity, release holds |
@@ -66,12 +66,13 @@ All screenshots are from the fictional demo workspace, taken in a real browser b
 
 | | |
 |---|---|
-| **Dispatch board** (ops lead, desktop) <br> ![Dispatch board](docs/evidence/03b_design_review/board_today_1024.png) | **Operations briefing** (ops lead, desktop) <br> ![Operations briefing](docs/evidence/04_briefing/briefing_1024.png) |
-| **Field run page offline** (crew, 375 px): a step saved on the phone, and "Needs a connection. Do not start." on an online-only step <br> ![Offline step saved](docs/evidence/03d_design_review/02_offline_saved_and_class_a_disabled_375.png) | **Protective report saved offline** (crew, 375 px): "Robot must not operate" stays until the server confirms <br> ![Protective report](docs/evidence/03d_design_review/05_protective_saved_offline_375.png) |
-| **Regional pause** (ops lead) <br> ![Regional pause](docs/evidence/03b_design_review/pause_1024.png) | **Plan review before saving** (ops lead) <br> ![Plan review](docs/evidence/03b_design_review/review_V0105_1024.png) |
+| **Today** (ops lead, desktop): what needs attention, readiness coverage, robots and issues <br> ![Today](docs/evidence/06_screens/wt01_today_1024.png) | **Dispatch board** (ops lead, desktop): grouped attention cards, one action each <br> ![Dispatch board](docs/evidence/06_screens/wt01_board_tomorrow_1024.png) |
+| **Operations briefing** (ops lead, desktop) <br> ![Operations briefing](docs/evidence/06_screens/wt01_briefing_1024.png) | **Review options before saving** (ops lead): "What we checked" and "not cleared to depart" <br> ![Plan review](docs/evidence/06_screens/wt02_review_options_1024.png) |
+| **Field run page offline** (crew, 375 px): the pill reads Offline; steps are saved on this phone and sent later <br> ![Field run page offline](docs/evidence/06_screens/wt06_offline_online_only_disabled_375.png) | **Protective report saved offline** (crew, 375 px): "Robot must not operate" stays until the server confirms <br> ![Protective report](docs/evidence/06_screens/wt06_protective_saved_offline_375.png) |
 
-More screenshots: `docs/evidence/03b_design_review/`, `docs/evidence/03d_design_review/` (21 states of the phone
-screen at three widths) and `docs/evidence/04_briefing/`.
+More screenshots: `docs/evidence/06_screens/` (the walkthrough and the main screens at 1024, 768 and 375 px),
+`docs/evidence/03b_design_review/`, `docs/evidence/03d_design_review/` (21 states of the phone screen at three
+widths) and `docs/evidence/04_briefing/`.
 
 ## Demo
 
@@ -111,7 +112,8 @@ The demo builder prints the login names. Every login uses the `DEV_SEED_PASSWORD
 make run       # the app on http://127.0.0.1:8000, connected as the restricted runtime role (ops_app)
 ```
 
-`docker compose up --build` runs the database, migrations, the development seed and the app in containers instead.
+`docker compose up --build` runs the database, migrations, a shorter development seed (users, fleet, planning,
+guardrails and readiness; not the execution and operations parts of `make seed`) and the app in containers instead.
 `curl localhost:8000/healthz` reports the database and migration state.
 
 ## Tests

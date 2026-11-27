@@ -201,7 +201,7 @@ def visit_dossier(visit: Visit) -> list[DossierEntry]:
         add(
             inc.reported_at,
             "incident",
-            f"Incident {inc.code}: {inc.event_type} (occurred {inc.occurred_at.isoformat()}, "
+            f"Incident {inc.code}: {inc.event_type} (occurred {local_dt(inc.occurred_at)}, "
             f"{inc.knowledge_source}); robot hold {inc.hold.code}",
             inc_rev,
             inc.manifest_id,

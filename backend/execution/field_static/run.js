@@ -619,8 +619,8 @@ function leadsNode() {
   const leads = (S.snapshot && S.snapshot.ops_leads) || [];
   return h("div", { class: "f-leads", id: "f-leads", hidden: true },
     leads.length
-      ? [h("b", { text: "Ops leads for this hub" }), h("ul", {}, leads.map((l) => h("li", { text: l.name })))]
-      : h("span", { text: "No ops lead is listed on this phone for this hub. Call your hub." }));
+      ? [h("b", { text: "Regional ops leads (they cover every hub, this one included)" }), h("ul", {}, leads.map((l) => h("li", { text: l.name })))]
+      : h("span", { text: "No regional ops lead is listed on this phone. Call your hub." }));
 }
 
 function latestProtective(state) {
