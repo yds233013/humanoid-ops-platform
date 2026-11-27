@@ -1,7 +1,7 @@
 # Release notes: Fleet Operations Platform v2
 
-**DRAFT: not approved for release.** This document becomes final only after the EM's v2 release approval. Until
-then it authorizes nothing, and the numbers marked `FINAL_CI` are placeholders.
+**v2.0.0, approved for release by the EM on 2026-11-26** (validated application SHA `d58f13a`). This approval covers a
+synthetic robotics operations platform; it is not certification for real-world robot operation.
 
 All data in this project is fictional. No value in the product or the demo is a real robot specification,
 maintenance interval, travel time, price or safety approval. Nothing has been used with real robots, real homes or
@@ -20,11 +20,15 @@ server has not checked.
 
 | | |
 |---|---|
-| Candidate | `FINAL_CI` (commit to be filled in at release) |
+| Version | v2.0.0 |
+| Validated application SHA | `d58f13a` (later commits are documentation only) |
 | Demo | https://web-phase02rc.up.railway.app is the Phase 02 release. The demo link will be updated at release. |
-| Full CI | Latest full run on `v2/phase03`: **2,533 passed** at `81f9d9c`, with one browser-test setup error, since fixed (`3fa3a18`). Final: `FINAL_CI` passed, `FINAL_CI` failed. |
-| Verified synthetic scale | 500 robots, 5 hubs, 5,000 visits (Phase 05, three CI rounds within budget) |
-| Integrated acceptance (contract 15.11, Phase 06) | Pending at the time of writing |
+| Full CI | Run 45920094281 at `d58f13a`: **2,566 passed, 20 skipped, 0 failed** (skips explained below) |
+| Verified synthetic scale | 500 robots, 5 hubs, 5,001 visits; three performance rounds at `d58f13a`, all within budget (45920137597, 45920148983, 45920287628) |
+| Integrated acceptance (Phase 06) | 16/16 gates (15 with evidence + EM release approval); 15-step real-browser lifecycle; `docs/evidence/06_integrated_acceptance.md` |
+| Known unresolved critical/high defects | 0 |
+| Independent operator usability | Unverified |
+| Real-robot deployment | Not validated |
 
 ## What each phase added
 
@@ -131,7 +135,19 @@ not a load test with many users, and not a measurement on hosted infrastructure.
 | 03B closure, `5449acd` | 2,282 passed |
 | 03C closure, `e24c713` | 2,417 passed |
 | Latest full CI on `v2/phase03`, `81f9d9c` | 2,533 passed, one browser-test setup error (fixed in `3fa3a18`) |
-| Release candidate | `FINAL_CI` |
+| Release candidate `d58f13a` (run 45920094281) | 2,566 passed, 20 skipped, 0 failed |
+
+**Why 20 tests are skipped in the main CI job** (none is an unexecuted acceptance gate):
+
+| Count | Tests | Reason | Where they run |
+|---|---|---|---|
+| 9 | `test_operations_perf.py` p95 budgets | marked `perf` | `perf.yml`, three rounds at `d58f13a` |
+| 1 | `test_v2_05_scale.py` 500-robot p95 | marked `perf` | `perf.yml`, three rounds at `d58f13a` |
+| 1 | `test_v2_03b_readiness_perf_repeat.py` | marked `perf`; 03B repeat measurement | run for 03B evidence (`03b_readiness_perf.md`); readiness is also measured in both `perf.yml` suites |
+| 5 | `test_capacity_workbook.py` LibreOffice checks | need LibreOffice | the separate `xlsx` CI job (installs LibreOffice), success |
+| 1 | `test_v2_03d_design_review.py` | screenshot generator, only with `HOP_03D_SHOTS=1` | run to produce `docs/evidence/03d_design_review/` |
+| 2 | `test_operations_ui.py` | parametrized roles for which metrics is 403, asserted by the test above them | n/a (covered) |
+| 1 | `test_s7_ui.py` | legacy guard for a build without `withdraw_hold_policy` | n/a (the function exists) |
 
 The suite runs against a real PostgreSQL 16. It includes direct-SQL bypass attempts as the restricted runtime role,
 concurrency tests in both orders with the waiting transaction observed in `pg_locks`, failure injection on the sync
@@ -210,5 +226,6 @@ endpoint, and real-browser tests of the offline screen with the network cut.
 Every v2 migration is additive and reversible. Before migrating any database, take a backup and rehearse the
 restore, then deploy; `start.sh` runs the migrations before the app serves. New gates (maintenance, stock, zones
 and travel times) do nothing until the owner provisions them. Order of work, activation and rollback:
-`docs/12_v2_phase02_release.md` and `docs/runbook_deploy_backup_rollback.md`. The Phase 03 to 05 upgrade
-rehearsal is part of the integrated acceptance and is pending.
+`docs/12_v2_phase02_release.md` and `docs/runbook_deploy_backup_rollback.md`. The upgrade from
+`v2-phase02-release` was rehearsed in Phase 06 (34 migrations, data counts and fingerprints equal, reverse and
+forward again; backup and restore checked): `docs/evidence/06_install_upgrade_backup.md`.

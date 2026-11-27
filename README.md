@@ -6,7 +6,7 @@ who run the fleet decide what can go out today, record what actually happened, a
 It **records and coordinates operations. It does not control robots**, implement emergency stops, or certify
 physical safety. Every company, person, robot, home and value in this repository and in the demo is **fictional**.
 
-**Status:** v2 release candidate (Phases 00 to 05). It has been checked by its development team only. It has **not**
+**Status:** v2.0.0, approved for release on 2026-11-26 (Phases 00 to 07; validated application SHA `d58f13a`). It has been checked by its development team only. It has **not**
 been used with real robots, real homes or real crews, and **usability with independent people is UNVERIFIED**. See
 [Project status and limitations](#project-status-and-limitations).
 
@@ -162,7 +162,7 @@ Markers: `browser` (Playwright and Chromium), `perf` (time budgets, skipped unle
 - [Architecture](docs/architecture.md): layers, database enforcement, the command boundary, hubs, lock order, the
   offline protocol, performance, deployment.
 - [Demo walkthrough](docs/demo_walkthrough.md): a guided scenario, role by role.
-- [Release notes v2 (DRAFT)](docs/release_notes_v2.md): what each phase added, verified scale, known limitations.
+- [Release notes v2.0.0](docs/release_notes_v2.md): what each phase added, verified scale, known limitations.
 - [Runbook](docs/runbook_deploy_backup_rollback.md): deploy, health check, backup, restore, rollback, demo refresh.
 - Contracts: `docs/09_v2_phase00_contract.md` to `docs/13_v2_phase03_contract.md`. Evidence: `docs/evidence/`.
 

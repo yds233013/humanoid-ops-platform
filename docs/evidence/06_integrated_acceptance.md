@@ -32,7 +32,7 @@ This package asks the EM for final release approval; until then no `v2.0.0` tag 
 | 13 | Documentation and walkthrough match the implementation | PASS | walkthrough run end to end in a real browser: 94 claims checked, 92 matched, 9 statements corrected; README setup verified; architecture counts checked against the catalog (44 definer functions, 96 tables with triggers, 21 app read-only tables) |
 | 14 | No unresolved critical or high-severity defects | PASS | defect log below |
 | 15 | Known limitations documented | PASS | below and `docs/release_notes_v2.md` |
-| 16 | Final release approval | PENDING (EM) | |
+| 16 | Final release approval | APPROVED (EM, 2026-11-26) | EM ruling below |
 
 ## Performance at the candidate (p95 ms, 500 robots / 5 hubs / 5,001 visits)
 
@@ -91,3 +91,11 @@ this candidate, no critical or high defect is open, and the limitations are docu
 all-hubs Operations briefing p95 is within 1% of its 2 s budget at 500 robots; if the EM wants margin before
 release, the next step is a single targeted change (cache the per-hub board read within the request), measured
 again in three rounds.
+
+## EM ruling (2026-11-26)
+APPROVED `d58f13a` as the v2.0.0 release candidate; Phase 06 closed; Phase 07 release execution authorized subject to
+the hosted rehearsal and rollback checks. The all-hubs briefing margin (18 ms in its slowest round) is accepted as a
+documented watch item, not a blocker; the per-hub board-read reuse is the first performance follow-up for v2.1 if
+later measurements justify it. Release order: finalize docs -> freeze (only documentation after `d58f13a`) -> isolated
+hosted rehearsal + rollback -> merge into `main` + CI -> annotated tag `v2.0.0` -> public v2 demo on `phase02rc` + hosted
+checks -> `docs/evidence/07_release_closure.md`. The approval does not certify real-world robot operation.
