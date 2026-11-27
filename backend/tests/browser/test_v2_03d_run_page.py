@@ -226,6 +226,9 @@ def test_protective_final_rejection_keeps_the_banner_and_names_the_ops_lead(
     expect(banner).to_contain_text("SYNTHETIC: refused for this test.")
     page.click("text=Contact your ops lead")
     expect(page.locator("#f-leads")).to_contain_text("Dana Ortiz")
+    # EM condition (03D ruling): ops leads are regional, and the list says so (never "for this hub").
+    expect(page.locator("#f-leads")).to_contain_text("Regional ops leads")
+    expect(page.locator("#f-leads")).not_to_contain_text("for this hub")
     # The interruption WAS recorded by the real server, so the snapshot shows it open: no "robot is safe" action.
     expect(page.locator("text=Confirm with ops lead: robot is safe")).to_have_count(0)
     page.reload()

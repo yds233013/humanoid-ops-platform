@@ -21,6 +21,10 @@ UNVERIFIED.
   signed in as the crew lead, ideally on a phone or a browser narrowed to phone width.
 - **Going offline:** on a phone, airplane mode. On a desktop browser, the developer tools Network panel, "Offline".
   Open the run page once **with** a connection first, so the phone has the page and the run saved.
+- **Time of day matters.** The public demo is rebuilt at 04:00 Pacific, before the day's first visit. A local copy
+  built later in the day books the visits that already started before it puts their homes in zones, so the board
+  shows those visits as Blocked ("Home ... was put in zone ... after this visit was planned"). That is the
+  zone rule working as designed; on a late local build, use the board's **Tomorrow** view for section 1.
 
 ## 1. Ops lead: what needs attention (about 1 minute)
 
@@ -33,7 +37,8 @@ Sign in as `dana.ortiz`. You land on **Today** (`/ops/`).
    unavailable and why, visits at risk today, incidents needing attention, and what to do first. Every line links
    to its source. The footer says it cannot authorize, dispatch or control robots.
 3. Open **Dispatch** (`/planning/board/`, the **Board**). The **Needs attention** cards group problems by cause and
-   hub, for example "5 visits at Oakland hub: charge forecast unknown" with **Record battery levels**. The banner
+   hub, for example "3 visits at Oakland hub: charge forecast unknown" with **Record battery levels** (the number
+   depends on the day). The banner
    reads "Planning is not departure: nothing here clears a robot to leave."
 
 ## 2. Ops lead: plan a visit (about 1 minute)
@@ -86,14 +91,17 @@ Sign in as `jordan.lee` (phone width). You land on **My visits** (`/execution/mi
    3. **Hand the robot over to the site** (a custody move to site with a receiver from the crew; online only);
    4. **Record the site check** (every item ok and enough consents give a Go);
    5. **Start the session** (online only).
-3. The connection pill at the top reads "● Online".
+3. The connection pill at the top reads "✓ Up to date at HH:MM" once the page has synced ("● Online" for a moment
+   before that).
 
 ## 6. Field crew: lose the signal (about 1 minute)
 
 Go offline (airplane mode, or "Offline" in the developer tools).
 
-1. The pill changes to "○ Offline". Online-only steps (start, resume, hand over, recover) are disabled and read
-   "■ Needs a connection. Do not start."
+1. The pill changes to "○ Offline". Online-only steps (start, resume, hand over, recover) cannot be recorded: when
+   one is the next step, its form is disabled and reads "Needs a connection. Do not start." At this point of the
+   tour the session has already started, so no online-only step is showing. To see it, go offline for a moment
+   earlier, when the Next step card reads **Hand the robot over to the site**.
 2. Record a **protective report**: **Open an interruption** with a short reason (for example "Child entered the
    work area"). At once the top of the page shows **Robot must not operate**: "report saved on this phone, not yet
    confirmed. It is sent first, as soon as there is a connection. Keep the robot stopped."
@@ -106,10 +114,11 @@ Go offline (airplane mode, or "Offline" in the developer tools).
 
 Go back online.
 
-1. The pill shows "↻ Syncing", then "✓ Up to date at HH:MM". The protective report is sent first, then the
-   observation note.
-2. Each step changes from "Saved on this phone" to confirmed only when the server confirms that step. Confirmed
-   steps fold away under "Confirmed (n)".
+1. The pill shows "↻ Syncing 2", then "✓ Up to date at HH:MM". The protective report is sent first, then the
+   observation note. (If you reloaded while offline, the phone first goes back to the full run page, then sends.)
+2. Each step changes from "Saved on this phone" to confirmed only when the server confirms that step. The page
+   then reloads with the server's records and says "Confirmed by the server: ...". Earlier confirmed steps are
+   folded under "Confirmed (n)".
 3. The **Robot must not operate** banner stays: "This only means the report is recorded. The robot stays stopped
    until the ops lead resolves it." The server paused the session when the interruption was recorded.
 
@@ -117,16 +126,17 @@ Go back online.
 
 In the ops lead's window, open the same run (**Dispatch > Field runs**, `/execution/`, then the run).
 
-1. The **Interruptions** card lists the interruption as **Open**, with its reason and who recorded it.
-2. Type a resolution note (for example "Called the crew; area clear") and press **Resolve**. "Resolving does not
-   resume the session."
+1. The **Interruptions** card lists the interruption as **Open**, with its source (Operator) and its reason.
+2. Type a resolution note (for example "Called the crew; area clear") and press **Resolve**. Point out that
+   resolving does not resume the session: resuming needs a new Go site check.
 3. Point out: an unresolved interruption would block this robot's next departure authorization, on this or any
    later run.
 
 ## 9. Field crew: return and close (about 1 minute)
 
-Back as `jordan.lee`, refresh the run page. The banner is still there: the session is paused, and "Robot ... must
-not operate until the session is resumed after a new Go site check."
+Back as `jordan.lee`, on the same phone, refresh the run page. The **Robot must not operate** banner is still
+there ("report confirmed by the server ... The robot stays stopped until the ops lead resolves it"), because the
+session is still paused on the server.
 
 1. The Next step card now reads **Resume or stop the session** (resuming needs a new Go site check). Stop the
    session. A stopped session is a safe end, so on the next fresh snapshot the banner clears.
@@ -143,7 +153,8 @@ Then as `dana.ortiz`, on the run page:
    the run page). It rebuilds the
    whole visit from append-only records in time order: plan revisions, evidence, the approval, the departure,
    every custody move, the site check, the session, the interruption and its resolution, the return.
-2. **Today > Timeline** (`/ops/timeline/`) shows the day's runs and events across hubs.
+2. **Today > Timeline** (`/ops/timeline/`) shows the upcoming confirmed visits with their readiness and the runs
+   still open, across hubs (the closed J4 run is no longer listed).
 3. Every change you made went through one command path that wrote an audit row in the same transaction. Users with
    audit access (admin, ops lead, engineering lead, safety reviewer, founder) can read the raw audit log as JSON
    at `/api/audit-events`.

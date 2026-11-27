@@ -92,11 +92,13 @@ The roles are created by `docker/postgres/init/01-roles.sh` locally and by `back
 ### 3.2 Guarded tables and the SECURITY DEFINER boundary
 
 Safety-relevant tables are **SELECT-only for `ops_app`**: role grants, transfers, stock movements, charging
-sessions, maintenance records, regional pauses, the field-command ledger, and others (28 tables at `3fa3a18`). The
-only way to write them is to call a **SECURITY DEFINER** function, which runs with the owner's rights but checks
-the caller first.
+sessions, maintenance records, regional pauses, the travel-time matrix, the field-command ledger, and others (21
+application tables at `0111a9f`, by catalog query; the definer audit test pins the 18 hub-owned ones). The app
+writes them only by calling a **SECURITY DEFINER** function, which runs with the owner's rights but checks the
+caller first; a few setup tables (deployment settings, the predictor log) are written only by owner-only
+commands.
 
-Every SECURITY DEFINER function (44 at `3fa3a18`):
+Every SECURITY DEFINER function (44 at `3fa3a18`, still 44 at `0111a9f`):
 
 - is owned by `ops_owner` and has a fixed `search_path`;
 - grants no EXECUTE to PUBLIC; EXECUTE goes to `ops_app` only, or to nobody but the owner for owner-only functions;
@@ -111,7 +113,7 @@ function cannot be added without someone deciding who may run it.
 
 ### 3.3 Triggers
 
-Triggers (on 96 tables at `3fa3a18`) do two jobs:
+Triggers (on 96 tables at `3fa3a18` and at `0111a9f`) do two jobs:
 
 - **Append-only history.** Audit events, custody events, holds, approvals, evidence, transfers, pauses, the stock
   ledger and the field-command ledger refuse UPDATE and DELETE (and TRUNCATE where it matters). Records are voided
@@ -218,8 +220,8 @@ server is the only authority for safety state**. The phone can only record facts
   channel (`ordinary` or `protective`), a per-run sequence number and generation (ordinary only), the command
   name, its payload and the phone's own time.
 - Authentication comes first: an ended or revoked session gets HTTP 401 before anything is read. A user who is not
-  on the run's crew (or an ops lead with a grant at the run's hub) gets one HTTP 403 `NOT_YOUR_RUN` with no run
-  details.
+  on the run's crew (or a regional ops lead) gets one HTTP 403 `NOT_YOUR_RUN` with no run details. Ops leads are
+  always regional: the database refuses an `ops_lead` grant that names a hub.
 - Each command is applied in **its own transaction**, through the same command and triggers as an online
   submission, against the server's state **at that moment**. If something changed while the phone was offline
   (a hold was placed, the authorization was revoked, the other crew member already recorded the step), the
