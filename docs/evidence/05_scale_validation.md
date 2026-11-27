@@ -118,3 +118,10 @@ Each cell is the p95 in ms from `perf05.log`. Fill in the run link and the runne
 
 All three rounds are within budget, so the verified synthetic scale is 500 robots / 5 hubs / 5,000 visits.
 If any round fails a budget after the single fix, publish the last verified scale (contract 15.11), not 500.
+
+## Phase 06 addition: the Operations briefing
+
+Phase 06 (2026-11-26) adds `/ops/briefing/` (all hubs) and `/ops/briefing/?hub=<first hub>` to
+`test_500_robot_p95`, with the same 2,000 ms p95 budget, the same method, and a check that no sample shows an
+`error-*` notice. The pages above are unchanged. Local numbers, the one briefing fix (it no longer runs Today's
+fleet and production-blocker sections) and the release rounds are in `06_install_upgrade_backup.md`.
