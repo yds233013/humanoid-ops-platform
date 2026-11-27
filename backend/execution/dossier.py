@@ -17,6 +17,7 @@ from execution.models import (
 )
 from fleet.models import Inspection
 from planning.models import Visit
+from platform_core.templatetags.ui import local_dt
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,7 @@ def visit_dossier(visit: Visit) -> list[DossierEntry]:
             a.issued_at,
             "authorization",
             f"Departure authorization {a.code} ({a.mode}) issued by {_who(a.issued_by)}, "
-            f"expires {a.expires_at.isoformat()}",
+            f"expires {local_dt(a.expires_at)}",  # v2 06: local time like every other line (was ISO UTC)
             a.revision.revision_no,
             a.manifest_id,
             a.code,

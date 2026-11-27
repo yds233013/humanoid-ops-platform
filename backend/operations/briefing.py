@@ -317,6 +317,18 @@ def interruption_reason(where: str) -> Reason:
     )
 
 
+def run_interruption_reason(card: dict[str, Any]) -> Reason:
+    """v2 06: an unresolved interruption on the run the robot is out on (Today's INTERRUPTION_OPEN card)."""
+    run = f" on visit {card['visit']}" if card.get("visit") else ""
+    return Reason(
+        "Unresolved interruption",
+        f"Its session{run} is stopped: the robot must not operate until the interruption is resolved.",
+        "Run record · Interruptions",
+        detail=str(card.get("ref") or ""),
+        code="ROBOT_INTERRUPTION_UNRESOLVED",
+    )
+
+
 DEPARTURE_PROBLEM_SQL = (
     "SELECT r.id, execution_robot_departure_problem(r.id) FROM fleet_robot r "
     "WHERE r.id = ANY(%s) ORDER BY r.id"
@@ -537,6 +549,12 @@ def build_briefing(at: datetime, user: Any, scope: Any) -> Briefing:
             problems = _try(b, "departure", "departure checks", lambda: departure_problems(at_hub)) or {}
             from execution.custody import unresolved_interruption  # noqa: PLC0415
 
+            # v2 06 (defect found by the lifecycle test): a robot OUT on a visit whose session was
+            # interrupted is not "at the hub", so the departure gate answers "open run" first and never names
+            # the interruption. Today's own INTERRUPTION_OPEN card (same snapshot, no extra statement) does.
+            on_run = {
+                c["robot"]: c for c in t.inbox_cards if c["code"] == "INTERRUPTION_OPEN" and c.get("robot")
+            }
             b.charge_on = bool(_try(b, "charge-setting", "the charge setting", charging.forecast_configured))
             plain = []  # available or assigned robots with no other reason: their charge is checked
             for r in mine:
@@ -546,6 +564,9 @@ def build_briefing(at: datetime, user: Any, scope: Any) -> Briefing:
                 found = unresolved_interruption(problems.get(r.robot_id))
                 if found is not None:
                     reasons.insert(0, interruption_reason(found.where))
+                    level = "unavailable"
+                elif level == "out" and r.robot in on_run:
+                    reasons.insert(0, run_interruption_reason(on_run[r.robot]))
                     level = "unavailable"
                 if not level:
                     plain.append(r)
